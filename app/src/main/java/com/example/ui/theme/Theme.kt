@@ -14,110 +14,101 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.collectAsState
 import com.example.ui.helper.SmartNightModeManager
 
-// Precision Instrument base scheme - the app's default look. Deep ink-navy,
-// phosphor-mint as the signature accent, amber as secondary, red reserved
-// for the Material "error" role (which lines up with blocked/strict states).
-private val InstrumentDarkColors = darkColorScheme(
-    primary = Phosphor,
-    onPrimary = Void,
-    secondary = Amber,
-    onSecondary = Void,
-    tertiary = Phosphor,
-    onTertiary = Void,
-    background = Void,
-    onBackground = TextPrimary,
-    surface = Panel,
-    onSurface = TextPrimary,
-    surfaceVariant = PanelElevated,
-    onSurfaceVariant = TextSecondary,
-    outline = Hairline,
-    outlineVariant = Hairline,
-    error = Alert,
-    onError = TextPrimary,
-    errorContainer = AlertDim,
-    onErrorContainer = Alert
+private val PitchBlackColors = darkColorScheme(
+    primary = Color(0xFFFFB74D),       // Soft amber
+    onPrimary = Color(0xFF1E1400),
+    secondary = Color(0xFF3F51B5),     // Deep indigo
+    onSecondary = Color.White,
+    tertiary = Color(0xFFE040FB),      // Pastel lavender
+    background = Color(0xFF000000),    // AMOLED Black
+    onBackground = Color(0xFFE0E1EC),  // Low-glare light lavender/gray
+    surface = Color(0xFF0C0C0E),       // Extremely dark charcoal
+    onSurface = Color(0xFFE3E1EC),
+    surfaceVariant = Color(0xFF16161A), // Low-glare deep structural elements
+    onSurfaceVariant = Color(0xFFC7C5D0)
 )
 
-// Even more austere variant used when auto night-mode is active - pushes the
-// background closer to true black to save battery on AMOLED screens and cut
-// glare late at night, while keeping the same phosphor/amber accent identity.
-private val InstrumentNightColors = darkColorScheme(
-    primary = Phosphor,
-    onPrimary = Color.Black,
-    secondary = Amber,
-    onSecondary = Color.Black,
-    tertiary = Phosphor,
-    background = Color(0xFF000000),
-    onBackground = TextPrimary,
-    surface = Color(0xFF090A0C),
-    onSurface = TextPrimary,
-    surfaceVariant = Color(0xFF12141A),
-    onSurfaceVariant = TextSecondary,
-    outline = Hairline,
-    error = Alert,
-    onError = Color.Black,
-    errorContainer = AlertDim,
-    onErrorContainer = Alert
+private val DarkColorScheme = darkColorScheme(
+    primary = PrimaryFocus,
+    onPrimary = OnPrimaryFocus,
+    secondary = SecondaryFocus,
+    onSecondary = OnSecondaryFocus,
+    tertiary = TertiaryFocus,
+    background = DarkBackground,
+    onBackground = OnBackgroundFocus,
+    surface = DarkSurface,
+    onSurface = OnSurfaceFocus,
+    surfaceVariant = DarkSurfaceVariant,
+    onSurfaceVariant = OnBackgroundFocus
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFF0F6E56),
+    primary = LightPrimary,
     onPrimary = Color.White,
-    secondary = Color(0xFFB5730B),
+    secondary = LightSecondary,
     onSecondary = Color.White,
-    background = Color(0xFFF4F6F5),
-    onBackground = Color(0xFF171D1A),
+    background = LightBackground,
+    onBackground = Color(0xFF2E1C16),
     surface = Color.White,
-    onSurface = Color(0xFF171D1A),
-    error = Color(0xFFA32D2D),
-    onError = Color.White
+    onSurface = Color(0xFF2E1C16)
 )
 
-/**
- * User-selectable accent overrides (Settings > Accent theme). Kept as an
- * existing feature - values updated so each option still reads as a
- * cohesive, deliberate palette against the new ink-navy/instrument base
- * rather than clashing with it.
- */
 enum class AccentTheme(
     val displayName: String,
     val primary: Color,
     val secondary: Color,
     val tertiary: Color
 ) {
-    PHOSPHOR_MINT("Phosphor Mint", Phosphor, Amber, Phosphor),
-    OCEAN_BLUE("Ocean Blue", Color(0xFF29B6F6), Amber, Color(0xFF29B6F6)),
-    FOREST_GREEN("Forest Green", Color(0xFF66BB6A), Amber, Color(0xFF66BB6A)),
-    ROYAL_PURPLE("Royal Purple", Color(0xFFAB47BC), Phosphor, Color(0xFFAB47BC)),
-    NEON_CRIMSON("Neon Crimson", Color(0xFFEC407A), Amber, Color(0xFFEC407A)),
+    DEEP_SPACE("Deep Space", SpaceCyan, SpaceViolet, SpaceRed),
+    SUNSET_ORANGE("Sunset Orange", Color(0xFFFF7043), Color(0xFF26A69A), Color(0xFFFFB74D)),
+    OCEAN_BLUE("Ocean Blue", Color(0xFF29B6F6), Color(0xFF26A69A), Color(0xFFAB47BC)),
+    FOREST_GREEN("Forest Green", Color(0xFF66BB6A), Color(0xFF9CCC65), Color(0xFF26A69A)),
+    ROYAL_PURPLE("Royal Purple", Color(0xFFAB47BC), Color(0xFF26A69A), Color(0xFFFF7043)),
+    NEON_CRIMSON("Neon Crimson", Color(0xFFEC407A), Color(0xFFAB47BC), Color(0xFFFF7043)),
     CYBERPUNK("Cyberpunk", Color(0xFFFF4081), Color(0xFF00E5FF), Color(0xFFD500F9))
 }
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = true, // Default to true - Focuss Buddy is a premium dark theme app
-    accentThemeName: String = "Phosphor Mint",
+    darkTheme: Boolean = true, // Default to true as Focuss Buddy is a premium dark theme app
+    accentThemeName: String = "Deep Space",
     dynamicColor: Boolean = false, // Keep false to maintain our custom visual branding identity
     content: @Composable () -> Unit,
 ) {
     val isNightModeActive = SmartNightModeManager.isNightModeActive.collectAsState().value
-    val accent = AccentTheme.values().find { it.displayName == accentThemeName } ?: AccentTheme.PHOSPHOR_MINT
+    val accent = AccentTheme.values().find { it.displayName == accentThemeName } ?: AccentTheme.DEEP_SPACE
+    val isDeepSpace = accent == AccentTheme.DEEP_SPACE
 
     val colorScheme = when {
-        isNightModeActive -> InstrumentNightColors
+        isNightModeActive -> PitchBlackColors
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        darkTheme -> InstrumentDarkColors.copy(
+        darkTheme -> darkColorScheme(
             primary = accent.primary,
+            onPrimary = if (isDeepSpace) SpaceVoidBackground else OnPrimaryFocus,
             secondary = accent.secondary,
-            tertiary = accent.tertiary
+            onSecondary = OnSecondaryFocus,
+            tertiary = accent.tertiary,
+            background = if (isDeepSpace) SpaceVoidBackground else DarkBackground,
+            onBackground = if (isDeepSpace) SpaceTextPrimary else OnBackgroundFocus,
+            surface = if (isDeepSpace) SpaceSurface else DarkSurface,
+            onSurface = if (isDeepSpace) SpaceTextPrimary else OnSurfaceFocus,
+            surfaceVariant = if (isDeepSpace) SpaceSurfaceVariant else DarkSurfaceVariant,
+            onSurfaceVariant = if (isDeepSpace) SpaceTextSecondary else OnBackgroundFocus,
+            error = SpaceRed,
+            onError = SpaceTextPrimary
         )
-        else -> LightColorScheme.copy(
+        else -> lightColorScheme(
             primary = accent.primary,
+            onPrimary = Color.White,
             secondary = accent.secondary,
-            tertiary = accent.tertiary
+            onSecondary = Color.White,
+            background = LightBackground,
+            onBackground = Color(0xFF2E1C16),
+            surface = Color.White,
+            onSurface = Color(0xFF2E1C16)
         )
     }
 

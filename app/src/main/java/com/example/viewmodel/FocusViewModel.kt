@@ -83,7 +83,7 @@ class FocusViewModel(
     val youtubeBlockShorts = MutableStateFlow(false)
     val instagramBlockReels = MutableStateFlow(false)
     val snapchatBlockSpotlight = MutableStateFlow(false)
-    val accentTheme = MutableStateFlow("Phosphor Mint")
+    val accentTheme = MutableStateFlow("Sunset Orange")
 
     private val _isInitialized = MutableStateFlow(false)
     val isInitialized = _isInitialized.asStateFlow()
@@ -94,7 +94,7 @@ class FocusViewModel(
             val savedYoutubeShorts = prefs.getBoolean("youtube_block_shorts", false)
             val savedInstagramReels = prefs.getBoolean("instagram_block_reels", false)
             val savedSnapchatSpotlight = prefs.getBoolean("snapchat_block_spotlight", false)
-            val savedAccentTheme = prefs.getString("accent_theme", "Phosphor Mint") ?: "Phosphor Mint"
+            val savedAccentTheme = prefs.getString("accent_theme", "Sunset Orange") ?: "Sunset Orange"
 
             youtubeBlockShorts.value = savedYoutubeShorts
             instagramBlockReels.value = savedInstagramReels
@@ -711,7 +711,7 @@ class FocusViewModel(
     }
 
     // Long Term Block operations
-    fun addLongTermBlock(type: String, target: String, targetLabel: String, reason: String, startDate: Long, endDate: Long) {
+    fun addLongTermBlock(type: String, target: String, targetLabel: String, reason: String, startDate: Long, endDate: Long, dailyLimitSeconds: Long = 0L) {
         viewModelScope.launch {
             val block = LongTermBlock(
                 type = type,
@@ -720,7 +720,8 @@ class FocusViewModel(
                 reason = reason,
                 startDate = startDate,
                 endDate = endDate,
-                isActive = true
+                isActive = true,
+                dailyLimitSeconds = dailyLimitSeconds
             )
             repository.addLongTermBlock(block)
         }
@@ -882,6 +883,16 @@ class FocusViewModel(
         
         if (totalTasks == 0) return 0f
         return (checkedTasks.toFloat() / totalTasks) * 100f
+    }
+
+    fun importTestSchedule(rawText: String, onResult: (com.example.planner.TestImportResult) -> Unit) {
+        viewModelScope.launch {
+            val result = com.example.planner.TestScheduleParser.parse(rawText)
+            if (result.imported.isNotEmpty()) {
+                repository.importTests(result.imported)
+            }
+            onResult(result)
+        }
     }
 
     fun seedTestScheduleIfNeeded() {

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,7 +41,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.drawscope.scale
@@ -82,7 +82,6 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.max
-import kotlin.math.cos
 import kotlin.math.sin
 import kotlinx.coroutines.launch
 
@@ -102,6 +101,7 @@ fun HomeScreen(
     onNavigateToEmergencyUnlock: () -> Unit = {},
     onNavigateToUninstall: () -> Unit = {},
     onNavigateToStudyPlanner: () -> Unit = {},
+    onNavigateToTestImport: () -> Unit = {},
 
     modifier: Modifier = Modifier
 ) {
@@ -264,6 +264,15 @@ fun HomeScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    ImportTestScheduleDrawerCard(
+                        onImportClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToTestImport()
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     UninstallDrawerCard(
                         onUninstallClick = {
                             scope.launch { drawerState.close() }
@@ -278,13 +287,21 @@ fun HomeScreen(
             topBar = {
                 CenterAlignedTopAppBar(
                     title = {
-                        Text(
-                            text = "Focuss Buddy",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 22.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            letterSpacing = 1.sp
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "Focus Buddy",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 20.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "DISCIPLINE · FOCUS · VICTORY",
+                                fontSize = 9.sp,
+                                letterSpacing = 1.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     },
                     navigationIcon = {
                         IconButton(
@@ -332,6 +349,15 @@ fun HomeScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
+                    // Streak + Today's Focus HUD row
+                    StreakTodayFocusRow(
+                        currentStreak = advancedAnalytics.currentStreak,
+                        todayFocusTimeSeconds = advancedAnalytics.todayFocusTimeSeconds
+                    )
+
+                    // Banking Mode - quick, self-expiring bypass for banking/UPI apps
+                    BankingModeCard()
+
                     // Hero Illustration / Card
                     HeroBannerCard(blockedCount = blockedApps.size)
 
@@ -593,9 +619,9 @@ fun HomeScreen(
         AddLongTermBlockDialog(
             installedApps = viewModel.installedApps.collectAsStateWithLifecycle().value,
             onDismiss = { showAddLongTermBlockDialog = false },
-            onConfirm = { type, target, label, reason, start, end ->
+            onConfirm = { type, target, label, reason, start, end, dailyLimitSeconds ->
                 if (type == "APP") {
-                    viewModel.addLongTermBlock(type, target, label, reason, start, end)
+                    viewModel.addLongTermBlock(type, target, label, reason, start, end, dailyLimitSeconds)
                 } else {
                     viewModel.addWebsiteBlock(target, reason, start, end)
                 }
@@ -612,6 +638,182 @@ fun HomeScreen(
                     viewModel.setBatteryOptimizationPromptShown()
                 }
                 showBatteryOptimizationDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+fun StreakTodayFocusRow(currentStreak: Int, todayFocusTimeSeconds: Long) {
+    val todayHours = todayFocusTimeSeconds / 3600
+    val todayMinutes = (todayFocusTimeSeconds % 3600) / 60
+    val todayLabel = String.format(Locale.getDefault(), "%02dH %02dM", todayHours, todayMinutes)
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        HudStatCard(
+            modifier = Modifier.weight(1f),
+            icon = Icons.Default.LocalFireDepartment,
+            label = "STREAK",
+            value = "$currentStreak",
+            unit = if (currentStreak == 1) "DAY" else "DAYS",
+            accent = MaterialTheme.colorScheme.primary
+        )
+        HudStatCard(
+            modifier = Modifier.weight(1f),
+            icon = Icons.Default.Timer,
+            label = "TODAY'S FOCUS",
+            value = todayLabel,
+            unit = null,
+            accent = MaterialTheme.colorScheme.secondary
+        )
+    }
+}
+
+@Composable
+private fun HudStatCard(
+    modifier: Modifier = Modifier,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    unit: String?,
+    accent: Color
+) {
+    Card(
+        modifier = modifier.testTag("hud_stat_card_${label}"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.5f))
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(imageVector = icon, contentDescription = null, tint = accent, modifier = Modifier.size(14.dp))
+                Text(
+                    text = label,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp,
+                    color = accent
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = value,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (unit != null) {
+                    Text(
+                        text = unit,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BankingModeCard() {
+    val scope = rememberCoroutineScope()
+    var endTime by remember { mutableStateOf(com.example.ui.helper.BankingModeManager.endTime.value) }
+    var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        com.example.ui.helper.BankingModeManager.endTime.collectLatest { endTime = it }
+    }
+    LaunchedEffect(endTime) {
+        while (System.currentTimeMillis() < endTime) {
+            nowTick = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1000)
+        }
+        nowTick = System.currentTimeMillis()
+    }
+
+    val isActive = nowTick < endTime
+    val remainingSeconds = ((endTime - nowTick).coerceAtLeast(0L)) / 1000
+    val remainingLabel = String.format(Locale.getDefault(), "%d:%02d", remainingSeconds / 60, remainingSeconds % 60)
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("banking_mode_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, if (isActive) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(
+                    imageVector = Icons.Default.AccountBalance,
+                    contentDescription = "Banking mode icon",
+                    tint = if (isActive) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Column {
+                    Text("Banking Mode", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+                    Text(
+                        text = if (isActive) "All blocking paused - back on in $remainingLabel" else "Pause all blocking for 5 min to use banking apps",
+                        fontSize = 11.sp,
+                        color = if (isActive) Color(0xFF4CAF50) else Color.White.copy(alpha = 0.6f)
+                    )
+                }
+            }
+
+            if (isActive) {
+                TextButton(onClick = { com.example.ui.helper.BankingModeManager.deactivateNow(); nowTick = System.currentTimeMillis() }) {
+                    Text("End now", color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            } else {
+                Button(
+                    onClick = { showConfirmDialog = true },
+                    modifier = Modifier.testTag("banking_mode_enable_button"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Enable", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+
+    if (showConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            title = { Text("Enable Banking Mode?") },
+            text = { Text("This pauses ALL Focus Buddy blocking - active sessions, Strict Mode, and long-term blocks - for 5 minutes so your banking app can work normally. It turns back on automatically after 5 minutes.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    com.example.ui.helper.BankingModeManager.activate()
+                    nowTick = System.currentTimeMillis()
+                    showConfirmDialog = false
+                }) { Text("Enable for 5 min") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -1262,6 +1464,53 @@ fun ActiveSessionWidget(
                 }
             }
 
+            // Large radar-style countdown display (HUD centerpiece)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .testTag("session_radar_display"),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier.size(180.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    QuantumOrbitProgressRing(
+                        progress = progressFraction,
+                        timeRemainingMs = timeRemaining,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "TIME LEFT",
+                            fontSize = 10.sp,
+                            letterSpacing = 1.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = String.format(
+                                Locale.getDefault(),
+                                "%02d:%02d:%02d",
+                                hours + days * 24,
+                                minutes,
+                                seconds
+                            ),
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "FOCUS MODE",
+                            fontSize = 10.sp,
+                            letterSpacing = 1.5.sp,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                }
+            }
+
             // Dynamic Plant Growth Visual Centerpiece
             Column(
                 modifier = Modifier
@@ -1614,13 +1863,13 @@ fun LongTermBlockSection(
                                             modifier = Modifier
                                                 .size(36.dp)
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0x1F3DFFC4)),
+                                                .background(Color(0x1F9C27B0)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.AppBlocking,
                                                 contentDescription = "App block icon",
-                                                tint = Color(0xFF3DFFC4),
+                                                tint = Color(0xFF9C27B0),
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -1679,6 +1928,33 @@ fun LongTermBlockSection(
                                         fontWeight = FontWeight.Medium
                                       )
                                   }
+
+                                if (block.dailyLimitSeconds > 0L) {
+                                    val todayKey = remember { com.example.data.todayUsageDateKey() }
+                                    val usedToday = if (block.usageDateKey == todayKey) block.usedSecondsToday else 0L
+                                    val usedFraction = (usedToday.toFloat() / block.dailyLimitSeconds.toFloat()).coerceIn(0f, 1f)
+                                    fun fmt(sec: Long): String {
+                                        val h = sec / 3600; val m = (sec % 3600) / 60; val s = sec % 60
+                                        return if (h > 0) String.format("%dh %02dm", h, m) else if (m > 0) String.format("%dm %02ds", m, s) else "${s}s"
+                                    }
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            text = "Daily limit: ${fmt(usedToday)} / ${fmt(block.dailyLimitSeconds)} used today",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.secondary,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        LinearProgressIndicator(
+                                            progress = usedFraction,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(4.dp)
+                                                .clip(RoundedCornerShape(2.dp)),
+                                            color = if (usedFraction >= 1f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
+                                            trackColor = Color.White.copy(alpha = 0.1f)
+                                        )
+                                    }
+                                }
 
                                   HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
 
@@ -1778,13 +2054,13 @@ fun LongTermBlockSection(
                                               modifier = Modifier
                                                   .size(36.dp)
                                                   .clip(RoundedCornerShape(8.dp))
-                                                  .background(Color(0x1FFFA630)),
+                                                  .background(Color(0x1F2196F3)),
                                               contentAlignment = Alignment.Center
                                           ) {
                                               Icon(
                                                   imageVector = Icons.Default.Language,
                                                   contentDescription = "Website block icon",
-                                                  tint = Color(0xFFFFA630),
+                                                  tint = Color(0xFF2196F3),
                                                   modifier = Modifier.size(18.dp)
                                               )
                                           }
@@ -2943,13 +3219,20 @@ fun TrendChart(
 fun AddLongTermBlockDialog(
     installedApps: List<AppInfo>,
     onDismiss: () -> Unit,
-    onConfirm: (type: String, target: String, label: String, reason: String, startDate: Long, endDate: Long) -> Unit
+    onConfirm: (type: String, target: String, label: String, reason: String, startDate: Long, endDate: Long, dailyLimitSeconds: Long) -> Unit
 ) {
     val context = LocalContext.current
     var blockType by remember { mutableStateOf("APP") } // "APP" or "WEBSITE"
     var selectedApp by remember { mutableStateOf<AppInfo?>(null) }
     var websiteUrl by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
+
+    // Full block (all day, every day - original behavior) vs a daily time allowance
+    // (usable for up to H/M/S per day, then blocked until the next day).
+    var limitMode by remember { mutableStateOf("FULL") } // "FULL" or "DAILY_LIMIT"
+    var limitHoursText by remember { mutableStateOf("") }
+    var limitMinutesText by remember { mutableStateOf("") }
+    var limitSecondsText by remember { mutableStateOf("") }
 
     var startDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
     var endDateMillis by remember { mutableStateOf(System.currentTimeMillis() + 7 * 24 * 60 * 60 * 1000L) } // default 1 week
@@ -3123,6 +3406,81 @@ fun AddLongTermBlockDialog(
                     )
                 }
 
+                // Daily Time Allowance
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text("Blocking Mode", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.5f))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Button(
+                            onClick = { limitMode = "FULL" },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (limitMode == "FULL") MaterialTheme.colorScheme.primary else Color(0x15FFFFFF),
+                                contentColor = if (limitMode == "FULL") MaterialTheme.colorScheme.onPrimary else Color.White
+                            ),
+                            modifier = Modifier.weight(1f).testTag("block_mode_full"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Full Block", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Button(
+                            onClick = { limitMode = "DAILY_LIMIT" },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (limitMode == "DAILY_LIMIT") MaterialTheme.colorScheme.primary else Color(0x15FFFFFF),
+                                contentColor = if (limitMode == "DAILY_LIMIT") MaterialTheme.colorScheme.onPrimary else Color.White
+                            ),
+                            modifier = Modifier.weight(1f).testTag("block_mode_daily_limit"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Daily Time Limit", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    if (limitMode == "DAILY_LIMIT") {
+                        Text(
+                            "Allowed use per day before it's blocked for the rest of that day:",
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.5f)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = limitHoursText,
+                                onValueChange = { v -> if (v.length <= 3 && v.all { it.isDigit() }) limitHoursText = v },
+                                label = { Text("Hours") },
+                                modifier = Modifier.weight(1f).testTag("daily_limit_hours"),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = limitMinutesText,
+                                onValueChange = { v -> if (v.length <= 2 && v.all { it.isDigit() }) limitMinutesText = v },
+                                label = { Text("Minutes") },
+                                modifier = Modifier.weight(1f).testTag("daily_limit_minutes"),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = limitSecondsText,
+                                onValueChange = { v -> if (v.length <= 2 && v.all { it.isDigit() }) limitSecondsText = v },
+                                label = { Text("Seconds") },
+                                modifier = Modifier.weight(1f).testTag("daily_limit_seconds"),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+                    }
+                }
+
                 // Date Selectors
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -3238,11 +3596,21 @@ fun AddLongTermBlockDialog(
                                 validationError = "End Date must be after Start Date."
                                 return@Button
                             }
+                            val limitHours = limitHoursText.toLongOrNull() ?: 0L
+                            val limitMinutes = limitMinutesText.toLongOrNull() ?: 0L
+                            val limitSeconds = limitSecondsText.toLongOrNull() ?: 0L
+                            val dailyLimitSeconds = if (limitMode == "DAILY_LIMIT") {
+                                (limitHours * 3600) + (limitMinutes * 60) + limitSeconds
+                            } else 0L
+                            if (limitMode == "DAILY_LIMIT" && dailyLimitSeconds <= 0L) {
+                                validationError = "Enter a daily time limit greater than 0."
+                                return@Button
+                            }
 
                             validationError = null
                             val finalTarget = if (blockType == "APP") selectedApp!!.packageName else websiteUrl
                             val finalLabel = if (blockType == "APP") selectedApp!!.appName else websiteUrl
-                            onConfirm(blockType, finalTarget, finalLabel, reason, startDateMillis, endDateMillis)
+                            onConfirm(blockType, finalTarget, finalLabel, reason, startDateMillis, endDateMillis, dailyLimitSeconds)
                         },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp)
@@ -4228,14 +4596,14 @@ fun BlockDetailsScreen(
                         .size(80.dp)
                         .clip(RoundedCornerShape(20.dp))
                         .background(
-                            if (blockInfo.type == "WEBSITE") Color(0x1FFFA630) else Color(0x1F3DFFC4)
+                            if (blockInfo.type == "WEBSITE") Color(0x1F2196F3) else Color(0x1F9C27B0)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (blockInfo.type == "WEBSITE") Icons.Default.Language else Icons.Default.AppBlocking,
                         contentDescription = "Block type",
-                        tint = if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFF3DFFC4),
+                        tint = if (blockInfo.type == "WEBSITE") Color(0xFF2196F3) else Color(0xFF9C27B0),
                         modifier = Modifier.size(40.dp)
                     )
                 }
@@ -4252,7 +4620,7 @@ fun BlockDetailsScreen(
                     text = if (blockInfo.type == "WEBSITE") "WEBSITE BLOCK" else "APP BLOCK",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = (if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFF3DFFC4)),
+                    color = (if (blockInfo.type == "WEBSITE") Color(0xFF2196F3) else Color(0xFF9C27B0)),
                     letterSpacing = 1.5.sp
                 )
 
@@ -5964,86 +6332,126 @@ fun QuantumOrbitProgressRing(
     timeRemainingMs: Long,
     modifier: Modifier = Modifier
 ) {
-    // "Precision Instrument" dial: tick marks around the circumference like a
-    // lab gauge/oscilloscope, with a phosphor-glow progress arc. This is the
-    // signature visual motif reused across the timer, stat gauges, and the
-    // bottom navigation active-state indicator elsewhere in the theme.
     val isHyperFocus = timeRemainingMs <= 10 * 60 * 1000L && timeRemainingMs > 0
-    val phosphor = MaterialTheme.colorScheme.primary
-    val amber = MaterialTheme.colorScheme.secondary
-    val glowColor = if (isHyperFocus) amber else phosphor
-
-    val pulse by rememberInfiniteTransition(label = "dial_pulse").animateFloat(
-        initialValue = if (isHyperFocus) 0.6f else 0.85f,
-        targetValue = 1f,
+    // Smoothly accelerate the rotation animation speed in hyper-focus mode
+    val duration = if (isHyperFocus) 1200 else 4500
+    val infiniteTransition = rememberInfiniteTransition(label = "quantum_orbit")
+    val angleDeg by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(if (isHyperFocus) 500 else 1400, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
+            animation = tween(duration, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
         ),
-        label = "dial_pulse_alpha"
+        label = "orbit_angle"
     )
 
     Box(modifier = modifier) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val cx = size.width / 2f
-            val cy = size.height / 2f
-            val outerR = size.minDimension / 2f - 2.dp.toPx()
-            val trackR = outerR - 7.dp.toPx()
-            val tickOuterR = outerR
-            val tickInnerMinorR = outerR - 3.dp.toPx()
-            val tickInnerMajorR = outerR - 5.dp.toPx()
+        // 1. Static track & progress arc with rich double-layer glowing effects
+        Canvas(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            val width = size.width
+            val height = size.height
+            val cx = width / 2f
+            val cy = height / 2f
+            val radius = size.minDimension / 2f - 6.dp.toPx()
+            val orbitRadius = radius + 5.dp.toPx()
 
-            // Tick marks - 60 total, every 5th one longer/brighter (major).
-            for (i in 0 until 60) {
-                val angle = (i / 60f) * 2f * Math.PI.toFloat() - (Math.PI / 2f).toFloat()
-                val major = i % 5 == 0
-                val inner = if (major) tickInnerMajorR else tickInnerMinorR
-                val start = Offset(cx + tickOuterR * cos(angle), cy + tickOuterR * sin(angle))
-                val end = Offset(cx + inner * cos(angle), cy + inner * sin(angle))
-                drawLine(
-                    color = if (major) Color.White.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.12f),
-                    start = start,
-                    end = end,
-                    strokeWidth = if (major) 2.dp.toPx() else 1.dp.toPx(),
-                    cap = StrokeCap.Round
-                )
-            }
-
-            // Background track for the progress arc.
+            // Outer Orbit/Track neon glow (subtle translucent track)
             drawCircle(
-                color = Color.White.copy(alpha = 0.06f),
+                color = Color.White.copy(alpha = 0.05f),
                 center = Offset(cx, cy),
-                radius = trackR,
+                radius = orbitRadius,
+                style = Stroke(width = 1.dp.toPx())
+            )
+
+            // Primary background track
+            drawCircle(
+                color = Color.White.copy(alpha = 0.08f),
+                center = Offset(cx, cy),
+                radius = radius,
                 style = Stroke(width = 3.dp.toPx())
             )
 
-            // Phosphor/amber glow arc - soft wide layer + sharp core layer.
+            // Neon Cyan outer glow layer (thick, low-opacity)
             drawArc(
-                color = glowColor.copy(alpha = 0.30f * pulse),
+                color = Color(0xFF00E5FF).copy(alpha = 0.25f),
                 startAngle = -90f,
                 sweepAngle = 360f * progress,
                 useCenter = false,
-                topLeft = Offset(cx - trackR, cy - trackR),
-                size = androidx.compose.ui.geometry.Size(trackR * 2, trackR * 2),
-                style = Stroke(width = 9.dp.toPx(), cap = StrokeCap.Round)
-            )
-            drawArc(
-                color = glowColor,
-                startAngle = -90f,
-                sweepAngle = 360f * progress,
-                useCenter = false,
-                topLeft = Offset(cx - trackR, cy - trackR),
-                size = androidx.compose.ui.geometry.Size(trackR * 2, trackR * 2),
-                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                style = Stroke(width = 8.dp.toPx())
             )
 
-            // Bright "needle tip" dot at the current progress position.
-            val tipAngle = -90f + 360f * progress
-            val tipRad = Math.toRadians(tipAngle.toDouble())
-            val tipX = cx + trackR * cos(tipRad).toFloat()
-            val tipY = cy + trackR * sin(tipRad).toFloat()
-            drawCircle(color = glowColor.copy(alpha = 0.35f * pulse), center = Offset(tipX, tipY), radius = 6.dp.toPx())
-            drawCircle(color = Color.White, center = Offset(tipX, tipY), radius = 2.2.dp.toPx())
+            // Neon Cyan sharp foreground arc (high contrast core)
+            drawArc(
+                color = Color(0xFF00E5FF),
+                startAngle = -90f,
+                sweepAngle = 360f * progress,
+                useCenter = false,
+                style = Stroke(width = 3.5.dp.toPx())
+            )
+        }
+
+        // 2. Hardware-accelerated orbiting particles
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    rotationZ = angleDeg
+                }
+        ) {
+            val width = size.width
+            val height = size.height
+            val cx = width / 2f
+            val cy = height / 2f
+            val radius = size.minDimension / 2f - 6.dp.toPx()
+            val orbitRadius = radius + 5.dp.toPx()
+
+            if (isHyperFocus) {
+                // Hyper-focus mode: Split into three smaller orbiting particles spaced 120 degrees apart
+                for (i in 0..2) {
+                    val angleRad = Math.toRadians((i * 120).toDouble())
+                    val px = cx + orbitRadius * Math.cos(angleRad).toFloat()
+                    val py = cy + orbitRadius * Math.sin(angleRad).toFloat()
+
+                    // Translucent particle outer glow
+                    drawCircle(
+                        color = Color(0xFF00E5FF).copy(alpha = 0.4f),
+                        center = Offset(px, py),
+                        radius = 6.dp.toPx()
+                    )
+                    // High contrast white core
+                    drawCircle(
+                        color = Color.White,
+                        center = Offset(px, py),
+                        radius = 2.5.dp.toPx()
+                    )
+                }
+            } else {
+                // Normal mode: Single larger glowing planet/atom at 0 degrees vector
+                val px = cx + orbitRadius
+                val py = cy
+
+                // Wide soft magenta glow
+                drawCircle(
+                    color = Color(0xFFD500F9).copy(alpha = 0.25f),
+                    center = Offset(px, py),
+                    radius = 9.dp.toPx()
+                )
+                // Hot magenta inner glow
+                drawCircle(
+                    color = Color(0xFFD500F9).copy(alpha = 0.7f),
+                    center = Offset(px, py),
+                    radius = 5.5.dp.toPx()
+                )
+                // Ultra high-contrast pure white core
+                drawCircle(
+                    color = Color.White,
+                    center = Offset(px, py),
+                    radius = 3.dp.toPx()
+                )
+            }
         }
     }
 }
@@ -6059,8 +6467,8 @@ fun GlitchCountdownText(
     var isGlitching by remember { mutableStateOf(false) }
     var glitchOffsetX by remember { mutableStateOf(0f) }
     var glitchOffsetY by remember { mutableStateOf(0f) }
-    var glitchColor1 by remember { mutableStateOf(Color(0xFF3DFFC4)) }
-    var glitchColor2 by remember { mutableStateOf(Color(0xFFFFA630)) }
+    var glitchColor1 by remember { mutableStateOf(Color(0xFF00E5FF)) }
+    var glitchColor2 by remember { mutableStateOf(Color(0xFFFF007F)) }
 
     // Execute glitch effect on minute boundary change (seconds == 0) and random 30-second intervals
     LaunchedEffect(seconds) {
@@ -6072,11 +6480,11 @@ fun GlitchCountdownText(
                 glitchOffsetY = (-4..4).random().toFloat()
                 // Randomly swap foreground layers
                 if ((0..1).random() == 0) {
-                    glitchColor1 = Color(0xFF3DFFC4)
-                    glitchColor2 = Color(0xFFFFA630)
+                    glitchColor1 = Color(0xFF00E5FF)
+                    glitchColor2 = Color(0xFFFF007F)
                 } else {
-                    glitchColor1 = Color(0xFFFFA630)
-                    glitchColor2 = Color(0xFF3DFFC4)
+                    glitchColor1 = Color(0xFFFF007F)
+                    glitchColor2 = Color(0xFF00E5FF)
                 }
                 kotlinx.coroutines.delay(30L)
             }
@@ -6096,7 +6504,7 @@ fun GlitchCountdownText(
 
         // High fidelity glow effect for the retro-futuristic digital clock
         val neonGlowShadow = Shadow(
-            color = if (isHyperFocus) Color(0xFFFF5252).copy(alpha = 0.85f) else Color(0xFF3DFFC4).copy(alpha = 0.85f),
+            color = if (isHyperFocus) Color(0xFFFF5252).copy(alpha = 0.85f) else Color(0xFF00E5FF).copy(alpha = 0.85f),
             offset = Offset(0f, 0f),
             blurRadius = 14f
         )
@@ -6246,8 +6654,8 @@ fun StrictShieldHexagonVisual(
                 val vignetteGradient = Brush.radialGradient(
                     colors = listOf(
                         Color.Transparent,
-                        Color(0xFF3DFFC4).copy(alpha = 0.05f),
-                        Color(0xFF3DFFC4).copy(alpha = 0.25f)
+                        Color(0xFF00E5FF).copy(alpha = 0.05f),
+                        Color(0xFF00E5FF).copy(alpha = 0.25f)
                     ),
                     center = Offset(width / 2f, height / 2f),
                     radius = Math.max(width, height) / 1.1f
@@ -6286,14 +6694,14 @@ fun StrictShieldHexagonVisual(
                 // Outer neon cyan glow path layer
                 drawPath(
                     path = path,
-                    color = Color(0xFF3DFFC4).copy(alpha = 0.2f),
+                    color = Color(0xFF00E5FF).copy(alpha = 0.2f),
                     style = Stroke(width = 4.dp.toPx())
                 )
 
                 // High definition inner sharp grid line layer
                 drawPath(
                     path = path,
-                    color = Color(0xFF3DFFC4).copy(alpha = 0.5f),
+                    color = Color(0xFF00E5FF).copy(alpha = 0.5f),
                     style = Stroke(width = 1.2.dp.toPx())
                 )
             }
@@ -6960,6 +7368,69 @@ fun StudyPlannerDrawerCard(onPlannerClick: () -> Unit) {
             ) {
                 Text(
                     text = "Launch Planner",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ImportTestScheduleDrawerCard(onImportClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("import_test_schedule_drawer_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White.copy(alpha = 0.05f)
+        ),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CalendarToday,
+                    contentDescription = "Test Calendar Icon",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Text(
+                    text = "Import Test Schedule",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = Color.White
+                )
+            }
+
+            Text(
+                text = "Import upcoming JEE tests and track your syllabus topics offline.",
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+
+            Button(
+                onClick = onImportClick,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .testTag("import_test_schedule_drawer_button"),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) {
+                Text(
+                    text = "Open Bulk Import",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )

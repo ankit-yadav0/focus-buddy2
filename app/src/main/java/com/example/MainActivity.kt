@@ -48,6 +48,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.ui.helper.WallpaperBox
+import com.example.ui.helper.SpaceBackground
+import com.example.ui.helper.CyberBottomNav
+import com.example.ui.helper.CyberNavTab
 import com.example.ui.screens.AppSelectionScreen
 import com.example.ui.screens.FocusTimerScreen
 import com.example.ui.screens.PreSessionRitualScreen
@@ -116,7 +119,7 @@ fun LaunchEnforcementGate(
                 Icon(
                     imageVector = Icons.Default.Delete, // visual lock / shield
                     contentDescription = "Lock Icon",
-                    tint = Color(0xFF3DFFC4),
+                    tint = Color(0xFF00E5FF),
                     modifier = Modifier.size(64.dp)
                 )
 
@@ -207,7 +210,7 @@ fun PermissionRow(
                 text = if (isGranted) "Status: ACTIVE" else "Status: INACTIVE",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (isGranted) Color(0xFF3DFFC4) else Color(0xFFFF5252)
+                color = if (isGranted) Color(0xFF00E5FF) else Color(0xFFFF5252)
             )
         }
         Spacer(modifier = Modifier.width(8.dp))
@@ -215,7 +218,7 @@ fun PermissionRow(
             onClick = onGrant,
             enabled = !isGranted,
             colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF3DFFC4),
+                containerColor = Color(0xFF00E5FF),
                 contentColor = Color.Black,
                 disabledContainerColor = Color.White.copy(alpha = 0.1f),
                 disabledContentColor = Color.White.copy(alpha = 0.3f)
@@ -303,7 +306,7 @@ class MainActivity : ComponentActivity() {
                     contentAlignment = Alignment.Center
                 ) {
                     androidx.compose.material3.CircularProgressIndicator(
-                        color = Color(0xFF3DFFC4)
+                        color = Color(0xFF00E5FF)
                     )
                 }
             } else {
@@ -427,25 +430,31 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.fillMaxSize(),
                                 opacity = wallpaperOpacity
                             ) {
+                                val topLevelRoutes = setOf("home", "study_plan_dashboard", "app_selection")
                                 Scaffold(
                                     modifier = Modifier.fillMaxSize(),
                                     containerColor = Color.Transparent,
                                     bottomBar = {
-                                        if (currentRoute in com.example.ui.components.controlDeckTabs.map { it.route }) {
-                                            com.example.ui.components.ControlDeckBottomNav(
+                                        if (currentRoute != null && currentRoute in topLevelRoutes) {
+                                            CyberBottomNav(
                                                 currentRoute = currentRoute,
-                                                onTabSelected = { route ->
-                                                    navController.navigate(route) {
-                                                        popUpTo("home") { saveState = true }
-                                                        launchSingleTop = true
-                                                        restoreState = true
+                                                onTabSelected = { tab ->
+                                                    if (tab.route != currentRoute) {
+                                                        navController.navigate(tab.route) {
+                                                            popUpTo("home")
+                                                            launchSingleTop = true
+                                                        }
                                                     }
-                                                }
+                                                },
+                                                onStartSession = { navController.navigate("pre_session_ritual") }
                                             )
                                         }
                                     }
                                 ) { innerPadding ->
                                     Box(modifier = Modifier.fillMaxSize()) {
+                                        if (!hasWallpaper) {
+                                            SpaceBackground(modifier = Modifier.fillMaxSize())
+                                        }
                                         NavHost(
                                             navController = navController,
                                             startDestination = "home",
@@ -466,7 +475,8 @@ class MainActivity : ComponentActivity() {
                                                     },
                                                     onNavigateToEmergencyUnlock = { navController.navigate("emergency_unlock") },
                                                     onNavigateToUninstall = { navController.navigate("uninstall_reflection") },
-                                                    onNavigateToStudyPlanner = { navController.navigate("study_planner") }
+                                                    onNavigateToStudyPlanner = { navController.navigate("study_planner") },
+                                                    onNavigateToTestImport = { navController.navigate("test_import") }
                                                 )
                                             }
                                             composable("timer") {
@@ -595,6 +605,15 @@ class MainActivity : ComponentActivity() {
                                                     onBack = { navController.popBackStack() }
                                                 )
                                             }
+                                             composable("test_import") {
+                                                 com.example.ui.screens.BulkImportTestsScreen(
+                                                     viewModel = focusViewModel,
+                                                     onBack = { navController.popBackStack() },
+                                                     onImportComplete = {
+                                                         navController.popBackStack()
+                                                     }
+                                                 )
+                                             }
 
                                         }
 
