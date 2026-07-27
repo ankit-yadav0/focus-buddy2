@@ -3,6 +3,7 @@ package com.example
 import android.app.Application
 import com.example.data.AppDatabase
 import com.example.data.FocusRepository
+import com.example.ui.helper.BankingModeManager
 
 class FocusApplication : Application() {
     val database by lazy { AppDatabase.getDatabase(this) }
@@ -11,6 +12,7 @@ class FocusApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        BankingModeManager.init(this)
     }
 
     companion object {

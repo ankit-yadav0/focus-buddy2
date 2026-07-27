@@ -18,6 +18,10 @@ import com.example.UninstallFrictionActivity
 import com.example.FocusApplication
 import com.example.R
 import com.example.data.LongTermBlock
+import com.example.data.todayUsageDateKey
+import com.example.ui.helper.BankingModeManager
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import com.example.data.WebsiteBlock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -121,6 +125,16 @@ class FocusAccessibilityService : AccessibilityService() {
                     Log.d("FocusService", "Active Website blocks updated: count=${blocks.size}")
                 }
             }
+            // Daily time-allowance ticker: once a second, if the app currently in the
+            // foreground has an active long-term block WITH a daily allowance, accumulate
+            // usage against it and cut it off the instant the allowance is used up - without
+            // waiting for the user to switch apps and trigger a new WINDOW_STATE_CHANGED event.
+            serviceScope.launch {
+                while (isActive) {
+                    delay(1000)
+                    tickDailyAllowanceUsage()
+                }
+            }
         } catch (e: Exception) {
             Log.e("FocusService", "Error initializing focus service", e)
         }
@@ -206,6 +220,14 @@ class FocusAccessibilityService : AccessibilityService() {
             eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
 
         val packageName = event.packageName?.toString() ?: return
+
+        // Banking Mode: user-triggered, self-expiring bypass of ALL blocking (sessions,
+        // strict mode, long-term blocks) so apps that misbehave under an active
+        // AccessibilityService - most commonly banking/UPI apps - can be used normally.
+        if (BankingModeManager.isActive()) {
+            if (overlayView != null) removeOverlay()
+            return
+        }
 
         if (overlayView != null && packageName != currentBlockedPackage) {
             removeOverlay()
@@ -362,16 +384,26 @@ class FocusAccessibilityService : AccessibilityService() {
                     it.type == "APP" && it.target == packageName && now >= it.startDate && now <= it.endDate && it.isActive
                 }
                 if (activeLongTermAppBlock != null) {
-                    Log.d("FocusService", "Blocking app due to Long-Term block: $packageName")
-                    triggerBlockActivity(
-                        packageName,
-                        isLongTerm = true,
-                        reason = activeLongTermAppBlock.reason,
-                        endDate = activeLongTermAppBlock.endDate,
-                        targetLabel = activeLongTermAppBlock.targetLabel,
-                        type = "APP"
-                    )
-                    return
+                    val todayKey = todayUsageDateKey()
+                    val usedToday = if (activeLongTermAppBlock.usageDateKey == todayKey) activeLongTermAppBlock.usedSecondsToday else 0L
+                    val hasDailyAllowance = activeLongTermAppBlock.dailyLimitSeconds > 0L
+                    val allowanceExhausted = hasDailyAllowance && usedToday >= activeLongTermAppBlock.dailyLimitSeconds
+
+                    if (!hasDailyAllowance || allowanceExhausted) {
+                        Log.d("FocusService", "Blocking app due to Long-Term block: $packageName")
+                        triggerBlockActivity(
+                            packageName,
+                            isLongTerm = true,
+                            reason = if (allowanceExhausted) "Today's ${formatAllowance(activeLongTermAppBlock.dailyLimitSeconds)} time limit for ${activeLongTermAppBlock.targetLabel} is used up. It'll unlock again tomorrow." else activeLongTermAppBlock.reason,
+                            endDate = activeLongTermAppBlock.endDate,
+                            targetLabel = activeLongTermAppBlock.targetLabel,
+                            type = "APP"
+                        )
+                        return
+                    }
+                    // else: has a daily allowance and time remains today - let it through.
+                    // usageTicker() below accumulates the seconds spent in it and will
+                    // trigger the block itself the moment the allowance runs out.
                 }
             }
 
@@ -419,7 +451,15 @@ class FocusAccessibilityService : AccessibilityService() {
                 val hasShortsActions = screenTexts.any { it.equals("Remix", ignoreCase = true) } ||
                                        screenTexts.any { it.equals("Dislike", ignoreCase = true) }
 
-                if (hasShortsClass || hasShortsId || (hasShortsText && (hasShortsDescription || hasShortsActions))) {
+                // hasShortsClass alone is NOT reliable: the home-feed Shorts shelf (the row
+                // of thumbnails you scroll past) uses view classes whose names also contain
+                // "shorts"/"reel", even though no Short is actually playing. So a class-name
+                // match by itself must never trigger detection - it has to be corroborated by
+                // a real player signal (id) or player-only description/actions, same bar as
+                // the text-based check below.
+                if (hasShortsId ||
+                    (hasShortsClass && (hasShortsId || hasShortsDescription || hasShortsActions)) ||
+                    (hasShortsText && (hasShortsDescription || hasShortsActions))) {
                     isShortsDetected = true
                 }
             }
@@ -651,6 +691,58 @@ class FocusAccessibilityService : AccessibilityService() {
             if (found) return true
         }
         return false
+    }
+
+    /**
+     * Runs once a second. If the app currently in the foreground is under a long-term
+     * block that has a daily time allowance, this either accrues one more second against
+     * that allowance, or - if the allowance is already exhausted - blocks the app right
+     * away, mid-use, rather than waiting for the next app switch.
+     */
+    private fun tickDailyAllowanceUsage() {
+        val pkg = currentPackage.value
+        if (pkg == "None" || pkg == applicationContext.packageName) return
+        val now = System.currentTimeMillis()
+        val block = longTermBlocks.firstOrNull {
+            it.type == "APP" && it.target == pkg && it.isActive && now in it.startDate..it.endDate && it.dailyLimitSeconds > 0L
+        } ?: return
+
+        val todayKey = todayUsageDateKey()
+        val usedToday = if (block.usageDateKey == todayKey) block.usedSecondsToday else 0L
+
+        if (usedToday >= block.dailyLimitSeconds) {
+            Log.d("FocusService", "Daily allowance exhausted mid-use for $pkg - blocking now")
+            triggerBlockActivity(
+                pkg,
+                isLongTerm = true,
+                reason = "Today's ${formatAllowance(block.dailyLimitSeconds)} time limit for ${block.targetLabel} is used up. It'll unlock again tomorrow.",
+                endDate = block.endDate,
+                targetLabel = block.targetLabel,
+                type = "APP"
+            )
+        } else {
+            val repository = (application as FocusApplication).repository
+            serviceScope.launch {
+                try {
+                    repository.recordLongTermBlockUsage(block.id, 1L)
+                } catch (e: Exception) {
+                    Log.e("FocusService", "Error recording daily allowance usage", e)
+                }
+            }
+        }
+    }
+
+    private fun formatAllowance(seconds: Long): String {
+        val h = seconds / 3600
+        val m = (seconds % 3600) / 60
+        val s = seconds % 60
+        return when {
+            h > 0 && m > 0 -> "${h}h ${m}m"
+            h > 0 -> "${h}h"
+            m > 0 && s > 0 -> "${m}m ${s}s"
+            m > 0 -> "${m}m"
+            else -> "${s}s"
+        }
     }
 
     private fun triggerContentBlockActivity(packageName: String, contentType: String) {

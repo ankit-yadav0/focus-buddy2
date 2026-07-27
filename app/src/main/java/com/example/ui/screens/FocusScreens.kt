@@ -286,13 +286,21 @@ fun HomeScreen(
             topBar = {
                 CenterAlignedTopAppBar(
                     title = {
-                        Text(
-                            text = "Focuss Buddy",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 22.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            letterSpacing = 1.sp
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "Focus Buddy",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 20.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "DISCIPLINE · FOCUS · VICTORY",
+                                fontSize = 9.sp,
+                                letterSpacing = 1.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     },
                     navigationIcon = {
                         IconButton(
@@ -340,6 +348,15 @@ fun HomeScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
+                    // Streak + Today's Focus HUD row
+                    StreakTodayFocusRow(
+                        currentStreak = advancedAnalytics.currentStreak,
+                        todayFocusTimeSeconds = advancedAnalytics.todayFocusTimeSeconds
+                    )
+
+                    // Banking Mode - quick, self-expiring bypass for banking/UPI apps
+                    BankingModeCard()
+
                     // Hero Illustration / Card
                     HeroBannerCard(blockedCount = blockedApps.size)
 
@@ -601,9 +618,9 @@ fun HomeScreen(
         AddLongTermBlockDialog(
             installedApps = viewModel.installedApps.collectAsStateWithLifecycle().value,
             onDismiss = { showAddLongTermBlockDialog = false },
-            onConfirm = { type, target, label, reason, start, end ->
+            onConfirm = { type, target, label, reason, start, end, dailyLimitSeconds ->
                 if (type == "APP") {
-                    viewModel.addLongTermBlock(type, target, label, reason, start, end)
+                    viewModel.addLongTermBlock(type, target, label, reason, start, end, dailyLimitSeconds)
                 } else {
                     viewModel.addWebsiteBlock(target, reason, start, end)
                 }
@@ -620,6 +637,182 @@ fun HomeScreen(
                     viewModel.setBatteryOptimizationPromptShown()
                 }
                 showBatteryOptimizationDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+fun StreakTodayFocusRow(currentStreak: Int, todayFocusTimeSeconds: Long) {
+    val todayHours = todayFocusTimeSeconds / 3600
+    val todayMinutes = (todayFocusTimeSeconds % 3600) / 60
+    val todayLabel = String.format(Locale.getDefault(), "%02dH %02dM", todayHours, todayMinutes)
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        HudStatCard(
+            modifier = Modifier.weight(1f),
+            icon = Icons.Default.LocalFireDepartment,
+            label = "STREAK",
+            value = "$currentStreak",
+            unit = if (currentStreak == 1) "DAY" else "DAYS",
+            accent = MaterialTheme.colorScheme.primary
+        )
+        HudStatCard(
+            modifier = Modifier.weight(1f),
+            icon = Icons.Default.Timer,
+            label = "TODAY'S FOCUS",
+            value = todayLabel,
+            unit = null,
+            accent = MaterialTheme.colorScheme.secondary
+        )
+    }
+}
+
+@Composable
+private fun HudStatCard(
+    modifier: Modifier = Modifier,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    unit: String?,
+    accent: Color
+) {
+    Card(
+        modifier = modifier.testTag("hud_stat_card_${label}"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.5f))
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(imageVector = icon, contentDescription = null, tint = accent, modifier = Modifier.size(14.dp))
+                Text(
+                    text = label,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp,
+                    color = accent
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = value,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (unit != null) {
+                    Text(
+                        text = unit,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BankingModeCard() {
+    val scope = rememberCoroutineScope()
+    var endTime by remember { mutableStateOf(com.example.ui.helper.BankingModeManager.endTime.value) }
+    var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        com.example.ui.helper.BankingModeManager.endTime.collectLatest { endTime = it }
+    }
+    LaunchedEffect(endTime) {
+        while (System.currentTimeMillis() < endTime) {
+            nowTick = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1000)
+        }
+        nowTick = System.currentTimeMillis()
+    }
+
+    val isActive = nowTick < endTime
+    val remainingSeconds = ((endTime - nowTick).coerceAtLeast(0L)) / 1000
+    val remainingLabel = String.format(Locale.getDefault(), "%d:%02d", remainingSeconds / 60, remainingSeconds % 60)
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("banking_mode_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, if (isActive) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(
+                    imageVector = Icons.Default.AccountBalance,
+                    contentDescription = "Banking mode icon",
+                    tint = if (isActive) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Column {
+                    Text("Banking Mode", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+                    Text(
+                        text = if (isActive) "All blocking paused - back on in $remainingLabel" else "Pause all blocking for 5 min to use banking apps",
+                        fontSize = 11.sp,
+                        color = if (isActive) Color(0xFF4CAF50) else Color.White.copy(alpha = 0.6f)
+                    )
+                }
+            }
+
+            if (isActive) {
+                TextButton(onClick = { com.example.ui.helper.BankingModeManager.deactivateNow(); nowTick = System.currentTimeMillis() }) {
+                    Text("End now", color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            } else {
+                Button(
+                    onClick = { showConfirmDialog = true },
+                    modifier = Modifier.testTag("banking_mode_enable_button"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Enable", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+
+    if (showConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            title = { Text("Enable Banking Mode?") },
+            text = { Text("This pauses ALL Focus Buddy blocking - active sessions, Strict Mode, and long-term blocks - for 5 minutes so your banking app can work normally. It turns back on automatically after 5 minutes.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    com.example.ui.helper.BankingModeManager.activate()
+                    nowTick = System.currentTimeMillis()
+                    showConfirmDialog = false
+                }) { Text("Enable for 5 min") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -1270,6 +1463,53 @@ fun ActiveSessionWidget(
                 }
             }
 
+            // Large radar-style countdown display (HUD centerpiece)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .testTag("session_radar_display"),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier.size(180.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    QuantumOrbitProgressRing(
+                        progress = progressFraction,
+                        timeRemainingMs = timeRemaining,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "TIME LEFT",
+                            fontSize = 10.sp,
+                            letterSpacing = 1.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = String.format(
+                                Locale.getDefault(),
+                                "%02d:%02d:%02d",
+                                hours + days * 24,
+                                minutes,
+                                seconds
+                            ),
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "FOCUS MODE",
+                            fontSize = 10.sp,
+                            letterSpacing = 1.5.sp,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                }
+            }
+
             // Dynamic Plant Growth Visual Centerpiece
             Column(
                 modifier = Modifier
@@ -1687,6 +1927,33 @@ fun LongTermBlockSection(
                                         fontWeight = FontWeight.Medium
                                       )
                                   }
+
+                                if (block.dailyLimitSeconds > 0L) {
+                                    val todayKey = remember { com.example.data.todayUsageDateKey() }
+                                    val usedToday = if (block.usageDateKey == todayKey) block.usedSecondsToday else 0L
+                                    val usedFraction = (usedToday.toFloat() / block.dailyLimitSeconds.toFloat()).coerceIn(0f, 1f)
+                                    fun fmt(sec: Long): String {
+                                        val h = sec / 3600; val m = (sec % 3600) / 60; val s = sec % 60
+                                        return if (h > 0) String.format("%dh %02dm", h, m) else if (m > 0) String.format("%dm %02ds", m, s) else "${s}s"
+                                    }
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            text = "Daily limit: ${fmt(usedToday)} / ${fmt(block.dailyLimitSeconds)} used today",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.secondary,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        LinearProgressIndicator(
+                                            progress = usedFraction,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(4.dp)
+                                                .clip(RoundedCornerShape(2.dp)),
+                                            color = if (usedFraction >= 1f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
+                                            trackColor = Color.White.copy(alpha = 0.1f)
+                                        )
+                                    }
+                                }
 
                                   HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
 
@@ -2951,13 +3218,20 @@ fun TrendChart(
 fun AddLongTermBlockDialog(
     installedApps: List<AppInfo>,
     onDismiss: () -> Unit,
-    onConfirm: (type: String, target: String, label: String, reason: String, startDate: Long, endDate: Long) -> Unit
+    onConfirm: (type: String, target: String, label: String, reason: String, startDate: Long, endDate: Long, dailyLimitSeconds: Long) -> Unit
 ) {
     val context = LocalContext.current
     var blockType by remember { mutableStateOf("APP") } // "APP" or "WEBSITE"
     var selectedApp by remember { mutableStateOf<AppInfo?>(null) }
     var websiteUrl by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
+
+    // Full block (all day, every day - original behavior) vs a daily time allowance
+    // (usable for up to H/M/S per day, then blocked until the next day).
+    var limitMode by remember { mutableStateOf("FULL") } // "FULL" or "DAILY_LIMIT"
+    var limitHoursText by remember { mutableStateOf("") }
+    var limitMinutesText by remember { mutableStateOf("") }
+    var limitSecondsText by remember { mutableStateOf("") }
 
     var startDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
     var endDateMillis by remember { mutableStateOf(System.currentTimeMillis() + 7 * 24 * 60 * 60 * 1000L) } // default 1 week
@@ -3131,6 +3405,81 @@ fun AddLongTermBlockDialog(
                     )
                 }
 
+                // Daily Time Allowance
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text("Blocking Mode", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.5f))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Button(
+                            onClick = { limitMode = "FULL" },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (limitMode == "FULL") MaterialTheme.colorScheme.primary else Color(0x15FFFFFF),
+                                contentColor = if (limitMode == "FULL") MaterialTheme.colorScheme.onPrimary else Color.White
+                            ),
+                            modifier = Modifier.weight(1f).testTag("block_mode_full"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Full Block", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Button(
+                            onClick = { limitMode = "DAILY_LIMIT" },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (limitMode == "DAILY_LIMIT") MaterialTheme.colorScheme.primary else Color(0x15FFFFFF),
+                                contentColor = if (limitMode == "DAILY_LIMIT") MaterialTheme.colorScheme.onPrimary else Color.White
+                            ),
+                            modifier = Modifier.weight(1f).testTag("block_mode_daily_limit"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Daily Time Limit", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    if (limitMode == "DAILY_LIMIT") {
+                        Text(
+                            "Allowed use per day before it's blocked for the rest of that day:",
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.5f)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = limitHoursText,
+                                onValueChange = { v -> if (v.length <= 3 && v.all { it.isDigit() }) limitHoursText = v },
+                                label = { Text("Hours") },
+                                modifier = Modifier.weight(1f).testTag("daily_limit_hours"),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = limitMinutesText,
+                                onValueChange = { v -> if (v.length <= 2 && v.all { it.isDigit() }) limitMinutesText = v },
+                                label = { Text("Minutes") },
+                                modifier = Modifier.weight(1f).testTag("daily_limit_minutes"),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = limitSecondsText,
+                                onValueChange = { v -> if (v.length <= 2 && v.all { it.isDigit() }) limitSecondsText = v },
+                                label = { Text("Seconds") },
+                                modifier = Modifier.weight(1f).testTag("daily_limit_seconds"),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+                    }
+                }
+
                 // Date Selectors
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -3246,11 +3595,21 @@ fun AddLongTermBlockDialog(
                                 validationError = "End Date must be after Start Date."
                                 return@Button
                             }
+                            val limitHours = limitHoursText.toLongOrNull() ?: 0L
+                            val limitMinutes = limitMinutesText.toLongOrNull() ?: 0L
+                            val limitSeconds = limitSecondsText.toLongOrNull() ?: 0L
+                            val dailyLimitSeconds = if (limitMode == "DAILY_LIMIT") {
+                                (limitHours * 3600) + (limitMinutes * 60) + limitSeconds
+                            } else 0L
+                            if (limitMode == "DAILY_LIMIT" && dailyLimitSeconds <= 0L) {
+                                validationError = "Enter a daily time limit greater than 0."
+                                return@Button
+                            }
 
                             validationError = null
                             val finalTarget = if (blockType == "APP") selectedApp!!.packageName else websiteUrl
                             val finalLabel = if (blockType == "APP") selectedApp!!.appName else websiteUrl
-                            onConfirm(blockType, finalTarget, finalLabel, reason, startDateMillis, endDateMillis)
+                            onConfirm(blockType, finalTarget, finalLabel, reason, startDateMillis, endDateMillis, dailyLimitSeconds)
                         },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp)

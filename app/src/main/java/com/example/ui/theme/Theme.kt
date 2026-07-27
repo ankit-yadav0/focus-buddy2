@@ -59,6 +59,7 @@ enum class AccentTheme(
     val secondary: Color,
     val tertiary: Color
 ) {
+    DEEP_SPACE("Deep Space", SpaceCyan, SpaceViolet, SpaceRed),
     SUNSET_ORANGE("Sunset Orange", Color(0xFFFF7043), Color(0xFF26A69A), Color(0xFFFFB74D)),
     OCEAN_BLUE("Ocean Blue", Color(0xFF29B6F6), Color(0xFF26A69A), Color(0xFFAB47BC)),
     FOREST_GREEN("Forest Green", Color(0xFF66BB6A), Color(0xFF9CCC65), Color(0xFF26A69A)),
@@ -70,12 +71,13 @@ enum class AccentTheme(
 @Composable
 fun MyApplicationTheme(
     darkTheme: Boolean = true, // Default to true as Focuss Buddy is a premium dark theme app
-    accentThemeName: String = "Sunset Orange",
+    accentThemeName: String = "Deep Space",
     dynamicColor: Boolean = false, // Keep false to maintain our custom visual branding identity
     content: @Composable () -> Unit,
 ) {
     val isNightModeActive = SmartNightModeManager.isNightModeActive.collectAsState().value
-    val accent = AccentTheme.values().find { it.displayName == accentThemeName } ?: AccentTheme.SUNSET_ORANGE
+    val accent = AccentTheme.values().find { it.displayName == accentThemeName } ?: AccentTheme.DEEP_SPACE
+    val isDeepSpace = accent == AccentTheme.DEEP_SPACE
 
     val colorScheme = when {
         isNightModeActive -> PitchBlackColors
@@ -85,16 +87,18 @@ fun MyApplicationTheme(
         }
         darkTheme -> darkColorScheme(
             primary = accent.primary,
-            onPrimary = OnPrimaryFocus,
+            onPrimary = if (isDeepSpace) SpaceVoidBackground else OnPrimaryFocus,
             secondary = accent.secondary,
             onSecondary = OnSecondaryFocus,
             tertiary = accent.tertiary,
-            background = DarkBackground,
-            onBackground = OnBackgroundFocus,
-            surface = DarkSurface,
-            onSurface = OnSurfaceFocus,
-            surfaceVariant = DarkSurfaceVariant,
-            onSurfaceVariant = OnBackgroundFocus
+            background = if (isDeepSpace) SpaceVoidBackground else DarkBackground,
+            onBackground = if (isDeepSpace) SpaceTextPrimary else OnBackgroundFocus,
+            surface = if (isDeepSpace) SpaceSurface else DarkSurface,
+            onSurface = if (isDeepSpace) SpaceTextPrimary else OnSurfaceFocus,
+            surfaceVariant = if (isDeepSpace) SpaceSurfaceVariant else DarkSurfaceVariant,
+            onSurfaceVariant = if (isDeepSpace) SpaceTextSecondary else OnBackgroundFocus,
+            error = SpaceRed,
+            onError = SpaceTextPrimary
         )
         else -> lightColorScheme(
             primary = accent.primary,

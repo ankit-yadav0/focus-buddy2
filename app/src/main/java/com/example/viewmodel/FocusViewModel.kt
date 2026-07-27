@@ -711,7 +711,7 @@ class FocusViewModel(
     }
 
     // Long Term Block operations
-    fun addLongTermBlock(type: String, target: String, targetLabel: String, reason: String, startDate: Long, endDate: Long) {
+    fun addLongTermBlock(type: String, target: String, targetLabel: String, reason: String, startDate: Long, endDate: Long, dailyLimitSeconds: Long = 0L) {
         viewModelScope.launch {
             val block = LongTermBlock(
                 type = type,
@@ -720,7 +720,8 @@ class FocusViewModel(
                 reason = reason,
                 startDate = startDate,
                 endDate = endDate,
-                isActive = true
+                isActive = true,
+                dailyLimitSeconds = dailyLimitSeconds
             )
             repository.addLongTermBlock(block)
         }

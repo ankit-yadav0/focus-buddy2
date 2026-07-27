@@ -48,6 +48,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.ui.helper.WallpaperBox
+import com.example.ui.helper.SpaceBackground
+import com.example.ui.helper.CyberBottomNav
+import com.example.ui.helper.CyberNavTab
 import com.example.ui.screens.AppSelectionScreen
 import com.example.ui.screens.FocusTimerScreen
 import com.example.ui.screens.PreSessionRitualScreen
@@ -427,11 +430,31 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.fillMaxSize(),
                                 opacity = wallpaperOpacity
                             ) {
+                                val topLevelRoutes = setOf("home", "study_plan_dashboard", "app_selection")
                                 Scaffold(
                                     modifier = Modifier.fillMaxSize(),
-                                    containerColor = Color.Transparent
+                                    containerColor = Color.Transparent,
+                                    bottomBar = {
+                                        if (currentRoute != null && currentRoute in topLevelRoutes) {
+                                            CyberBottomNav(
+                                                currentRoute = currentRoute,
+                                                onTabSelected = { tab ->
+                                                    if (tab.route != currentRoute) {
+                                                        navController.navigate(tab.route) {
+                                                            popUpTo("home")
+                                                            launchSingleTop = true
+                                                        }
+                                                    }
+                                                },
+                                                onStartSession = { navController.navigate("pre_session_ritual") }
+                                            )
+                                        }
+                                    }
                                 ) { innerPadding ->
                                     Box(modifier = Modifier.fillMaxSize()) {
+                                        if (!hasWallpaper) {
+                                            SpaceBackground(modifier = Modifier.fillMaxSize())
+                                        }
                                         NavHost(
                                             navController = navController,
                                             startDestination = "home",

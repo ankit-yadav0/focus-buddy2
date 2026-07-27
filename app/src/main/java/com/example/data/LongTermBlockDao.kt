@@ -26,6 +26,9 @@ interface LongTermBlockDao {
     @Query("UPDATE long_term_blocks SET isActive = 0 WHERE endDate <= :now AND isActive = 1")
     suspend fun deactivateExpiredBlocks(now: Long): Int
 
+    @Query("UPDATE long_term_blocks SET usedSecondsToday = :usedSeconds, usageDateKey = :dateKey WHERE id = :id")
+    suspend fun updateUsage(id: Int, usedSeconds: Long, dateKey: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBlock(block: LongTermBlock)
 
