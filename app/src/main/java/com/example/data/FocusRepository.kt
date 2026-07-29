@@ -188,18 +188,12 @@ class FocusRepository(
         return longTermBlockDao.getAllLongTermBlocksList()
     }
 
-    /**
-     * Adds [deltaSeconds] of usage toward a long-term block's daily allowance. If the
-     * stored usage belongs to a previous day, it resets to zero first so yesterday's usage
-     * never carries over. Returns the updated block, or null if it no longer exists.
-     */
-    suspend fun recordLongTermBlockUsage(blockId: Int, deltaSeconds: Long): LongTermBlock? {
-        val block = longTermBlockDao.getBlockById(blockId) ?: return null
-        val todayKey = todayUsageDateKey()
-        val baseUsed = if (block.usageDateKey == todayKey) block.usedSecondsToday else 0L
-        val newUsed = baseUsed + deltaSeconds
-        longTermBlockDao.updateUsage(blockId, newUsed, todayKey)
-        return block.copy(usedSecondsToday = newUsed, usageDateKey = todayKey)
+    suspend fun getActiveQuotaBlockForPackage(packageName: String): LongTermBlock? {
+        return longTermBlockDao.getActiveQuotaBlockForPackage(packageName)
+    }
+
+    suspend fun updateLongTermBlockUsage(id: Int, usedSeconds: Long, epochDay: Long) {
+        longTermBlockDao.updateUsage(id, usedSeconds, epochDay)
     }
 
     suspend fun addWebsiteBlock(block: WebsiteBlock) {

@@ -26,11 +26,14 @@ interface LongTermBlockDao {
     @Query("UPDATE long_term_blocks SET isActive = 0 WHERE endDate <= :now AND isActive = 1")
     suspend fun deactivateExpiredBlocks(now: Long): Int
 
-    @Query("UPDATE long_term_blocks SET usedSecondsToday = :usedSeconds, usageDateKey = :dateKey WHERE id = :id")
-    suspend fun updateUsage(id: Int, usedSeconds: Long, dateKey: String)
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBlock(block: LongTermBlock)
+
+    @Query("UPDATE long_term_blocks SET usedSecondsToday = :usedSeconds, lastUsageResetEpochDay = :epochDay WHERE id = :id")
+    suspend fun updateUsage(id: Int, usedSeconds: Long, epochDay: Long)
+
+    @Query("SELECT * FROM long_term_blocks WHERE type = 'APP' AND target = :packageName AND isActive = 1 AND dailyLimitSeconds IS NOT NULL LIMIT 1")
+    suspend fun getActiveQuotaBlockForPackage(packageName: String): LongTermBlock?
 
     @Query("DELETE FROM long_term_blocks WHERE id = :id")
     suspend fun deleteBlockById(id: Int)

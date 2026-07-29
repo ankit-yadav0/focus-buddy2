@@ -13,11 +13,12 @@ data class LongTermBlock(
     val startDate: Long,
     val endDate: Long,
     val isActive: Boolean = true,
-    // Daily time allowance: 0 = fully blocked all day (original behavior, unchanged for
-    // every existing block). > 0 = the app/website may be used for up to this many seconds
-    // per day before Focus Buddy blocks it for the rest of that day; the allowance resets
-    // at the start of the next day.
-    val dailyLimitSeconds: Long = 0L,
-    val usedSecondsToday: Long = 0L,
-    val usageDateKey: String = "" // "yyyy-MM-dd" - which day usedSecondsToday belongs to
+    // Daily time-quota mode: when null, behaves exactly as before (fully blocked
+    // for the whole startDate..endDate window). When set, the app is ALLOWED
+    // during that window but only for this many seconds per day - once the
+    // daily quota is used up, it's blocked for the rest of that day and the
+    // counter resets at midnight.
+    val dailyLimitSeconds: Long? = null,
+    val usedSecondsToday: Long = 0,
+    val lastUsageResetEpochDay: Long = 0
 )

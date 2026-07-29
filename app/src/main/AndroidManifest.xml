@@ -100,6 +100,10 @@
             android:name=".receiver.TestCountdownReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".receiver.BankingModeReceiver"
+            android:exported="false" />
+
         <!-- Device Administrator Receiver for Zero-Leak Uninstall Block -->
         <receiver
             android:name=".receiver.MyDeviceAdminReceiver"
