@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Legacy Android-template default colors were removed as unused - the
-         app's actual color system lives in Kotlin (ui/theme/Color.kt) since
-         it's driven entirely by Jetpack Compose's MaterialTheme. -->
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
-</resources>
