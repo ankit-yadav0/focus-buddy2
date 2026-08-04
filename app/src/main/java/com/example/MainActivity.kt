@@ -55,6 +55,9 @@ import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.BlockDetailsScreen
 import com.example.ui.screens.EmergencyUnlockScreen
 import com.example.ui.screens.StrictScheduleManagerScreen
+import com.example.ui.screens.BlocksProgressScreen
+import com.example.ui.screens.InsightsScreen
+import com.example.ui.screens.ForestGalleryScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.FocusViewModel
 import com.example.viewmodel.FocusViewModelFactory
@@ -116,7 +119,7 @@ fun LaunchEnforcementGate(
                 Icon(
                     imageVector = Icons.Default.Delete, // visual lock / shield
                     contentDescription = "Lock Icon",
-                    tint = Color(0xFF00E5FF),
+                    tint = Color(0xFF3DFFC4),
                     modifier = Modifier.size(64.dp)
                 )
 
@@ -207,7 +210,7 @@ fun PermissionRow(
                 text = if (isGranted) "Status: ACTIVE" else "Status: INACTIVE",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (isGranted) Color(0xFF00E5FF) else Color(0xFFFF5252)
+                color = if (isGranted) Color(0xFF3DFFC4) else Color(0xFFFF5252)
             )
         }
         Spacer(modifier = Modifier.width(8.dp))
@@ -215,7 +218,7 @@ fun PermissionRow(
             onClick = onGrant,
             enabled = !isGranted,
             colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF00E5FF),
+                containerColor = Color(0xFF3DFFC4),
                 contentColor = Color.Black,
                 disabledContainerColor = Color.White.copy(alpha = 0.1f),
                 disabledContentColor = Color.White.copy(alpha = 0.3f)
@@ -303,7 +306,7 @@ class MainActivity : ComponentActivity() {
                     contentAlignment = Alignment.Center
                 ) {
                     androidx.compose.material3.CircularProgressIndicator(
-                        color = Color(0xFF00E5FF)
+                        color = Color(0xFF3DFFC4)
                     )
                 }
             } else {
@@ -429,7 +432,21 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 Scaffold(
                                     modifier = Modifier.fillMaxSize(),
-                                    containerColor = Color.Transparent
+                                    containerColor = Color.Transparent,
+                                    bottomBar = {
+                                        if (currentRoute in com.example.ui.components.controlDeckTabs.map { it.route }) {
+                                            com.example.ui.components.ControlDeckBottomNav(
+                                                currentRoute = currentRoute,
+                                                onTabSelected = { route ->
+                                                    navController.navigate(route) {
+                                                        popUpTo("home") { saveState = true }
+                                                        launchSingleTop = true
+                                                        restoreState = true
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
                                 ) { innerPadding ->
                                     Box(modifier = Modifier.fillMaxSize()) {
                                         NavHost(
@@ -453,7 +470,28 @@ class MainActivity : ComponentActivity() {
                                                     onNavigateToEmergencyUnlock = { navController.navigate("emergency_unlock") },
                                                     onNavigateToUninstall = { navController.navigate("uninstall_reflection") },
                                                     onNavigateToStudyPlanner = { navController.navigate("study_planner") },
-                                                    onNavigateToTestImport = { navController.navigate("test_import") }
+                                                    onNavigateToBlocksProgress = { navController.navigate("blocks_progress") },
+                                                    onNavigateToInsights = { navController.navigate("insights") },
+                                                    onNavigateToForestGallery = { navController.navigate("forest_gallery") }
+                                                )
+                                            }
+                                            composable("blocks_progress") {
+                                                BlocksProgressScreen(
+                                                    viewModel = focusViewModel,
+                                                    onBack = { navController.popBackStack() },
+                                                    onNavigateToBlockDetails = { id, type -> navController.navigate("block_details/$type/$id") }
+                                                )
+                                            }
+                                            composable("insights") {
+                                                InsightsScreen(
+                                                    viewModel = focusViewModel,
+                                                    onBack = { navController.popBackStack() }
+                                                )
+                                            }
+                                            composable("forest_gallery") {
+                                                ForestGalleryScreen(
+                                                    viewModel = focusViewModel,
+                                                    onBack = { navController.popBackStack() }
                                                 )
                                             }
                                             composable("timer") {
@@ -582,15 +620,6 @@ class MainActivity : ComponentActivity() {
                                                     onBack = { navController.popBackStack() }
                                                 )
                                             }
-                                             composable("test_import") {
-                                                 com.example.ui.screens.BulkImportTestsScreen(
-                                                     viewModel = focusViewModel,
-                                                     onBack = { navController.popBackStack() },
-                                                     onImportComplete = {
-                                                         navController.popBackStack()
-                                                     }
-                                                 )
-                                             }
 
                                         }
 

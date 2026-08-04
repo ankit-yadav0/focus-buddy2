@@ -8,22 +8,27 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Park
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Icon
@@ -51,7 +56,10 @@ val controlDeckTabs = listOf(
     ControlDeckTab("home", "HOME", Icons.Default.Home),
     ControlDeckTab("timer", "FOCUS", Icons.Default.Timer),
     ControlDeckTab("schedule_manager", "STRICT", Icons.Default.Shield),
-    ControlDeckTab("study_planner", "PLAN", Icons.Default.MenuBook)
+    ControlDeckTab("study_planner", "PLAN", Icons.Default.MenuBook),
+    ControlDeckTab("blocks_progress", "BLOCKS", Icons.Default.Block),
+    ControlDeckTab("insights", "STATS", Icons.Default.BarChart),
+    ControlDeckTab("forest_gallery", "FOREST", Icons.Default.Park)
 )
 
 /**
@@ -59,6 +67,10 @@ val controlDeckTabs = listOf(
  * home dial repeated here: tick-mark dividers between icons, and a bold
  * pill + glowing arc under the active tab so it reads as clearly "engaged"
  * rather than a subtle tint change.
+ *
+ * The pill is wrapped in a horizontally-scrollable row so that no matter
+ * how many tabs get added later, the bar never overflows/clips on smaller
+ * screens - it just becomes swipeable instead of breaking the layout.
  */
 @Composable
 fun ControlDeckBottomNav(
@@ -67,31 +79,39 @@ fun ControlDeckBottomNav(
     modifier: Modifier = Modifier
 ) {
     val phosphor = MaterialTheme.colorScheme.primary
+    val scrollState = rememberScrollState()
 
-    Row(
+    Box(
         modifier = modifier
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .background(Color(0xF012171F))
-            .padding(vertical = 8.dp, horizontal = 4.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center
     ) {
-        controlDeckTabs.forEachIndexed { index, tab ->
-            val isActive = currentRoute == tab.route
-            ControlDeckNavItem(
-                tab = tab,
-                isActive = isActive,
-                activeColor = phosphor,
-                onClick = { onTabSelected(tab.route) }
-            )
-            if (index != controlDeckTabs.lastIndex) {
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(22.dp)
-                        .background(Color.White.copy(alpha = 0.08f))
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color(0xF012171F))
+                .horizontalScroll(scrollState)
+                .padding(vertical = 8.dp, horizontal = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            controlDeckTabs.forEachIndexed { index, tab ->
+                val isActive = currentRoute == tab.route
+                ControlDeckNavItem(
+                    tab = tab,
+                    isActive = isActive,
+                    activeColor = phosphor,
+                    onClick = { onTabSelected(tab.route) }
                 )
+                if (index != controlDeckTabs.lastIndex) {
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(22.dp)
+                            .background(Color.White.copy(alpha = 0.08f))
+                    )
+                }
             }
         }
     }
@@ -122,7 +142,7 @@ private fun ControlDeckNavItem(
             .then(
                 if (isActive) Modifier.background(activeColor.copy(alpha = 0.16f)) else Modifier
             )
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(
