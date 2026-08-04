@@ -6,6 +6,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
+// Used by ControlDeckNav for the "instrument panel" monospace tab labels.
+// No custom font files are bundled, so this maps to the built-in system
+// monospace font rather than requiring .ttf/.otf assets under res/font/.
+val JetBrainsMonoFamily = FontFamily.Monospace
+
 // Set of Material typography styles to start with
 val Typography =
   Typography(
