@@ -46,17 +46,6 @@ class FocusAccessibilityService : AccessibilityService() {
         val lastEvent = kotlinx.coroutines.flow.MutableStateFlow("No event yet")
         val shortsDetectionStatus = kotlinx.coroutines.flow.MutableStateFlow("Shorts Not Detected")
 
-        /**
-         * Truly disables this accessibility service (not just an internal pause) - this
-         * is what makes apps that check Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-         * (many banking apps do, as a blanket security measure) actually work again,
-         * since the service is genuinely removed from that system list. See
-         * BankingModeReceiver's class doc for why this can't be automatically reversed.
-         */
-        fun disableForBanking() {
-            instance?.disableSelf()
-        }
-
         private const val NOTIFICATION_CHANNEL_ID = "focus_buddy_protection"
         private const val FOREGROUND_NOTIFICATION_ID = 4201
 
@@ -166,17 +155,6 @@ class FocusAccessibilityService : AccessibilityService() {
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or 
                     AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
             notificationTimeout = 100
-        }
-
-        // If the service is (re)connecting while Banking Mode's flag is still set, the
-        // user has manually re-enabled accessibility early (before the 5-minute window
-        // elapsed) - clean up the now-redundant reminder so it doesn't fire later.
-        serviceScope.launch {
-            val repository = (application as FocusApplication).repository
-            if (repository.getSetting("banking_mode_active") == "true") {
-                repository.saveSetting("banking_mode_active", "false")
-                com.example.scheduler.BankingModeScheduler.cancelReminder(applicationContext)
-            }
         }
     }
 

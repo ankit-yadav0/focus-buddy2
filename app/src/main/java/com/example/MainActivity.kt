@@ -469,10 +469,7 @@ class MainActivity : ComponentActivity() {
                                                     },
                                                     onNavigateToEmergencyUnlock = { navController.navigate("emergency_unlock") },
                                                     onNavigateToUninstall = { navController.navigate("uninstall_reflection") },
-                                                    onNavigateToStudyPlanner = { navController.navigate("study_planner") },
-                                                    onNavigateToBlocksProgress = { navController.navigate("blocks_progress") },
-                                                    onNavigateToInsights = { navController.navigate("insights") },
-                                                    onNavigateToForestGallery = { navController.navigate("forest_gallery") }
+                                                    onNavigateToStudyPlanner = { navController.navigate("study_planner") }
                                                 )
                                             }
                                             composable("blocks_progress") {

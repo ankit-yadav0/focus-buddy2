@@ -102,17 +102,12 @@ fun HomeScreen(
     onNavigateToEmergencyUnlock: () -> Unit = {},
     onNavigateToUninstall: () -> Unit = {},
     onNavigateToStudyPlanner: () -> Unit = {},
-    onNavigateToBlocksProgress: () -> Unit = {},
-    onNavigateToInsights: () -> Unit = {},
-    onNavigateToForestGallery: () -> Unit = {},
 
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
     val blockedApps by viewModel.blockedApps.collectAsStateWithLifecycle()
-    val longTermBlocks by viewModel.allLongTermBlocks.collectAsStateWithLifecycle()
-    val websiteBlocks by viewModel.allWebsiteBlocks.collectAsStateWithLifecycle()
 
     val isStrictModeActive by viewModel.isStrictModeActive.collectAsStateWithLifecycle()
     val showReflectionPrompt by viewModel.showReflectionPrompt.collectAsStateWithLifecycle()
@@ -135,11 +130,6 @@ fun HomeScreen(
     var studyPlanCompletionPercentage by remember { mutableStateOf<Float?>(null) }
     var isCelebratedAlready by remember { mutableStateOf(false) }
     var celebrateTrigger by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isResumedTrigger) {
-        val bankingActive = viewModel.getSetting("banking_mode_active") == "true"
-        viewModel.bankingModeActive.value = bankingActive
-    }
 
     LaunchedEffect(isResumedTrigger) {
         val pct = viewModel.getStudyPlanCompletionPercentage()
@@ -320,8 +310,6 @@ fun HomeScreen(
                     // Hero Illustration / Card
                     HeroBannerCard(blockedCount = blockedApps.size)
 
-                    BankingModeCard(viewModel = viewModel)
-
                     // Permission Warning Banner if any is missing
                     if (!isAccessibilityEnabled || !isUsageEnabled) {
                         PermissionsAlertCard(
@@ -361,41 +349,11 @@ fun HomeScreen(
                         }
                     }
 
-                    // Blocks & Daily Progress - now a dedicated screen (see drawer menu)
-                    SectionLinkCard(
-                        icon = Icons.Default.Shield,
-                        iconTint = MaterialTheme.colorScheme.primary,
-                        title = "Blocks & Daily Progress",
-                        subtitle = "${longTermBlocks.size + websiteBlocks.size} active blocks",
-                        onClick = onNavigateToBlocksProgress,
-                        testTag = "home_blocks_progress_link"
-                    )
-
                     // Content-Level Blocking Settings
                     ContentLevelBlockingCard(viewModel = viewModel)
 
                     // Accent Theme Settings
                     AccentThemeCard(viewModel = viewModel)
-
-                    // My Forest Gallery - now a dedicated screen (see drawer menu)
-                    SectionLinkCard(
-                        icon = Icons.Default.Park,
-                        iconTint = MaterialTheme.colorScheme.secondary,
-                        title = "My Forest Gallery",
-                        subtitle = "Your completed focus milestones",
-                        onClick = onNavigateToForestGallery,
-                        testTag = "home_forest_gallery_link"
-                    )
-
-                    // Focuss Buddy Insights - now a dedicated screen (see drawer menu)
-                    SectionLinkCard(
-                        icon = Icons.Default.BarChart,
-                        iconTint = MaterialTheme.colorScheme.primary,
-                        title = "Focuss Buddy Insights",
-                        subtitle = "Daily, weekly & monthly analytics",
-                        onClick = onNavigateToInsights,
-                        testTag = "home_insights_link"
-                    )
 
                     // Quick Actions Title
                     Text(
@@ -575,85 +533,6 @@ fun HomeScreen(
                 )
             }
         }
-    }
-}
-
-@Composable
-fun BankingModeCard(viewModel: FocusViewModel) {
-    val scope = rememberCoroutineScope()
-    val bankingActive by viewModel.bankingModeActive.collectAsStateWithLifecycle()
-    val endsAtMs by viewModel.bankingModeEndsAtMs.collectAsStateWithLifecycle()
-    var showConfirmDialog by remember { mutableStateOf(false) }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = if (bankingActive) 0.9f else 0.35f))
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.AccountBalance,
-                contentDescription = "Banking Mode",
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(26.dp)
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (bankingActive) "Banking Mode active" else "Banking Mode",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp
-                )
-                Text(
-                    text = if (bankingActive) {
-                        val remainingMin = ((endsAtMs - System.currentTimeMillis()).coerceAtLeast(0L) / 60000L) + 1
-                        "Protection off for ~${remainingMin}m so banking apps work. Tap the reminder notification to turn it back on."
-                    } else {
-                        "Turns off accessibility for 5 minutes so apps like your bank's app will work."
-                    },
-                    color = Color.White.copy(alpha = 0.65f),
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp
-                )
-            }
-            if (!bankingActive) {
-                Button(
-                    onClick = { showConfirmDialog = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Turn on", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-
-    if (showConfirmDialog) {
-        AlertDialog(
-            onDismissRequest = { showConfirmDialog = false },
-            title = { Text("Turn on Banking Mode?") },
-            text = {
-                Text(
-                    "This disables Focuss Buddy's accessibility protection for exactly 5 minutes " +
-                    "so your banking app will run. It does NOT automatically turn back on after 5 " +
-                    "minutes - Android doesn't allow apps to silently re-enable this permission for " +
-                    "security reasons. You'll get a notification with a one-tap link to re-enable it."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showConfirmDialog = false
-                    viewModel.activateBankingMode()
-                }) { Text("Turn on for 5 minutes") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showConfirmDialog = false }) { Text("Cancel") }
-            }
-        )
     }
 }
 

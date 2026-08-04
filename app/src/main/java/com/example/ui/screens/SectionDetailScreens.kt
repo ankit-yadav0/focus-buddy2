@@ -30,7 +30,8 @@ import com.example.viewmodel.FocusViewModel
 /**
  * Dedicated screen for Long-Term Blocks + Daily Dashboard.
  * Previously these were embedded inline in HomeScreen; they now live behind
- * their own drawer nav entry / route so Home doesn't need a giant scroll.
+ * their own bottom-nav tab ("BLOCKS") so Home doesn't need a giant scroll
+ * and this content only shows up when that tab is tapped.
  */
 @androidx.compose.material3.ExperimentalMaterial3Api
 @Composable
@@ -138,7 +139,8 @@ fun BlocksProgressScreen(
 
 /**
  * Dedicated screen for Focuss Buddy Insights (analytics), previously an
- * inline card at the bottom of HomeScreen.
+ * inline card at the bottom of HomeScreen. Reachable only via the "STATS"
+ * bottom-nav tab.
  */
 @androidx.compose.material3.ExperimentalMaterial3Api
 @Composable
@@ -198,7 +200,7 @@ fun InsightsScreen(
 
 /**
  * Dedicated screen for My Forest Gallery, previously an inline card in
- * HomeScreen.
+ * HomeScreen. Reachable only via the "FOREST" bottom-nav tab.
  */
 @androidx.compose.material3.ExperimentalMaterial3Api
 @Composable

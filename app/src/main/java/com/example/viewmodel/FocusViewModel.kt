@@ -868,28 +868,6 @@ class FocusViewModel(
         return repository.getSetting(key)
     }
 
-    val bankingModeActive = MutableStateFlow(false)
-    val bankingModeEndsAtMs = MutableStateFlow(0L)
-
-    /**
-     * Turns off accessibility entirely for a fixed 5-minute window so apps that refuse
-     * to run while ANY accessibility service is enabled (many banking apps, including
-     * Navi) work normally. The 5-minute duration is fixed by design - Android does not
-     * let an app silently re-enable its own accessibility permission, so after the
-     * window ends the user gets a one-tap reminder notification instead (see
-     * BankingModeReceiver). This does not touch any of the user's block lists/sessions -
-     * those resume enforcing the moment accessibility is back on.
-     */
-    fun activateBankingMode() {
-        viewModelScope.launch {
-            saveSetting("banking_mode_active", "true")
-            val endsAt = com.example.scheduler.BankingModeScheduler.scheduleReminder(context)
-            bankingModeEndsAtMs.value = endsAt
-            bankingModeActive.value = true
-            com.example.service.FocusAccessibilityService.disableForBanking()
-        }
-    }
-
     suspend fun getStudyPlanCompletionPercentage(): Float? {
         val plan = getSetting("saved_study_plan")
         if (plan.isNullOrBlank()) return null
