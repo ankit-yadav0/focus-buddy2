@@ -40,7 +40,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.drawscope.scale
@@ -82,7 +81,6 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.max
-import kotlin.math.cos
 import kotlin.math.sin
 import kotlinx.coroutines.launch
 
@@ -102,6 +100,7 @@ fun HomeScreen(
     onNavigateToEmergencyUnlock: () -> Unit = {},
     onNavigateToUninstall: () -> Unit = {},
     onNavigateToStudyPlanner: () -> Unit = {},
+    onNavigateToTestImport: () -> Unit = {},
 
     modifier: Modifier = Modifier
 ) {
@@ -110,6 +109,7 @@ fun HomeScreen(
     val blockedApps by viewModel.blockedApps.collectAsStateWithLifecycle()
     val longTermBlocks by viewModel.allLongTermBlocks.collectAsStateWithLifecycle()
     val websiteBlocks by viewModel.allWebsiteBlocks.collectAsStateWithLifecycle()
+    val todayUsageMinutes by viewModel.todayUsageMinutes.collectAsStateWithLifecycle()
     val analytics by viewModel.analytics.collectAsStateWithLifecycle()
     val dailyAnalytics by viewModel.dailyAnalytics.collectAsStateWithLifecycle()
     val weeklyTrends by viewModel.weeklyTrends.collectAsStateWithLifecycle()
@@ -155,11 +155,6 @@ fun HomeScreen(
     var studyPlanCompletionPercentage by remember { mutableStateOf<Float?>(null) }
     var isCelebratedAlready by remember { mutableStateOf(false) }
     var celebrateTrigger by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isResumedTrigger) {
-        val bankingActive = viewModel.getSetting("banking_mode_active") == "true"
-        viewModel.bankingModeActive.value = bankingActive
-    }
 
     LaunchedEffect(isResumedTrigger) {
         val pct = viewModel.getStudyPlanCompletionPercentage()
@@ -269,6 +264,15 @@ fun HomeScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    ImportTestScheduleDrawerCard(
+                        onImportClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToTestImport()
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     UninstallDrawerCard(
                         onUninstallClick = {
                             scope.launch { drawerState.close() }
@@ -340,8 +344,6 @@ fun HomeScreen(
                     // Hero Illustration / Card
                     HeroBannerCard(blockedCount = blockedApps.size)
 
-                    BankingModeCard(viewModel = viewModel)
-
                     // Permission Warning Banner if any is missing
                     if (!isAccessibilityEnabled || !isUsageEnabled) {
                         PermissionsAlertCard(
@@ -385,6 +387,7 @@ fun HomeScreen(
                     LongTermBlockSection(
                         appBlocks = longTermBlocks,
                         websiteBlocks = websiteBlocks,
+                        todayUsageMinutes = todayUsageMinutes,
                         onAddBlockClick = { showAddLongTermBlockDialog = true },
                         onRemoveBlockClick = { id -> viewModel.removeLongTermBlock(id) },
                         onRemoveWebsiteBlockClick = { id -> viewModel.removeWebsiteBlock(id) },
@@ -600,9 +603,9 @@ fun HomeScreen(
         AddLongTermBlockDialog(
             installedApps = viewModel.installedApps.collectAsStateWithLifecycle().value,
             onDismiss = { showAddLongTermBlockDialog = false },
-            onConfirm = { type, target, label, reason, start, end, dailyLimitSeconds ->
+            onConfirm = { type, target, label, reason, start, end, dailyLimitMinutes ->
                 if (type == "APP") {
-                    viewModel.addLongTermBlock(type, target, label, reason, start, end, dailyLimitSeconds)
+                    viewModel.addLongTermBlock(type, target, label, reason, start, end, dailyLimitMinutes)
                 } else {
                     viewModel.addWebsiteBlock(target, reason, start, end)
                 }
@@ -619,85 +622,6 @@ fun HomeScreen(
                     viewModel.setBatteryOptimizationPromptShown()
                 }
                 showBatteryOptimizationDialog = false
-            }
-        )
-    }
-}
-
-@Composable
-fun BankingModeCard(viewModel: FocusViewModel) {
-    val scope = rememberCoroutineScope()
-    val bankingActive by viewModel.bankingModeActive.collectAsStateWithLifecycle()
-    val endsAtMs by viewModel.bankingModeEndsAtMs.collectAsStateWithLifecycle()
-    var showConfirmDialog by remember { mutableStateOf(false) }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = if (bankingActive) 0.9f else 0.35f))
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.AccountBalance,
-                contentDescription = "Banking Mode",
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(26.dp)
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (bankingActive) "Banking Mode active" else "Banking Mode",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp
-                )
-                Text(
-                    text = if (bankingActive) {
-                        val remainingMin = ((endsAtMs - System.currentTimeMillis()).coerceAtLeast(0L) / 60000L) + 1
-                        "Protection off for ~${remainingMin}m so banking apps work. Tap the reminder notification to turn it back on."
-                    } else {
-                        "Turns off accessibility for 5 minutes so apps like your bank's app will work."
-                    },
-                    color = Color.White.copy(alpha = 0.65f),
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp
-                )
-            }
-            if (!bankingActive) {
-                Button(
-                    onClick = { showConfirmDialog = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Turn on", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-
-    if (showConfirmDialog) {
-        AlertDialog(
-            onDismissRequest = { showConfirmDialog = false },
-            title = { Text("Turn on Banking Mode?") },
-            text = {
-                Text(
-                    "This disables Focuss Buddy's accessibility protection for exactly 5 minutes " +
-                    "so your banking app will run. It does NOT automatically turn back on after 5 " +
-                    "minutes - Android doesn't allow apps to silently re-enable this permission for " +
-                    "security reasons. You'll get a notification with a one-tap link to re-enable it."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showConfirmDialog = false
-                    viewModel.activateBankingMode()
-                }) { Text("Turn on for 5 minutes") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showConfirmDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -1588,6 +1512,7 @@ fun ActiveSessionWidget(
 fun LongTermBlockSection(
     appBlocks: List<LongTermBlock>,
     websiteBlocks: List<com.example.data.WebsiteBlock>,
+    todayUsageMinutes: Map<String, Int> = emptyMap(),
     onAddBlockClick: () -> Unit,
     onRemoveBlockClick: (Int) -> Unit,
     onRemoveWebsiteBlockClick: (Int) -> Unit,
@@ -1675,6 +1600,15 @@ fun LongTermBlockSection(
                         val dateFormatter = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()) }
                         val startDateStr = remember(block.startDate) { dateFormatter.format(Date(block.startDate)) }
                         val endDateStr = remember(block.endDate) { dateFormatter.format(Date(block.endDate)) }
+                        val hasDailyLimit = block.dailyLimitMinutes > 0
+                        val usedMinutesToday = todayUsageMinutes[block.target] ?: 0
+                        val limitReachedToday = hasDailyLimit && usedMinutesToday >= block.dailyLimitMinutes
+                        val statusLabel = when {
+                            !isLocked -> "EXPIRED"
+                            hasDailyLimit && limitReachedToday -> "LIMIT REACHED"
+                            hasDailyLimit -> "TIME LIMITED"
+                            else -> "LOCKED"
+                        }
 
                         Card(
                             modifier = Modifier
@@ -1700,13 +1634,13 @@ fun LongTermBlockSection(
                                             modifier = Modifier
                                                 .size(36.dp)
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0x1F3DFFC4)),
+                                                .background(Color(0x1F9C27B0)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.AppBlocking,
                                                 contentDescription = "App block icon",
-                                                tint = Color(0xFF3DFFC4),
+                                                tint = Color(0xFF9C27B0),
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -1722,17 +1656,27 @@ fun LongTermBlockSection(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
+                                                val statusColor = when {
+                                                    !isLocked -> Color(0xFF4CAF50)
+                                                    limitReachedToday -> MaterialTheme.colorScheme.error
+                                                    hasDailyLimit -> Color(0xFFFFB74D)
+                                                    else -> MaterialTheme.colorScheme.error
+                                                }
                                                 Icon(
-                                                    imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.CheckCircle,
+                                                    imageVector = when {
+                                                        !isLocked -> Icons.Default.CheckCircle
+                                                        hasDailyLimit -> Icons.Default.HourglassEmpty
+                                                        else -> Icons.Default.Lock
+                                                    },
                                                     contentDescription = null,
-                                                    tint = if (isLocked) MaterialTheme.colorScheme.error else Color(0xFF4CAF50),
+                                                    tint = statusColor,
                                                     modifier = Modifier.size(10.dp)
                                                 )
                                                 Text(
-                                                    text = if (isLocked) "LOCKED" else "EXPIRED",
+                                                    text = statusLabel,
                                                     fontSize = 11.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = if (isLocked) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+                                                    color = statusColor
                                                 )
                                             }
                                         }
@@ -1766,43 +1710,28 @@ fun LongTermBlockSection(
                                       )
                                   }
 
-                                  block.dailyLimitSeconds?.let { limitSeconds ->
-                                      val todayEpochDay = System.currentTimeMillis() / (24 * 60 * 60 * 1000L)
-                                      val usedSeconds = if (block.lastUsageResetEpochDay != todayEpochDay) 0L else block.usedSecondsToday
-                                      val fraction = (usedSeconds.toFloat() / limitSeconds.toFloat()).coerceIn(0f, 1f)
-                                      fun fmt(s: Long): String {
-                                          val h = s / 3600
-                                          val m = (s % 3600) / 60
-                                          val sec = s % 60
-                                          return when {
-                                              h > 0 -> "${h}h ${m}m"
-                                              m > 0 -> "${m}m ${sec}s"
-                                              else -> "${sec}s"
-                                          }
-                                      }
-                                      Column(
-                                          modifier = Modifier.fillMaxWidth(),
-                                          verticalArrangement = Arrangement.spacedBy(4.dp)
-                                      ) {
-                                          Row(
-                                              modifier = Modifier.fillMaxWidth(),
-                                              horizontalArrangement = Arrangement.SpaceBetween
-                                          ) {
-                                              Text(
-                                                  text = "Today: ${fmt(usedSeconds)} / ${fmt(limitSeconds)}",
-                                                  fontSize = 11.sp,
-                                                  fontWeight = FontWeight.Bold,
-                                                  color = if (fraction >= 1f) MaterialTheme.colorScheme.error else Color(0xFFFFA630)
-                                              )
-                                          }
+                                  if (hasDailyLimit && isLocked) {
+                                      val limitHours = block.dailyLimitMinutes / 60
+                                      val limitMins = block.dailyLimitMinutes % 60
+                                      val usedHours = usedMinutesToday / 60
+                                      val usedMins = usedMinutesToday % 60
+                                      val limitLabel = if (limitHours > 0) "${limitHours}h ${limitMins}m" else "${limitMins}m"
+                                      val usedLabel = if (usedHours > 0) "${usedHours}h ${usedMins}m" else "${usedMins}m"
+                                      Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                          Text(
+                                              text = if (limitReachedToday) "Used today: $usedLabel / $limitLabel — resets at midnight" else "Used today: $usedLabel / $limitLabel",
+                                              fontSize = 12.sp,
+                                              color = if (limitReachedToday) MaterialTheme.colorScheme.error else Color.White.copy(alpha = 0.6f),
+                                              fontWeight = FontWeight.SemiBold
+                                          )
                                           LinearProgressIndicator(
-                                              progress = { fraction },
+                                              progress = { (usedMinutesToday.toFloat() / block.dailyLimitMinutes.toFloat()).coerceIn(0f, 1f) },
                                               modifier = Modifier
                                                   .fillMaxWidth()
-                                                  .height(4.dp)
-                                                  .clip(RoundedCornerShape(2.dp)),
-                                              color = if (fraction >= 1f) MaterialTheme.colorScheme.error else Color(0xFFFFA630),
-                                              trackColor = Color(0x10FFFFFF)
+                                                  .height(6.dp)
+                                                  .clip(RoundedCornerShape(3.dp)),
+                                              color = if (limitReachedToday) MaterialTheme.colorScheme.error else Color(0xFFFFB74D),
+                                              trackColor = Color.White.copy(alpha = 0.08f)
                                           )
                                       }
                                   }
@@ -1905,13 +1834,13 @@ fun LongTermBlockSection(
                                               modifier = Modifier
                                                   .size(36.dp)
                                                   .clip(RoundedCornerShape(8.dp))
-                                                  .background(Color(0x1FFFA630)),
+                                                  .background(Color(0x1F2196F3)),
                                               contentAlignment = Alignment.Center
                                           ) {
                                               Icon(
                                                   imageVector = Icons.Default.Language,
                                                   contentDescription = "Website block icon",
-                                                  tint = Color(0xFFFFA630),
+                                                  tint = Color(0xFF2196F3),
                                                   modifier = Modifier.size(18.dp)
                                               )
                                           }
@@ -3067,51 +2996,10 @@ fun TrendChart(
 }
 
 @Composable
-fun QuotaNumberField(
-    label: String,
-    value: Int,
-    range: IntRange,
-    onValueChange: (Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(label, fontSize = 10.sp, color = Color.White.copy(alpha = 0.5f))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            IconButton(
-                onClick = { if (value > range.first) onValueChange(value - 1) },
-                modifier = Modifier.size(28.dp)
-            ) {
-                Icon(Icons.Default.Remove, contentDescription = "Decrease $label", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
-            }
-            Text(
-                text = value.toString().padStart(2, '0'),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.width(28.dp),
-                textAlign = TextAlign.Center
-            )
-            IconButton(
-                onClick = { if (value < range.last) onValueChange(value + 1) },
-                modifier = Modifier.size(28.dp)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Increase $label", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
-            }
-        }
-    }
-}
-
-@Composable
 fun AddLongTermBlockDialog(
     installedApps: List<AppInfo>,
     onDismiss: () -> Unit,
-    onConfirm: (type: String, target: String, label: String, reason: String, startDate: Long, endDate: Long, dailyLimitSeconds: Long?) -> Unit
+    onConfirm: (type: String, target: String, label: String, reason: String, startDate: Long, endDate: Long, dailyLimitMinutes: Int) -> Unit
 ) {
     val context = LocalContext.current
     var blockType by remember { mutableStateOf("APP") } // "APP" or "WEBSITE"
@@ -3119,10 +3007,10 @@ fun AddLongTermBlockDialog(
     var websiteUrl by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
 
-    var quotaEnabled by remember { mutableStateOf(false) }
-    var quotaHours by remember { mutableStateOf(0) }
-    var quotaMinutes by remember { mutableStateOf(30) }
-    var quotaSeconds by remember { mutableStateOf(0) }
+    // false = block completely for the whole date range (old behavior).
+    // true = allow a limited number of hours per day, then block until midnight.
+    var useDailyLimit by remember { mutableStateOf(false) }
+    var dailyLimitHoursText by remember { mutableStateOf("2") }
 
     var startDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
     var endDateMillis by remember { mutableStateOf(System.currentTimeMillis() + 7 * 24 * 60 * 60 * 1000L) } // default 1 week
@@ -3143,6 +3031,13 @@ fun AddLongTermBlockDialog(
     val endDateStr = remember(endDateMillis) { dateFormatter.format(Date(endDateMillis)) }
 
     var validationError by remember { mutableStateOf<String?>(null) }
+
+    // Website blocks always fully block for the date range (no daily-limit UI for them).
+    LaunchedEffect(blockType) {
+        if (blockType == "WEBSITE") {
+            useDailyLimit = false
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -3296,70 +3191,82 @@ fun AddLongTermBlockDialog(
                     )
                 }
 
+                // Daily Time Limit toggle (apps only — website blocking always blocks fully)
                 if (blockType == "APP") {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color(0x10FFFFFF), RoundedCornerShape(14.dp))
-                            .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text("Blocking Mode", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.5f))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0x10FFFFFF))
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Daily time limit instead of full block",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                                Text(
-                                    "Allow this app for a set amount of time each day, then block it until the next day.",
-                                    fontSize = 11.sp,
-                                    color = Color.White.copy(alpha = 0.55f)
-                                )
-                            }
-                            Switch(checked = quotaEnabled, onCheckedChange = { quotaEnabled = it })
-                        }
-
-                        if (quotaEnabled) {
-                            Text(
-                                "Allowed per day",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White.copy(alpha = 0.5f)
-                            )
+                        Column(modifier = Modifier.padding(4.dp)) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { useDailyLimit = false }
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                QuotaNumberField(
-                                    label = "Hours",
-                                    value = quotaHours,
-                                    range = 0..23,
-                                    onValueChange = { quotaHours = it },
-                                    modifier = Modifier.weight(1f)
+                                RadioButton(
+                                    selected = !useDailyLimit,
+                                    onClick = { useDailyLimit = false }
                                 )
-                                QuotaNumberField(
-                                    label = "Minutes",
-                                    value = quotaMinutes,
-                                    range = 0..59,
-                                    onValueChange = { quotaMinutes = it },
-                                    modifier = Modifier.weight(1f)
+                                Column {
+                                    Text("Full block", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    Text(
+                                        "Completely blocked for the whole date range",
+                                        fontSize = 11.sp,
+                                        color = Color.White.copy(alpha = 0.5f)
+                                    )
+                                }
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { useDailyLimit = true }
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                RadioButton(
+                                    selected = useDailyLimit,
+                                    onClick = { useDailyLimit = true }
                                 )
-                                QuotaNumberField(
-                                    label = "Seconds",
-                                    value = quotaSeconds,
-                                    range = 0..59,
-                                    onValueChange = { quotaSeconds = it },
-                                    modifier = Modifier.weight(1f)
+                                Column {
+                                    Text("Daily time limit", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    Text(
+                                        "Allow a set number of hours per day, then block until midnight",
+                                        fontSize = 11.sp,
+                                        color = Color.White.copy(alpha = 0.5f)
+                                    )
+                                }
+                            }
+                            if (useDailyLimit) {
+                                OutlinedTextField(
+                                    value = dailyLimitHoursText,
+                                    onValueChange = { input ->
+                                        if (input.isEmpty() || input.matches(Regex("^\\d{0,2}(\\.\\d{0,1})?$"))) {
+                                            dailyLimitHoursText = input
+                                        }
+                                    },
+                                    label = { Text("Hours allowed per day") },
+                                    placeholder = { Text("e.g. 2") },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                                 )
                             }
                         }
                     }
+                }
                 }
 
                 // Date Selectors
@@ -3477,14 +3384,21 @@ fun AddLongTermBlockDialog(
                                 validationError = "End Date must be after Start Date."
                                 return@Button
                             }
+                            val dailyLimitMinutes = if (useDailyLimit) {
+                                val hours = dailyLimitHoursText.toDoubleOrNull()
+                                if (hours == null || hours <= 0.0) {
+                                    validationError = "Enter a valid number of hours per day."
+                                    return@Button
+                                }
+                                (hours * 60).toInt().coerceAtLeast(1)
+                            } else {
+                                0
+                            }
 
                             validationError = null
                             val finalTarget = if (blockType == "APP") selectedApp!!.packageName else websiteUrl
                             val finalLabel = if (blockType == "APP") selectedApp!!.appName else websiteUrl
-                            val dailyLimitSeconds = if (quotaEnabled) {
-                                (quotaHours * 3600L + quotaMinutes * 60L + quotaSeconds).coerceAtLeast(1L)
-                            } else null
-                            onConfirm(blockType, finalTarget, finalLabel, reason, startDateMillis, endDateMillis, dailyLimitSeconds)
+                            onConfirm(blockType, finalTarget, finalLabel, reason, startDateMillis, endDateMillis, dailyLimitMinutes)
                         },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp)
@@ -4470,14 +4384,14 @@ fun BlockDetailsScreen(
                         .size(80.dp)
                         .clip(RoundedCornerShape(20.dp))
                         .background(
-                            if (blockInfo.type == "WEBSITE") Color(0x1FFFA630) else Color(0x1F3DFFC4)
+                            if (blockInfo.type == "WEBSITE") Color(0x1F2196F3) else Color(0x1F9C27B0)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (blockInfo.type == "WEBSITE") Icons.Default.Language else Icons.Default.AppBlocking,
                         contentDescription = "Block type",
-                        tint = if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFF3DFFC4),
+                        tint = if (blockInfo.type == "WEBSITE") Color(0xFF2196F3) else Color(0xFF9C27B0),
                         modifier = Modifier.size(40.dp)
                     )
                 }
@@ -4494,7 +4408,7 @@ fun BlockDetailsScreen(
                     text = if (blockInfo.type == "WEBSITE") "WEBSITE BLOCK" else "APP BLOCK",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = (if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFF3DFFC4)),
+                    color = (if (blockInfo.type == "WEBSITE") Color(0xFF2196F3) else Color(0xFF9C27B0)),
                     letterSpacing = 1.5.sp
                 )
 
@@ -6206,86 +6120,126 @@ fun QuantumOrbitProgressRing(
     timeRemainingMs: Long,
     modifier: Modifier = Modifier
 ) {
-    // "Precision Instrument" dial: tick marks around the circumference like a
-    // lab gauge/oscilloscope, with a phosphor-glow progress arc. This is the
-    // signature visual motif reused across the timer, stat gauges, and the
-    // bottom navigation active-state indicator elsewhere in the theme.
     val isHyperFocus = timeRemainingMs <= 10 * 60 * 1000L && timeRemainingMs > 0
-    val phosphor = MaterialTheme.colorScheme.primary
-    val amber = MaterialTheme.colorScheme.secondary
-    val glowColor = if (isHyperFocus) amber else phosphor
-
-    val pulse by rememberInfiniteTransition(label = "dial_pulse").animateFloat(
-        initialValue = if (isHyperFocus) 0.6f else 0.85f,
-        targetValue = 1f,
+    // Smoothly accelerate the rotation animation speed in hyper-focus mode
+    val duration = if (isHyperFocus) 1200 else 4500
+    val infiniteTransition = rememberInfiniteTransition(label = "quantum_orbit")
+    val angleDeg by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(if (isHyperFocus) 500 else 1400, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
+            animation = tween(duration, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
         ),
-        label = "dial_pulse_alpha"
+        label = "orbit_angle"
     )
 
     Box(modifier = modifier) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val cx = size.width / 2f
-            val cy = size.height / 2f
-            val outerR = size.minDimension / 2f - 2.dp.toPx()
-            val trackR = outerR - 7.dp.toPx()
-            val tickOuterR = outerR
-            val tickInnerMinorR = outerR - 3.dp.toPx()
-            val tickInnerMajorR = outerR - 5.dp.toPx()
+        // 1. Static track & progress arc with rich double-layer glowing effects
+        Canvas(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            val width = size.width
+            val height = size.height
+            val cx = width / 2f
+            val cy = height / 2f
+            val radius = size.minDimension / 2f - 6.dp.toPx()
+            val orbitRadius = radius + 5.dp.toPx()
 
-            // Tick marks - 60 total, every 5th one longer/brighter (major).
-            for (i in 0 until 60) {
-                val angle = (i / 60f) * 2f * Math.PI.toFloat() - (Math.PI / 2f).toFloat()
-                val major = i % 5 == 0
-                val inner = if (major) tickInnerMajorR else tickInnerMinorR
-                val start = Offset(cx + tickOuterR * cos(angle), cy + tickOuterR * sin(angle))
-                val end = Offset(cx + inner * cos(angle), cy + inner * sin(angle))
-                drawLine(
-                    color = if (major) Color.White.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.12f),
-                    start = start,
-                    end = end,
-                    strokeWidth = if (major) 2.dp.toPx() else 1.dp.toPx(),
-                    cap = StrokeCap.Round
-                )
-            }
-
-            // Background track for the progress arc.
+            // Outer Orbit/Track neon glow (subtle translucent track)
             drawCircle(
-                color = Color.White.copy(alpha = 0.06f),
+                color = Color.White.copy(alpha = 0.05f),
                 center = Offset(cx, cy),
-                radius = trackR,
+                radius = orbitRadius,
+                style = Stroke(width = 1.dp.toPx())
+            )
+
+            // Primary background track
+            drawCircle(
+                color = Color.White.copy(alpha = 0.08f),
+                center = Offset(cx, cy),
+                radius = radius,
                 style = Stroke(width = 3.dp.toPx())
             )
 
-            // Phosphor/amber glow arc - soft wide layer + sharp core layer.
+            // Neon Cyan outer glow layer (thick, low-opacity)
             drawArc(
-                color = glowColor.copy(alpha = 0.30f * pulse),
+                color = Color(0xFF00E5FF).copy(alpha = 0.25f),
                 startAngle = -90f,
                 sweepAngle = 360f * progress,
                 useCenter = false,
-                topLeft = Offset(cx - trackR, cy - trackR),
-                size = androidx.compose.ui.geometry.Size(trackR * 2, trackR * 2),
-                style = Stroke(width = 9.dp.toPx(), cap = StrokeCap.Round)
-            )
-            drawArc(
-                color = glowColor,
-                startAngle = -90f,
-                sweepAngle = 360f * progress,
-                useCenter = false,
-                topLeft = Offset(cx - trackR, cy - trackR),
-                size = androidx.compose.ui.geometry.Size(trackR * 2, trackR * 2),
-                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                style = Stroke(width = 8.dp.toPx())
             )
 
-            // Bright "needle tip" dot at the current progress position.
-            val tipAngle = -90f + 360f * progress
-            val tipRad = Math.toRadians(tipAngle.toDouble())
-            val tipX = cx + trackR * cos(tipRad).toFloat()
-            val tipY = cy + trackR * sin(tipRad).toFloat()
-            drawCircle(color = glowColor.copy(alpha = 0.35f * pulse), center = Offset(tipX, tipY), radius = 6.dp.toPx())
-            drawCircle(color = Color.White, center = Offset(tipX, tipY), radius = 2.2.dp.toPx())
+            // Neon Cyan sharp foreground arc (high contrast core)
+            drawArc(
+                color = Color(0xFF00E5FF),
+                startAngle = -90f,
+                sweepAngle = 360f * progress,
+                useCenter = false,
+                style = Stroke(width = 3.5.dp.toPx())
+            )
+        }
+
+        // 2. Hardware-accelerated orbiting particles
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    rotationZ = angleDeg
+                }
+        ) {
+            val width = size.width
+            val height = size.height
+            val cx = width / 2f
+            val cy = height / 2f
+            val radius = size.minDimension / 2f - 6.dp.toPx()
+            val orbitRadius = radius + 5.dp.toPx()
+
+            if (isHyperFocus) {
+                // Hyper-focus mode: Split into three smaller orbiting particles spaced 120 degrees apart
+                for (i in 0..2) {
+                    val angleRad = Math.toRadians((i * 120).toDouble())
+                    val px = cx + orbitRadius * Math.cos(angleRad).toFloat()
+                    val py = cy + orbitRadius * Math.sin(angleRad).toFloat()
+
+                    // Translucent particle outer glow
+                    drawCircle(
+                        color = Color(0xFF00E5FF).copy(alpha = 0.4f),
+                        center = Offset(px, py),
+                        radius = 6.dp.toPx()
+                    )
+                    // High contrast white core
+                    drawCircle(
+                        color = Color.White,
+                        center = Offset(px, py),
+                        radius = 2.5.dp.toPx()
+                    )
+                }
+            } else {
+                // Normal mode: Single larger glowing planet/atom at 0 degrees vector
+                val px = cx + orbitRadius
+                val py = cy
+
+                // Wide soft magenta glow
+                drawCircle(
+                    color = Color(0xFFD500F9).copy(alpha = 0.25f),
+                    center = Offset(px, py),
+                    radius = 9.dp.toPx()
+                )
+                // Hot magenta inner glow
+                drawCircle(
+                    color = Color(0xFFD500F9).copy(alpha = 0.7f),
+                    center = Offset(px, py),
+                    radius = 5.5.dp.toPx()
+                )
+                // Ultra high-contrast pure white core
+                drawCircle(
+                    color = Color.White,
+                    center = Offset(px, py),
+                    radius = 3.dp.toPx()
+                )
+            }
         }
     }
 }
@@ -6301,8 +6255,8 @@ fun GlitchCountdownText(
     var isGlitching by remember { mutableStateOf(false) }
     var glitchOffsetX by remember { mutableStateOf(0f) }
     var glitchOffsetY by remember { mutableStateOf(0f) }
-    var glitchColor1 by remember { mutableStateOf(Color(0xFF3DFFC4)) }
-    var glitchColor2 by remember { mutableStateOf(Color(0xFFFFA630)) }
+    var glitchColor1 by remember { mutableStateOf(Color(0xFF00E5FF)) }
+    var glitchColor2 by remember { mutableStateOf(Color(0xFFFF007F)) }
 
     // Execute glitch effect on minute boundary change (seconds == 0) and random 30-second intervals
     LaunchedEffect(seconds) {
@@ -6314,11 +6268,11 @@ fun GlitchCountdownText(
                 glitchOffsetY = (-4..4).random().toFloat()
                 // Randomly swap foreground layers
                 if ((0..1).random() == 0) {
-                    glitchColor1 = Color(0xFF3DFFC4)
-                    glitchColor2 = Color(0xFFFFA630)
+                    glitchColor1 = Color(0xFF00E5FF)
+                    glitchColor2 = Color(0xFFFF007F)
                 } else {
-                    glitchColor1 = Color(0xFFFFA630)
-                    glitchColor2 = Color(0xFF3DFFC4)
+                    glitchColor1 = Color(0xFFFF007F)
+                    glitchColor2 = Color(0xFF00E5FF)
                 }
                 kotlinx.coroutines.delay(30L)
             }
@@ -6338,7 +6292,7 @@ fun GlitchCountdownText(
 
         // High fidelity glow effect for the retro-futuristic digital clock
         val neonGlowShadow = Shadow(
-            color = if (isHyperFocus) Color(0xFFFF5252).copy(alpha = 0.85f) else Color(0xFF3DFFC4).copy(alpha = 0.85f),
+            color = if (isHyperFocus) Color(0xFFFF5252).copy(alpha = 0.85f) else Color(0xFF00E5FF).copy(alpha = 0.85f),
             offset = Offset(0f, 0f),
             blurRadius = 14f
         )
@@ -6488,8 +6442,8 @@ fun StrictShieldHexagonVisual(
                 val vignetteGradient = Brush.radialGradient(
                     colors = listOf(
                         Color.Transparent,
-                        Color(0xFF3DFFC4).copy(alpha = 0.05f),
-                        Color(0xFF3DFFC4).copy(alpha = 0.25f)
+                        Color(0xFF00E5FF).copy(alpha = 0.05f),
+                        Color(0xFF00E5FF).copy(alpha = 0.25f)
                     ),
                     center = Offset(width / 2f, height / 2f),
                     radius = Math.max(width, height) / 1.1f
@@ -6528,14 +6482,14 @@ fun StrictShieldHexagonVisual(
                 // Outer neon cyan glow path layer
                 drawPath(
                     path = path,
-                    color = Color(0xFF3DFFC4).copy(alpha = 0.2f),
+                    color = Color(0xFF00E5FF).copy(alpha = 0.2f),
                     style = Stroke(width = 4.dp.toPx())
                 )
 
                 // High definition inner sharp grid line layer
                 drawPath(
                     path = path,
-                    color = Color(0xFF3DFFC4).copy(alpha = 0.5f),
+                    color = Color(0xFF00E5FF).copy(alpha = 0.5f),
                     style = Stroke(width = 1.2.dp.toPx())
                 )
             }
@@ -7202,6 +7156,69 @@ fun StudyPlannerDrawerCard(onPlannerClick: () -> Unit) {
             ) {
                 Text(
                     text = "Launch Planner",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ImportTestScheduleDrawerCard(onImportClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("import_test_schedule_drawer_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White.copy(alpha = 0.05f)
+        ),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CalendarToday,
+                    contentDescription = "Test Calendar Icon",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Text(
+                    text = "Import Test Schedule",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = Color.White
+                )
+            }
+
+            Text(
+                text = "Import upcoming JEE tests and track your syllabus topics offline.",
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+
+            Button(
+                onClick = onImportClick,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .testTag("import_test_schedule_drawer_button"),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) {
+                Text(
+                    text = "Open Bulk Import",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )

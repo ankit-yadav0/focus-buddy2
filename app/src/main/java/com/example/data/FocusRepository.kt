@@ -12,7 +12,8 @@ class FocusRepository(
     private val chatMessageDao: ChatMessageDao,
     private val strictScheduleDao: StrictScheduleDao,
     private val reflectionNoteDao: ReflectionNoteDao,
-    private val testEntryDao: TestEntryDao
+    private val testEntryDao: TestEntryDao,
+    private val dailyUsageDao: DailyUsageDao
 ) {
     val allTests: Flow<List<TestEntry>> = testEntryDao.getAllTests()
     suspend fun getNextTest(): TestEntry? = testEntryDao.getNextTest(System.currentTimeMillis())
@@ -188,14 +189,6 @@ class FocusRepository(
         return longTermBlockDao.getAllLongTermBlocksList()
     }
 
-    suspend fun getActiveQuotaBlockForPackage(packageName: String): LongTermBlock? {
-        return longTermBlockDao.getActiveQuotaBlockForPackage(packageName)
-    }
-
-    suspend fun updateLongTermBlockUsage(id: Int, usedSeconds: Long, epochDay: Long) {
-        longTermBlockDao.updateUsage(id, usedSeconds, epochDay)
-    }
-
     suspend fun addWebsiteBlock(block: WebsiteBlock) {
         websiteBlockDao.insertBlock(block)
     }
@@ -215,6 +208,22 @@ class FocusRepository(
     suspend fun deactivateExpiredBlocks(now: Long) {
         longTermBlockDao.deactivateExpiredBlocks(now)
         websiteBlockDao.deactivateExpiredBlocks(now)
+    }
+
+    // Daily usage operations (used for daily time-limit long-term blocks)
+    fun getUsageForDate(dateKey: String): Flow<List<DailyUsage>> = dailyUsageDao.getUsageForDate(dateKey)
+
+    suspend fun getUsageMinutes(target: String, dateKey: String): Int {
+        return dailyUsageDao.getUsage(target, dateKey)?.minutesUsed ?: 0
+    }
+
+    suspend fun addUsageMinutes(target: String, dateKey: String, minutesToAdd: Int) {
+        val current = dailyUsageDao.getUsage(target, dateKey)?.minutesUsed ?: 0
+        dailyUsageDao.upsert(DailyUsage(target, dateKey, current + minutesToAdd))
+    }
+
+    suspend fun pruneOldUsage(cutoffDateKey: String) {
+        dailyUsageDao.deleteOlderThan(cutoffDateKey)
     }
 
     // Analytics operations

@@ -22,6 +22,7 @@ import com.example.data.WebsiteBlock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import android.provider.Settings
@@ -32,6 +33,9 @@ import android.view.Gravity
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.view.ViewGroup
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 class FocusAccessibilityService : AccessibilityService() {
 
@@ -46,17 +50,6 @@ class FocusAccessibilityService : AccessibilityService() {
         val lastEvent = kotlinx.coroutines.flow.MutableStateFlow("No event yet")
         val shortsDetectionStatus = kotlinx.coroutines.flow.MutableStateFlow("Shorts Not Detected")
 
-        /**
-         * Truly disables this accessibility service (not just an internal pause) - this
-         * is what makes apps that check Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-         * (many banking apps do, as a blanket security measure) actually work again,
-         * since the service is genuinely removed from that system list. See
-         * BankingModeReceiver's class doc for why this can't be automatically reversed.
-         */
-        fun disableForBanking() {
-            instance?.disableSelf()
-        }
-
         private const val NOTIFICATION_CHANNEL_ID = "focus_buddy_protection"
         private const val FOREGROUND_NOTIFICATION_ID = 4201
 
@@ -66,6 +59,12 @@ class FocusAccessibilityService : AccessibilityService() {
         // which in turn makes the process a more likely low-memory-killer target. Window state
         // changes (app/tab switches) are never throttled so blocking still reacts instantly.
         private const val CONTENT_CHANGED_THROTTLE_MS = 300L
+
+        // How often we sample the foreground app to accrue daily usage minutes
+        // against any Long-Term block that has a daily time limit set. A full
+        // minute keeps DB writes cheap; blocking still reacts within one tick
+        // of the limit being crossed, and immediately on next app-open after that.
+        private const val USAGE_TICK_INTERVAL_MS = 60_000L
     }
 
     private val serviceJob = SupervisorJob()
@@ -79,19 +78,11 @@ class FocusAccessibilityService : AccessibilityService() {
     private var activeWebsitesList = listOf<WebsiteBlock>()
     private var lastContentChangedProcessTime = 0L
 
-    // Daily time-quota tracking: while a quota-mode long-term-blocked app is in the
-    // foreground, we track how long it's been open and periodically add that to its
-    // persisted usedSecondsToday, so quota enforcement works both across app
-    // launches (checked at window-state-change) and mid-session (via the ticker).
-    private var quotaTrackingBlockId: Int? = null
-    private var quotaTrackingPackage: String? = null
-    private var quotaTrackingStartMs: Long = 0L
-    private var quotaTickerJob: kotlinx.coroutines.Job? = null
-
     private var overlayView: View? = null
     private val windowManager: WindowManager by lazy { getSystemService(android.content.Context.WINDOW_SERVICE) as WindowManager }
     private var currentBlockedPackage: String? = null
     private var lastPermissionRequestTime = 0L
+    private val dateKeyFormatter = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 
     override fun onCreate() {
         super.onCreate()
@@ -141,6 +132,10 @@ class FocusAccessibilityService : AccessibilityService() {
                     Log.d("FocusService", "Active Website blocks updated: count=${blocks.size}")
                 }
             }
+
+            // Accrue daily usage minutes against any Long-Term block that has a
+            // daily time limit, and block the app once that day's limit is hit.
+            startDailyLimitUsageTracking(repository)
         } catch (e: Exception) {
             Log.e("FocusService", "Error initializing focus service", e)
         }
@@ -166,17 +161,6 @@ class FocusAccessibilityService : AccessibilityService() {
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or 
                     AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
             notificationTimeout = 100
-        }
-
-        // If the service is (re)connecting while Banking Mode's flag is still set, the
-        // user has manually re-enabled accessibility early (before the 5-minute window
-        // elapsed) - clean up the now-redundant reminder so it doesn't fire later.
-        serviceScope.launch {
-            val repository = (application as FocusApplication).repository
-            if (repository.getSetting("banking_mode_active") == "true") {
-                repository.saveSetting("banking_mode_active", "false")
-                com.example.scheduler.BankingModeScheduler.cancelReminder(applicationContext)
-            }
         }
     }
 
@@ -256,15 +240,6 @@ class FocusAccessibilityService : AccessibilityService() {
 
         // Update live diagnostics variables
         currentPackage.value = packageName
-
-        // If a quota-tracked app is no longer in the foreground, stop the ticker and
-        // persist however much time was actually spent in it this session.
-        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            quotaTrackingPackage != null && quotaTrackingPackage != packageName
-        ) {
-            stopQuotaTrackingAndPersist()
-        }
-
         val eventTypeStr = when (eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "TYPE_WINDOW_STATE_CHANGED"
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "TYPE_WINDOW_CONTENT_CHANGED"
@@ -397,43 +372,48 @@ class FocusAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                // 2. Check for active Long-Term App Blocks
+                // 2. Check for active Long-Term App Blocks (full block for the whole date range)
                 val activeLongTermAppBlock = longTermBlocks.firstOrNull {
-                    it.type == "APP" && it.target == packageName && now >= it.startDate && now <= it.endDate && it.isActive
+                    it.type == "APP" && it.target == packageName && it.dailyLimitMinutes <= 0 &&
+                        now >= it.startDate && now <= it.endDate && it.isActive
                 }
                 if (activeLongTermAppBlock != null) {
-                    val limit = activeLongTermAppBlock.dailyLimitSeconds
-                    if (limit == null) {
-                        // Full block - unchanged behavior.
-                        Log.d("FocusService", "Blocking app due to Long-Term block: $packageName")
-                        triggerBlockActivity(
-                            packageName,
-                            isLongTerm = true,
-                            reason = activeLongTermAppBlock.reason,
-                            endDate = activeLongTermAppBlock.endDate,
-                            targetLabel = activeLongTermAppBlock.targetLabel,
-                            type = "APP"
-                        )
-                        return
-                    } else {
-                        // Daily time-quota mode: reset the counter if the day has rolled
-                        // over, then either block (quota already used up today) or allow
-                        // the app to open and start tracking foreground time against it.
-                        val today = currentEpochDay()
-                        val usedToday = if (activeLongTermAppBlock.lastUsageResetEpochDay != today) 0L else activeLongTermAppBlock.usedSecondsToday
-                        if (usedToday >= limit) {
-                            Log.d("FocusService", "Blocking app - daily quota used up: $packageName")
-                            triggerBlockActivity(
-                                packageName,
-                                isLongTerm = true,
-                                reason = "Daily time limit reached: ${activeLongTermAppBlock.reason}",
-                                endDate = activeLongTermAppBlock.endDate,
-                                targetLabel = activeLongTermAppBlock.targetLabel,
-                                type = "APP"
-                            )
-                            return
-                        } else if (quotaTrackingPackage != packageName) {
-                            startQuotaTracking(activeLongTermAppBlock)
+                    Log.d("FocusService", "Blocking app due to Long-Term block: $packageName")
+                    triggerBlockActivity(
+                        packageName,
+                        isLongTerm = true,
+                        reason = activeLongTermAppBlock.reason,
+                        endDate = activeLongTermAppBlock.endDate,
+                        targetLabel = activeLongTermAppBlock.targetLabel,
+                        type = "APP"
+                    )
+                    return
+                }
+
+                // 2b. Check for active Long-Term App Blocks with a daily time limit. If the
+                // limit was already used up earlier today, block immediately on re-open
+                // instead of waiting for the next per-minute usage tick to catch up.
+                val dailyLimitAppBlock = longTermBlocks.firstOrNull {
+                    it.type == "APP" && it.target == packageName && it.dailyLimitMinutes > 0 &&
+                        now >= it.startDate && now <= it.endDate && it.isActive
+                }
+                if (dailyLimitAppBlock != null) {
+                    serviceScope.launch {
+                        try {
+                            val usedToday = repository.getUsageMinutes(packageName, todayKey())
+                            if (usedToday >= dailyLimitAppBlock.dailyLimitMinutes) {
+                                Log.d("FocusService", "Blocking app due to daily limit already reached: $packageName")
+                                triggerBlockActivity(
+                                    packageName,
+                                    isLongTerm = true,
+                                    reason = "Daily limit reached for ${dailyLimitAppBlock.targetLabel}. Resets at midnight.",
+                                    endDate = endOfTodayMillis(),
+                                    targetLabel = dailyLimitAppBlock.targetLabel,
+                                    type = "APP"
+                                )
+                            }
+                        } catch (e: Exception) {
+                            Log.e("FocusService", "Error checking daily limit on app open", e)
                         }
                     }
                 }
@@ -557,82 +537,59 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Current epoch day (days since 1970-01-01, in the device's local timezone) -
-     * used to detect the midnight rollover so usedSecondsToday resets automatically.
-     */
-    private fun currentEpochDay(): Long {
-        return System.currentTimeMillis() / (24 * 60 * 60 * 1000L)
+    /** Local-timezone yyyy-MM-dd key used to bucket daily usage; naturally rolls over at midnight. */
+    private fun todayKey(): String = dateKeyFormatter.format(java.util.Date())
+
+    private fun endOfTodayMillis(): Long {
+        val c = Calendar.getInstance()
+        c.set(Calendar.HOUR_OF_DAY, 23)
+        c.set(Calendar.MINUTE, 59)
+        c.set(Calendar.SECOND, 59)
+        c.set(Calendar.MILLISECOND, 999)
+        return c.timeInMillis
     }
 
     /**
-     * Begins tracking foreground time for a quota-mode long-term-blocked app. Starts a
-     * ticker that periodically persists elapsed time and checks whether the daily
-     * limit has now been crossed mid-session (not just at the next app launch).
+     * Every minute, checks whether the current foreground app matches a Long-Term
+     * block that has a daily time limit (dailyLimitMinutes > 0) set, and if so
+     * accrues a minute of usage against it. Once that day's limit is reached, the
+     * app is blocked until midnight, same as a full Long-Term block, and the
+     * daily_usage row (keyed by date) means it automatically resets the next day.
      */
-    private fun startQuotaTracking(block: LongTermBlock) {
-        quotaTrackingBlockId = block.id
-        quotaTrackingPackage = block.target
-        quotaTrackingStartMs = System.currentTimeMillis()
-
-        quotaTickerJob?.cancel()
-        quotaTickerJob = serviceScope.launch {
+    private fun startDailyLimitUsageTracking(repository: com.example.data.FocusRepository) {
+        serviceScope.launch {
             while (true) {
-                kotlinx.coroutines.delay(5_000L)
-                val exceeded = persistQuotaProgress()
-                if (exceeded) {
-                    triggerBlockActivity(
-                        block.target,
-                        isLongTerm = true,
-                        reason = "Daily time limit reached: ${block.reason}",
-                        endDate = block.endDate,
-                        targetLabel = block.targetLabel,
-                        type = "APP"
-                    )
-                    break
-                }
-            }
-        }
-    }
-
-    /**
-     * Adds elapsed foreground time since tracking started to the persisted
-     * usedSecondsToday for the currently-tracked block, handling the midnight reset
-     * if the day has rolled over. Returns true if the daily limit is now exceeded.
-     */
-    private suspend fun persistQuotaProgress(): Boolean {
-        val blockId = quotaTrackingBlockId ?: return false
-        val startMs = quotaTrackingStartMs
-        val elapsedSeconds = (System.currentTimeMillis() - startMs) / 1000L
-        quotaTrackingStartMs = System.currentTimeMillis() // reset the window for the next tick/stop
-
-        val repository = (application as FocusApplication).repository
-        val block = repository.getLongTermBlockById(blockId) ?: return false
-        val limit = block.dailyLimitSeconds ?: return false
-        val today = currentEpochDay()
-
-        val baseUsed = if (block.lastUsageResetEpochDay != today) 0L else block.usedSecondsToday
-        val newUsed = baseUsed + elapsedSeconds
-        repository.updateLongTermBlockUsage(blockId, newUsed, today)
-
-        return newUsed >= limit
-    }
-
-    /** Stops tracking (app switched away or session ending) and persists final elapsed time. */
-    private fun stopQuotaTrackingAndPersist() {
-        quotaTickerJob?.cancel()
-        quotaTickerJob = null
-        if (quotaTrackingBlockId != null) {
-            serviceScope.launch {
+                delay(USAGE_TICK_INTERVAL_MS)
                 try {
-                    persistQuotaProgress()
+                    val pkg = currentPackage.value
+                    val now = System.currentTimeMillis()
+                    val activeBlock = longTermBlocks.firstOrNull {
+                        it.type == "APP" && it.target == pkg && it.dailyLimitMinutes > 0 &&
+                            now >= it.startDate && now <= it.endDate && it.isActive
+                    } ?: continue
+
+                    val today = todayKey()
+                    repository.addUsageMinutes(pkg, today, 1)
+                    val usedNow = repository.getUsageMinutes(pkg, today)
+                    if (usedNow >= activeBlock.dailyLimitMinutes) {
+                        val hours = activeBlock.dailyLimitMinutes / 60
+                        val mins = activeBlock.dailyLimitMinutes % 60
+                        val limitLabel = if (hours > 0) "${hours}h ${mins}m" else "${mins}m"
+                        Log.d("FocusService", "Daily limit reached for $pkg: $usedNow/${activeBlock.dailyLimitMinutes} min")
+                        triggerBlockActivity(
+                            pkg,
+                            isLongTerm = true,
+                            reason = "Daily limit of $limitLabel reached for ${activeBlock.targetLabel}. Resets at midnight.",
+                            endDate = endOfTodayMillis(),
+                            targetLabel = activeBlock.targetLabel,
+                            type = "APP"
+                        )
+                    }
                 } catch (e: Exception) {
-                    Log.e("FocusService", "Error persisting quota progress", e)
+                    Log.e("FocusService", "Error during daily-limit usage tick", e)
                 }
             }
         }
-        quotaTrackingBlockId = null
-        quotaTrackingPackage = null
     }
 
     private fun triggerBlockActivity(

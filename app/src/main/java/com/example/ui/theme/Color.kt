@@ -2,42 +2,21 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// ============================================================
-// "Precision Instrument" palette - lab/oscilloscope inspired.
-// Deep ink-navy rather than pure black, phosphor-mint as the
-// single high-energy accent, amber for streak/energy states,
-// alert red reserved for blocked/strict/danger states only.
-// ============================================================
+// Primary Focus Colors - Orange/Amber warmth and dark background
+val PrimaryFocus = Color(0xFFFF7043)       // Warm sunset orange for action
+val SecondaryFocus = Color(0xFF26A69A)     // Cool calm teal for secondary elements
+val TertiaryFocus = Color(0xFFFFB74D)      // Soft amber
 
-val Void = Color(0xFF0A0E16)          // App background - deep ink-navy, not pure black
-val Panel = Color(0xFF12171F)         // Card/surface background
-val PanelElevated = Color(0xFF171D27) // Slightly raised surface (nested cards, sheets)
-val Hairline = Color(0xFF232B36)      // Card borders / dividers
+val DarkBackground = Color(0xFF0F0C1E)     // Deep rich midnight space background
+val DarkSurface = Color(0xFF17132F)        // Lighter container surface
+val DarkSurfaceVariant = Color(0xFF211D3C) // Dark gray with purple undertones
 
-val Phosphor = Color(0xFF3DFFC4)      // Signature accent - active/focus states, dial glow
-val PhosphorDim = Color(0xFF1E4A40)   // Phosphor at rest / dim background fill
-val Amber = Color(0xFFFFA630)         // Streak, energy, secondary accent
-val AmberDim = Color(0xFF4A3416)
-val Alert = Color(0xFFFF4757)         // Blocked, strict, destructive actions
-val AlertDim = Color(0xFF4A1A20)
+val OnPrimaryFocus = Color(0xFFFFFFFF)
+val OnSecondaryFocus = Color(0xFFFFFFFF)
+val OnBackgroundFocus = Color(0xFFE3E1EC)
+val OnSurfaceFocus = Color(0xFFF1EFF9)
 
-val TextPrimary = Color(0xFFE7ECEF)
-val TextSecondary = Color(0xFF7C8894)
-val TextFaint = Color(0xFF485058)
-
-// Legacy names kept as aliases so any lingering references elsewhere in the
-// (very large) codebase still resolve instead of breaking the build. Prefer
-// the tokens above in new code.
-val PrimaryFocus = Phosphor
-val SecondaryFocus = Amber
-val TertiaryFocus = Amber
-val DarkBackground = Void
-val DarkSurface = Panel
-val DarkSurfaceVariant = PanelElevated
-val OnPrimaryFocus = Void
-val OnSecondaryFocus = Void
-val OnBackgroundFocus = TextPrimary
-val OnSurfaceFocus = TextPrimary
-val LightPrimary = Amber
-val LightSecondary = Phosphor
-val LightBackground = Void
+// Light Palette (kept for compatibility, styled cleanly)
+val LightPrimary = Color(0xFFD84315)
+val LightSecondary = Color(0xFF00796B)
+val LightBackground = Color(0xFFFBE9E7)

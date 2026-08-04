@@ -30,6 +30,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+fun todayDateKey(): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+
 data class AppInfo(
     val packageName: String,
     val appName: String,
@@ -83,7 +86,7 @@ class FocusViewModel(
     val youtubeBlockShorts = MutableStateFlow(false)
     val instagramBlockReels = MutableStateFlow(false)
     val snapchatBlockSpotlight = MutableStateFlow(false)
-    val accentTheme = MutableStateFlow("Phosphor Mint")
+    val accentTheme = MutableStateFlow("Sunset Orange")
 
     private val _isInitialized = MutableStateFlow(false)
     val isInitialized = _isInitialized.asStateFlow()
@@ -94,7 +97,7 @@ class FocusViewModel(
             val savedYoutubeShorts = prefs.getBoolean("youtube_block_shorts", false)
             val savedInstagramReels = prefs.getBoolean("instagram_block_reels", false)
             val savedSnapchatSpotlight = prefs.getBoolean("snapchat_block_spotlight", false)
-            val savedAccentTheme = prefs.getString("accent_theme", "Phosphor Mint") ?: "Phosphor Mint"
+            val savedAccentTheme = prefs.getString("accent_theme", "Sunset Orange") ?: "Sunset Orange"
 
             youtubeBlockShorts.value = savedYoutubeShorts
             instagramBlockReels.value = savedInstagramReels
@@ -150,6 +153,12 @@ class FocusViewModel(
 
     val activeLongTermBlocks: StateFlow<List<LongTermBlock>> = repository.activeLongTermBlocks
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Map of target (package/domain) -> minutes used today, for showing daily-limit progress.
+    val todayUsageMinutes: StateFlow<Map<String, Int>> = repository
+        .getUsageForDate(todayDateKey())
+        .map { list -> list.associate { it.target to it.minutesUsed } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     val allWebsiteBlocks: StateFlow<List<WebsiteBlock>> = repository.allWebsiteBlocks
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -718,7 +727,7 @@ class FocusViewModel(
         reason: String,
         startDate: Long,
         endDate: Long,
-        dailyLimitSeconds: Long? = null
+        dailyLimitMinutes: Int = 0
     ) {
         viewModelScope.launch {
             val block = LongTermBlock(
@@ -729,7 +738,7 @@ class FocusViewModel(
                 startDate = startDate,
                 endDate = endDate,
                 isActive = true,
-                dailyLimitSeconds = dailyLimitSeconds
+                dailyLimitMinutes = dailyLimitMinutes
             )
             repository.addLongTermBlock(block)
         }
@@ -868,28 +877,6 @@ class FocusViewModel(
         return repository.getSetting(key)
     }
 
-    val bankingModeActive = MutableStateFlow(false)
-    val bankingModeEndsAtMs = MutableStateFlow(0L)
-
-    /**
-     * Turns off accessibility entirely for a fixed 5-minute window so apps that refuse
-     * to run while ANY accessibility service is enabled (many banking apps, including
-     * Navi) work normally. The 5-minute duration is fixed by design - Android does not
-     * let an app silently re-enable its own accessibility permission, so after the
-     * window ends the user gets a one-tap reminder notification instead (see
-     * BankingModeReceiver). This does not touch any of the user's block lists/sessions -
-     * those resume enforcing the moment accessibility is back on.
-     */
-    fun activateBankingMode() {
-        viewModelScope.launch {
-            saveSetting("banking_mode_active", "true")
-            val endsAt = com.example.scheduler.BankingModeScheduler.scheduleReminder(context)
-            bankingModeEndsAtMs.value = endsAt
-            bankingModeActive.value = true
-            com.example.service.FocusAccessibilityService.disableForBanking()
-        }
-    }
-
     suspend fun getStudyPlanCompletionPercentage(): Float? {
         val plan = getSetting("saved_study_plan")
         if (plan.isNullOrBlank()) return null
@@ -913,6 +900,16 @@ class FocusViewModel(
         
         if (totalTasks == 0) return 0f
         return (checkedTasks.toFloat() / totalTasks) * 100f
+    }
+
+    fun importTestSchedule(rawText: String, onResult: (com.example.planner.TestImportResult) -> Unit) {
+        viewModelScope.launch {
+            val result = com.example.planner.TestScheduleParser.parse(rawText)
+            if (result.imported.isNotEmpty()) {
+                repository.importTests(result.imported)
+            }
+            onResult(result)
+        }
     }
 
     fun seedTestScheduleIfNeeded() {
