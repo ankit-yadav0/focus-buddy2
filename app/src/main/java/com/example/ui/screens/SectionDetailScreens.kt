@@ -3,6 +3,7 @@ package com.example.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -10,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -33,7 +35,7 @@ import com.example.viewmodel.FocusViewModel
  * their own bottom-nav tab ("BLOCKS") so Home doesn't need a giant scroll
  * and this content only shows up when that tab is tapped.
  */
-@androidx.compose.material3.ExperimentalMaterial3Api
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BlocksProgressScreen(
     viewModel: FocusViewModel,
@@ -142,7 +144,7 @@ fun BlocksProgressScreen(
  * inline card at the bottom of HomeScreen. Reachable only via the "STATS"
  * bottom-nav tab.
  */
-@androidx.compose.material3.ExperimentalMaterial3Api
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InsightsScreen(
     viewModel: FocusViewModel,
@@ -202,7 +204,7 @@ fun InsightsScreen(
  * Dedicated screen for My Forest Gallery, previously an inline card in
  * HomeScreen. Reachable only via the "FOREST" bottom-nav tab.
  */
-@androidx.compose.material3.ExperimentalMaterial3Api
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ForestGalleryScreen(
     viewModel: FocusViewModel,

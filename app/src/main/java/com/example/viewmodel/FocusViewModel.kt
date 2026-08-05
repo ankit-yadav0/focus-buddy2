@@ -923,6 +923,24 @@ class FocusViewModel(
         }
     }
 
+    /**
+     * Parses pipe-separated test schedule text (see BulkImportTestsScreen for the
+     * expected format), saves any successfully-parsed rows, and reports back via
+     * [onResult] with a summary of what was imported vs. skipped.
+     */
+    fun importTestSchedule(
+        rawText: String,
+        onResult: (com.example.planner.TestImportResult) -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = com.example.planner.TestScheduleParser.parse(rawText)
+            if (result.imported.isNotEmpty()) {
+                repository.importTests(result.imported)
+            }
+            onResult(result)
+        }
+    }
+
     val savedStudyPlan: kotlinx.coroutines.flow.Flow<String?> = repository.getSettingFlow("saved_study_plan")
 
     override fun onCleared() {
