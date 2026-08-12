@@ -99,7 +99,6 @@ fun HomeScreen(
     onClearWallpaper: () -> Unit = {},
     wallpaperOpacity: Float = 0.5f,
     onWallpaperOpacityChange: (Float) -> Unit = {},
-    onNavigateToEmergencyUnlock: () -> Unit = {},
     onNavigateToUninstall: () -> Unit = {},
     onNavigateToStudyPlanner: () -> Unit = {},
 
@@ -342,7 +341,6 @@ fun HomeScreen(
                             ActiveSessionWidget(
                                 session = session,
                                 onStopSession = { viewModel.stopActiveSession() },
-                                onEmergencyUnlock = onNavigateToEmergencyUnlock,
                                 completionPercentage = studyPlanCompletionPercentage,
                                 celebrateTrigger = celebrateTrigger
                             )
@@ -1024,7 +1022,6 @@ fun AnimatedPlantBox(
 fun ActiveSessionWidget(
     session: FocusSession,
     onStopSession: () -> Unit,
-    onEmergencyUnlock: () -> Unit = {},
     completionPercentage: Float? = null,
     celebrateTrigger: Boolean = false
 ) {
@@ -1297,47 +1294,23 @@ fun ActiveSessionWidget(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Shield,
-                                contentDescription = "Strict Mode Alert",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "STRICT MODE ACTIVE",
-                                color = MaterialTheme.colorScheme.error,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 1.sp,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        TextButton(
-                            onClick = onEmergencyUnlock,
-                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                            modifier = Modifier.testTag("emergency_unlock_button"),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = "EMERGENCY UNLOCK",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = "Strict Mode Alert",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "STRICT MODE ACTIVE \u2014 NO EARLY EXIT",
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 1.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
@@ -5360,319 +5333,6 @@ fun WallpaperSettingsCard(
     }
 }
 
-fun generateDisciplineParagraph(): String {
-    val wordPool = listOf(
-        "discipline", "focus", "attention", "strength", "commitment", "mindfulness", "patience", 
-        "clarity", "purpose", "resolve", "intention", "resilience", "growth", "mastery", "practice", 
-        "effort", "determination", "success", "habit", "conquest", "willpower", "victory", "calm", 
-        "progress", "wisdom", "learning", "action", "achievement", "pursuit", "dedication", "control"
-    )
-    val sentences = listOf(
-        "True strength lies in the quiet persistence of our daily choices to remain focused.",
-        "We build our future through the deliberate practice of resisting instant gratification.",
-        "Maintaining absolute focus on our primary objectives is the key to deep mastery.",
-        "Every moment spent in distraction is a moment stolen from our potential.",
-        "Self-discipline is not restriction, but the ultimate expression of personal freedom.",
-        "By channeling our attention inward, we cultivate a powerful state of mental clarity.",
-        "We must learn to embrace the discomfort of difficult tasks to unlock genuine growth.",
-        "An organized mind is capable of extraordinary achievements when shielded from chaos.",
-        "Consistency is the foundation upon which all great and lasting endeavors are built.",
-        "I am fully committed to my goals, guarding my focus against passing temptations."
-    )
-    
-    val resultWords = mutableListOf<String>()
-    val rand = kotlin.random.Random(System.currentTimeMillis())
-    
-    // First, let's add some sentences
-    while (resultWords.size < 280) {
-        val sentence = sentences[rand.nextInt(sentences.size)]
-        resultWords.addAll(sentence.split(" "))
-    }
-    
-    // Pad or trim to exactly 300 words
-    if (resultWords.size > 300) {
-        return resultWords.take(300).joinToString(" ")
-    } else {
-        while (resultWords.size < 300) {
-            val word = wordPool[rand.nextInt(wordPool.size)]
-            resultWords.add(word)
-        }
-        return resultWords.joinToString(" ")
-    }
-}
-
-@Composable
-fun EmergencyUnlockScreen(
-    viewModel: FocusViewModel,
-    onBack: () -> Unit
-) {
-    val context = LocalContext.current
-    val targetText = remember { generateDisciplineParagraph() }
-    var typedText by remember { mutableStateOf("") }
-    
-    val targetWords = remember(targetText) { targetText.trim().split("\\s+".toRegex()).filter { it.isNotEmpty() } }
-    val typedWords = remember(typedText) { typedText.trim().split("\\s+".toRegex()).filter { it.isNotEmpty() } }
-    
-    // Calculate matched words (order-sensitive, character-perfect)
-    val matchedWordsCount = remember(targetWords, typedWords) {
-        var count = 0
-        for (i in 0 until minOf(targetWords.size, typedWords.size)) {
-            if (targetWords[i] == typedWords[i]) {
-                count++
-            }
-        }
-        count
-    }
-    
-    val isPerfectMatch = remember(typedText, targetText) {
-        typedText.trim() == targetText.trim()
-    }
-    
-    val disabledClipboardManager = remember {
-        object : androidx.compose.ui.platform.ClipboardManager {
-            override fun setText(annotatedString: androidx.compose.ui.text.AnnotatedString) {}
-            override fun getText(): androidx.compose.ui.text.AnnotatedString? = null
-        }
-    }
-
-    val disabledTextToolbar = remember {
-        object : androidx.compose.ui.platform.TextToolbar {
-            override val status: androidx.compose.ui.platform.TextToolbarStatus = androidx.compose.ui.platform.TextToolbarStatus.Hidden
-            override fun showMenu(
-                rect: androidx.compose.ui.geometry.Rect,
-                onCopyRequested: (() -> Unit)?,
-                onPasteRequested: (() -> Unit)?,
-                onCutRequested: (() -> Unit)?,
-                onSelectAllRequested: (() -> Unit)?
-            ) {}
-            override fun hide() {}
-        }
-    }
-
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = Color.Transparent
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Color.White
-                    )
-                }
-                Text(
-                    text = "EMERGENCY UNLOCK",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.error,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.Black.copy(alpha = 0.6f),
-                    contentColor = Color.White
-                ),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = "Warning Icon",
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                        Text(
-                            text = "STRICT DISCIPLINE CHALLENGE",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-
-                    Text(
-                        text = "To bypass strict mode, you must perfectly type the 300-word paragraph below. Copy-pasting, clipboard features, and selection utilities are completely disabled on the input field.",
-                        fontSize = 13.sp,
-                        color = Color.White.copy(alpha = 0.7f)
-                    )
-                }
-            }
-
-            // Target paragraph card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White.copy(alpha = 0.05f),
-                    contentColor = Color.White
-                ),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "REQUIRED TEXT",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "300 Words",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = Color.White.copy(alpha = 0.5f)
-                        )
-                    }
-
-                    Text(
-                        text = targetText,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = Color.White
-                    )
-                }
-            }
-
-            // Real-time progress row
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White.copy(alpha = 0.05f)
-                ),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "TYPED WORDS",
-                            fontSize = 10.sp,
-                            color = Color.White.copy(alpha = 0.5f),
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "${typedWords.size} / 300",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (typedWords.size == 300) MaterialTheme.colorScheme.primary else Color.White
-                        )
-                    }
-                    
-                    Box(modifier = Modifier.width(1.dp).height(30.dp).background(Color.White.copy(alpha = 0.1f)))
-
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "PERFECTLY MATCHED",
-                            fontSize = 10.sp,
-                            color = Color.White.copy(alpha = 0.5f),
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "$matchedWordsCount",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (matchedWordsCount == 300) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            }
-
-            // Input TextField with Copy/Paste/Selection menu disabled
-            CompositionLocalProvider(
-                androidx.compose.ui.platform.LocalClipboardManager provides disabledClipboardManager,
-                androidx.compose.ui.platform.LocalTextToolbar provides disabledTextToolbar
-            ) {
-                OutlinedTextField(
-                    value = typedText,
-                    onValueChange = { typedText = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(220.dp)
-                        .testTag("emergency_unlock_input"),
-                    placeholder = { Text("Begin typing the paragraph perfectly here...") },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = if (isPerfectMatch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
-                        focusedContainerColor = Color.Black.copy(alpha = 0.4f),
-                        unfocusedContainerColor = Color.Black.copy(alpha = 0.2f)
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    textStyle = androidx.compose.ui.text.TextStyle(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = Color.White
-                    )
-                )
-            }
-
-            // Action Button
-            Button(
-                onClick = {
-                    if (isPerfectMatch) {
-                        viewModel.deactivateStrictMode()
-                        android.widget.Toast.makeText(context, "Strict Mode Prematurely Deactivated.", android.widget.Toast.LENGTH_LONG).show()
-                        onBack()
-                    }
-                },
-                enabled = isPerfectMatch,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .testTag("submit_unlock_button"),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    disabledContainerColor = Color.White.copy(alpha = 0.1f),
-                    disabledContentColor = Color.White.copy(alpha = 0.3f)
-                )
-            ) {
-                Text(
-                    text = if (isPerfectMatch) "COMPLETE UNLOCK" else "TYPE ENTIRE PARAGRAPH PERFECTLY",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-            }
-        }
-    }
-}
 
 
 

@@ -223,13 +223,6 @@ class FocusRepository(
         analyticsDao.insertAnalytics(current.copy(blockedAppLaunches = current.blockedAppLaunches + 1))
     }
 
-    suspend fun deactivateStrictMode() {
-        val active = focusSessionDao.getActiveSessionSync()
-        if (active != null && active.isActive && active.isStrict) {
-            focusSessionDao.updateSession(active.copy(isStrict = false))
-        }
-    }
-
     suspend fun insertSession(session: FocusSession) {
         focusSessionDao.insertSession(session)
     }

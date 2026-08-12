@@ -670,11 +670,9 @@ class FocusViewModel(
         }
     }
 
-    fun deactivateStrictMode() {
-        viewModelScope.launch {
-            repository.deactivateStrictMode()
-        }
-    }
+    // Strict Mode has no in-app bypass by design: once a strict session starts, it can
+    // only end when its timer reaches zero. There is intentionally no deactivate/unlock
+    // function here anymore.
 
     private fun startExpiredBlocksDeactivationLoop() {
         viewModelScope.launch {

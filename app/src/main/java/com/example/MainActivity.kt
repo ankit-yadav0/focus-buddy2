@@ -53,7 +53,6 @@ import com.example.ui.screens.FocusTimerScreen
 import com.example.ui.screens.PreSessionRitualScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.BlockDetailsScreen
-import com.example.ui.screens.EmergencyUnlockScreen
 import com.example.ui.screens.StrictScheduleManagerScreen
 import com.example.ui.screens.BlocksProgressScreen
 import com.example.ui.screens.InsightsScreen
@@ -393,7 +392,7 @@ class MainActivity : ComponentActivity() {
                         val currentRoute = navBackStackEntry?.destination?.route
 
                         DisposableEffect(currentRoute) {
-                            if (currentRoute == "emergency_unlock" || currentRoute == "uninstall_reflection") {
+                            if (currentRoute == "uninstall_reflection") {
                                 window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                             } else {
                                 window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -467,7 +466,6 @@ class MainActivity : ComponentActivity() {
                                                         wallpaperOpacity = newOpacity
                                                         sharedPrefs.edit().putFloat("wallpaper_opacity", newOpacity).apply()
                                                     },
-                                                    onNavigateToEmergencyUnlock = { navController.navigate("emergency_unlock") },
                                                     onNavigateToUninstall = { navController.navigate("uninstall_reflection") },
                                                     onNavigateToStudyPlanner = { navController.navigate("study_planner") }
                                                 )
@@ -546,12 +544,6 @@ class MainActivity : ComponentActivity() {
                                                     blockId = id,
                                                     blockType = type,
                                                     onNavigateBack = { navController.popBackStack() }
-                                                )
-                                            }
-                                            composable("emergency_unlock") {
-                                                EmergencyUnlockScreen(
-                                                    viewModel = focusViewModel,
-                                                    onBack = { navController.popBackStack() }
                                                 )
                                             }
                                              composable("study_planner") {
