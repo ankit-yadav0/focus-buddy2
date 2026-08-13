@@ -557,7 +557,9 @@ class FocusAccessibilityService : AccessibilityService() {
         quotaTickerJob = serviceScope.launch {
             while (true) {
                 kotlinx.coroutines.delay(5_000L)
-                val exceeded = persistQuotaProgress()
+                val currentBlockId = quotaTrackingBlockId ?: break
+                val currentStartMs = quotaTrackingStartMs
+                val exceeded = persistQuotaProgress(currentBlockId, currentStartMs)
                 if (exceeded) {
                     triggerBlockActivity(
                         block.target,
@@ -574,15 +576,19 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Adds elapsed foreground time since tracking started to the persisted
-     * usedSecondsToday for the currently-tracked block, handling the midnight reset
-     * if the day has rolled over. Returns true if the daily limit is now exceeded.
+     * Adds elapsed foreground time (since [startMs]) to the persisted usedSecondsToday
+     * for [blockId], handling the midnight reset if the day has rolled over. Returns
+     * true if the daily limit is now exceeded.
+     *
+     * blockId/startMs are passed in explicitly (rather than read from the shared
+     * quotaTracking* fields at call time) so that a caller can snapshot them before
+     * those fields get reset/nulled elsewhere - see stopQuotaTrackingAndPersist().
+     * Reading the shared fields directly here previously raced with
+     * stopQuotaTrackingAndPersist() nulling them before this suspend function got a
+     * chance to run, silently dropping the final segment of usage on every app switch.
      */
-    private suspend fun persistQuotaProgress(): Boolean {
-        val blockId = quotaTrackingBlockId ?: return false
-        val startMs = quotaTrackingStartMs
+    private suspend fun persistQuotaProgress(blockId: Int, startMs: Long): Boolean {
         val elapsedSeconds = (System.currentTimeMillis() - startMs) / 1000L
-        quotaTrackingStartMs = System.currentTimeMillis() // reset the window for the next tick/stop
 
         val repository = (application as FocusApplication).repository
         val block = repository.getLongTermBlockById(blockId) ?: return false
@@ -593,6 +599,13 @@ class FocusAccessibilityService : AccessibilityService() {
         val newUsed = baseUsed + elapsedSeconds
         repository.updateLongTermBlockUsage(blockId, newUsed, today)
 
+        // Only reset the shared tracking window if we're still actively tracking this
+        // same block - guards against clobbering a newer tracking window started
+        // concurrently (e.g. the user left and immediately reopened the same app).
+        if (quotaTrackingBlockId == blockId) {
+            quotaTrackingStartMs = System.currentTimeMillis()
+        }
+
         return newUsed >= limit
     }
 
@@ -600,17 +613,24 @@ class FocusAccessibilityService : AccessibilityService() {
     private fun stopQuotaTrackingAndPersist() {
         quotaTickerJob?.cancel()
         quotaTickerJob = null
-        if (quotaTrackingBlockId != null) {
+
+        // Snapshot before clearing the shared fields below, so the async persist call
+        // still has valid values to work with regardless of scheduling order.
+        val blockId = quotaTrackingBlockId
+        val startMs = quotaTrackingStartMs
+
+        quotaTrackingBlockId = null
+        quotaTrackingPackage = null
+
+        if (blockId != null) {
             serviceScope.launch {
                 try {
-                    persistQuotaProgress()
+                    persistQuotaProgress(blockId, startMs)
                 } catch (e: Exception) {
                     Log.e("FocusService", "Error persisting quota progress", e)
                 }
             }
         }
-        quotaTrackingBlockId = null
-        quotaTrackingPackage = null
     }
 
     private fun triggerBlockActivity(
