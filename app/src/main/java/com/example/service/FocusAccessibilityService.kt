@@ -588,16 +588,21 @@ class FocusAccessibilityService : AccessibilityService() {
      * chance to run, silently dropping the final segment of usage on every app switch.
      */
     private suspend fun persistQuotaProgress(blockId: Int, startMs: Long): Boolean {
-        val elapsedSeconds = (System.currentTimeMillis() - startMs) / 1000L
+        val elapsedMillis = (System.currentTimeMillis() - startMs).coerceAtLeast(0L)
 
         val repository = (application as FocusApplication).repository
         val block = repository.getLongTermBlockById(blockId) ?: return false
         val limit = block.dailyLimitSeconds ?: return false
         val today = currentEpochDay()
 
-        val baseUsed = if (block.lastUsageResetEpochDay != today) 0L else block.usedSecondsToday
-        val newUsed = baseUsed + elapsedSeconds
-        repository.updateLongTermBlockUsage(blockId, newUsed, today)
+        // Accumulate in milliseconds so brief sub-second segments (rapid Reels
+        // scrolling, quick app peeks) don't get truncated away - only the final
+        // derived usedSecondsToday (for display/threshold checks elsewhere) is
+        // floored to whole seconds, from an otherwise lossless running total.
+        val baseMillis = if (block.lastUsageResetEpochDay != today) 0L else block.usedMillisToday
+        val newMillis = baseMillis + elapsedMillis
+        val newSeconds = newMillis / 1000L
+        repository.updateLongTermBlockUsage(blockId, newSeconds, newMillis, today)
 
         // Only reset the shared tracking window if we're still actively tracking this
         // same block - guards against clobbering a newer tracking window started
@@ -606,7 +611,7 @@ class FocusAccessibilityService : AccessibilityService() {
             quotaTrackingStartMs = System.currentTimeMillis()
         }
 
-        return newUsed >= limit
+        return newMillis >= limit * 1000L
     }
 
     /** Stops tracking (app switched away or session ending) and persists final elapsed time. */

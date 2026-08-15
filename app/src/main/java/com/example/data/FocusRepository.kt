@@ -12,7 +12,9 @@ class FocusRepository(
     private val chatMessageDao: ChatMessageDao,
     private val strictScheduleDao: StrictScheduleDao,
     private val reflectionNoteDao: ReflectionNoteDao,
-    private val testEntryDao: TestEntryDao
+    private val testEntryDao: TestEntryDao,
+    private val pyqQuestionDao: PyqQuestionDao,
+    private val pyqQuizAttemptDao: PyqQuizAttemptDao
 ) {
     val allTests: Flow<List<TestEntry>> = testEntryDao.getAllTests()
     suspend fun getNextTest(): TestEntry? = testEntryDao.getNextTest(System.currentTimeMillis())
@@ -192,8 +194,8 @@ class FocusRepository(
         return longTermBlockDao.getActiveQuotaBlockForPackage(packageName)
     }
 
-    suspend fun updateLongTermBlockUsage(id: Int, usedSeconds: Long, epochDay: Long) {
-        longTermBlockDao.updateUsage(id, usedSeconds, epochDay)
+    suspend fun updateLongTermBlockUsage(id: Int, usedSeconds: Long, usedMillis: Long, epochDay: Long) {
+        longTermBlockDao.updateUsage(id, usedSeconds, usedMillis, epochDay)
     }
 
     suspend fun addWebsiteBlock(block: WebsiteBlock) {
@@ -238,4 +240,53 @@ class FocusRepository(
     suspend fun saveSetting(key: String, value: String) {
         appSettingDao.insertSetting(AppSetting(key, value))
     }
+
+    // --- PYQ question bank ---
+    suspend fun importPyqQuestions(questions: List<PyqQuestion>) = pyqQuestionDao.insertAll(questions)
+    suspend fun getPyqQuestionCount(): Int = pyqQuestionDao.getQuestionCount()
+    suspend fun getAvailablePyqYears(): List<Int> = pyqQuestionDao.getAvailableYears()
+    suspend fun getMatchingPyqCount(subject: String?, difficulty: String?): Int =
+        pyqQuestionDao.getMatchingCount(subject, difficulty)
+    suspend fun getRandomPyqQuestions(subject: String?, difficulty: String?, limit: Int): List<PyqQuestion> =
+        pyqQuestionDao.getRandomQuestions(subject, difficulty, limit)
+    suspend fun deletePyqYear(year: Int) = pyqQuestionDao.deleteByYear(year)
+    suspend fun deleteAllPyqQuestions() = pyqQuestionDao.deleteAll()
+
+    // --- PYQ quiz attempts ---
+    suspend fun startPyqQuizAttempt(subjectFilter: String, difficultyFilter: String, requestedCount: Int): Int {
+        val id = pyqQuizAttemptDao.insertAttempt(
+            PyqQuizAttempt(
+                subjectFilter = subjectFilter,
+                difficultyFilter = difficultyFilter,
+                requestedQuestionCount = requestedCount
+            )
+        )
+        return id.toInt()
+    }
+
+    suspend fun completePyqQuizAttempt(
+        attemptId: Int,
+        answers: List<PyqQuizAnswer>,
+        totalTimeSeconds: Long
+    ) {
+        pyqQuizAttemptDao.insertAnswers(answers)
+        val correct = answers.count { it.isCorrect }
+        val skipped = answers.count { it.selectedAnswer.isBlank() }
+        val wrong = answers.size - correct - skipped
+        pyqQuizAttemptDao.completeAttempt(
+            id = attemptId,
+            completedAt = System.currentTimeMillis(),
+            totalQuestions = answers.size,
+            correctCount = correct,
+            wrongCount = wrong,
+            skippedCount = skipped,
+            totalTimeSeconds = totalTimeSeconds
+        )
+    }
+
+    suspend fun getPyqAttemptById(id: Int): PyqQuizAttempt? = pyqQuizAttemptDao.getAttemptById(id)
+    suspend fun getPyqAnswersForAttempt(attemptId: Int): List<PyqQuizAnswer> =
+        pyqQuizAttemptDao.getAnswersForAttempt(attemptId)
+    val allPyqAttempts: Flow<List<PyqQuizAttempt>> = pyqQuizAttemptDao.getAllCompletedAttempts()
+    suspend fun getAllPyqAnswersEverRecorded(): List<PyqQuizAnswer> = pyqQuizAttemptDao.getAllAnswers()
 }

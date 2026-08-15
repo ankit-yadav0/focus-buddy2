@@ -20,5 +20,12 @@ data class LongTermBlock(
     // counter resets at midnight.
     val dailyLimitSeconds: Long? = null,
     val usedSecondsToday: Long = 0,
+    // Precise internal accumulator (milliseconds) the service tracks against, so
+    // brief sub-second foreground segments (e.g. rapid Reels scrolling generating
+    // many short window-state-change events) don't get truncated to 0 and dropped.
+    // usedSecondsToday above is always derived from this (floor to whole seconds)
+    // and is what the UI displays - it no longer accumulates lossy per-tick
+    // truncations itself.
+    val usedMillisToday: Long = 0,
     val lastUsageResetEpochDay: Long = 0
 )

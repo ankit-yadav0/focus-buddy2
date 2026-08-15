@@ -941,6 +941,24 @@ class FocusViewModel(
 
     val savedStudyPlan: kotlinx.coroutines.flow.Flow<String?> = repository.getSettingFlow("saved_study_plan")
 
+    // --- PYQ question bank + quiz ---
+    suspend fun importPyqQuestions(questions: List<com.example.data.PyqQuestion>) =
+        repository.importPyqQuestions(questions)
+    suspend fun getPyqQuestionCount(): Int = repository.getPyqQuestionCount()
+    suspend fun getAvailablePyqYears(): List<Int> = repository.getAvailablePyqYears()
+    suspend fun getMatchingPyqCount(subject: String?, difficulty: String?): Int =
+        repository.getMatchingPyqCount(subject, difficulty)
+    suspend fun getRandomPyqQuestions(subject: String?, difficulty: String?, limit: Int): List<com.example.data.PyqQuestion> =
+        repository.getRandomPyqQuestions(subject, difficulty, limit)
+    suspend fun startPyqQuizAttempt(subjectFilter: String, difficultyFilter: String, requestedCount: Int): Int =
+        repository.startPyqQuizAttempt(subjectFilter, difficultyFilter, requestedCount)
+    suspend fun completePyqQuizAttempt(attemptId: Int, answers: List<com.example.data.PyqQuizAnswer>, totalTimeSeconds: Long) =
+        repository.completePyqQuizAttempt(attemptId, answers, totalTimeSeconds)
+    suspend fun getPyqAttemptById(id: Int): com.example.data.PyqQuizAttempt? = repository.getPyqAttemptById(id)
+    suspend fun getPyqAnswersForAttempt(attemptId: Int): List<com.example.data.PyqQuizAnswer> =
+        repository.getPyqAnswersForAttempt(attemptId)
+    val allPyqAttempts: kotlinx.coroutines.flow.Flow<List<com.example.data.PyqQuizAttempt>> = repository.allPyqAttempts
+
     override fun onCleared() {
         super.onCleared()
     }
