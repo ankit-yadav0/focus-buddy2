@@ -76,6 +76,7 @@ fun PyqPracticeScreen(
 // STAGE 1: SETUP
 // =====================================================================================
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PyqSetupContent(
     viewModel: FocusViewModel,
@@ -298,6 +299,7 @@ private fun PyqChip(label: String, selected: Boolean, onClick: () -> Unit) {
 // STAGE 2: QUIZ
 // =====================================================================================
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PyqQuizContent(
     questions: List<PyqQuestion>,
@@ -545,6 +547,7 @@ private fun PyqOptionCard(
 // STAGE 3: RESULTS DASHBOARD
 // =====================================================================================
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PyqResultsContent(
     viewModel: FocusViewModel,

@@ -902,7 +902,6 @@ class FocusViewModel(
                 repository.importTests(result.imported)
             }
             repository.saveSetting("test_schedule_seeded_v1", "true")
-            com.example.scheduler.TestCountdownScheduler.scheduleNextUpdate(context)
         }
     }
 

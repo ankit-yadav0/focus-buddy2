@@ -94,13 +94,6 @@ class BootReceiver : BroadcastReceiver() {
                     } catch (e: Exception) {
                         Log.e("BootReceiver", "Error rescheduling schedules on boot", e)
                     }
-
-                    // Re-arm the test countdown notification updater on boot
-                    try {
-                        com.example.scheduler.TestCountdownScheduler.scheduleNextUpdate(context)
-                    } catch (e: Exception) {
-                        Log.e("BootReceiver", "Error re-arming test countdown updater on boot", e)
-                    }
                 } catch (e: Exception) {
                     Log.e("BootReceiver", "Error while handling broadcast $action", e)
                 } finally {

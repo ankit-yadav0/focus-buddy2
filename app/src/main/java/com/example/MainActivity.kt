@@ -383,8 +383,8 @@ class MainActivity : ComponentActivity() {
                         LaunchedEffect(Unit) {
                             focusViewModel.seedTestScheduleIfNeeded()
                             try {
-                                com.example.scheduler.TestCountdownScheduler.updateNotification(applicationContext)
-                                com.example.scheduler.TestCountdownScheduler.scheduleNextUpdate(applicationContext)
+                                com.example.scheduler.TestCountdownScheduler.clearNotification(applicationContext)
+                                com.example.scheduler.TestCountdownScheduler.cancelUpdates(applicationContext)
                             } catch (e: Exception) {
                             }
                         }

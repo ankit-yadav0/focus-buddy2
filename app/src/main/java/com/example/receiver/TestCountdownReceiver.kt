@@ -3,27 +3,16 @@ package com.example.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import com.example.scheduler.TestCountdownScheduler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
+/**
+ * Kept only so a stale alarm scheduled by an older version of the app (before the
+ * test-countdown notification feature was removed) has somewhere safe to land -
+ * it just cleans up and does not reschedule itself.
+ */
 class TestCountdownReceiver : BroadcastReceiver() {
-    private val receiverScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
     override fun onReceive(context: Context, intent: Intent) {
-        val pendingResult = goAsync()
-        receiverScope.launch {
-            try {
-                TestCountdownScheduler.updateNotification(context)
-            } catch (e: Exception) {
-                Log.e("TestCountdownReceiver", "Failed to update test countdown notification", e)
-            } finally {
-                TestCountdownScheduler.scheduleNextUpdate(context)
-                pendingResult.finish()
-            }
-        }
+        TestCountdownScheduler.clearNotification(context)
+        TestCountdownScheduler.cancelUpdates(context)
     }
 }

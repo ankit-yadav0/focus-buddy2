@@ -450,7 +450,13 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Improved Shorts detection logic
+            // Shorts detection logic
+            // A single loose signal isn't enough on its own: the Shorts *shelf* (a
+            // horizontal row of Shorts previews shown inline on the home/subscriptions
+            // feed, visible without ever opening a Short) can trip a bare class-name or
+            // resource-id match, and "Dislike" appears on every video, Shorts or not.
+            // So we require at least two independent signals to agree before treating
+            // it as the user actually being inside full-screen Shorts/Reels playback.
             var isShortsDetected = false
             if (packageName == "com.google.android.youtube") {
                 val hasShortsText = screenTexts.any { it.contains("Shorts", ignoreCase = true) }
@@ -458,10 +464,16 @@ class FocusAccessibilityService : AccessibilityService() {
                                      event.className?.toString()?.lowercase()?.contains("reel") == true
                 val hasShortsId = checkNodeForShortsSpecifics(nodeToUse)
                 val hasShortsDescription = screenTexts.any { it.contains("shorts player", ignoreCase = true) || it.contains("reel player", ignoreCase = true) }
-                val hasShortsActions = screenTexts.any { it.equals("Remix", ignoreCase = true) } ||
-                                       screenTexts.any { it.equals("Dislike", ignoreCase = true) }
+                val hasRemixAction = screenTexts.any { it.equals("Remix", ignoreCase = true) }
 
-                if (hasShortsClass || hasShortsId || (hasShortsText && (hasShortsDescription || hasShortsActions))) {
+                val signalCount = listOf(hasShortsClass, hasShortsId, hasShortsDescription, hasRemixAction).count { it }
+
+                // hasShortsDescription alone is already a strong, specific signal
+                // ("shorts player" / "reel player" text doesn't show up outside actual
+                // playback), so it's enough by itself. Everything else needs at least
+                // one corroborating signal, and bare "Shorts" text (e.g. the nav tab
+                // label, always visible) never counts as a signal on its own.
+                if (hasShortsDescription || signalCount >= 2 || (hasShortsText && signalCount >= 1)) {
                     isShortsDetected = true
                 }
             }
@@ -856,7 +868,7 @@ class FocusAccessibilityService : AccessibilityService() {
     private fun checkNodeForShortsSpecifics(node: AccessibilityNodeInfo?): Boolean {
         if (node == null) return false
         val id = node.viewIdResourceName?.lowercase() ?: ""
-        if (id.contains("shorts_player") || id.contains("shorts_video") || id.contains("shorts_reel") || id.contains("reel_container") || id.contains("reel_player")) {
+        if (id.contains("shorts_player") || id.contains("shorts_video") || id.contains("shorts_reel") || id.contains("reel_player")) {
             return true
         }
         for (i in 0 until node.childCount) {
