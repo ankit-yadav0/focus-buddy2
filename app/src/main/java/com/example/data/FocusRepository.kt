@@ -225,6 +225,16 @@ class FocusRepository(
         analyticsDao.insertAnalytics(current.copy(blockedAppLaunches = current.blockedAppLaunches + 1))
     }
 
+    // Only ever called from the "Extreme Override" deactivation flow, which itself
+    // only exists when that method was explicitly chosen at Strict Mode activation
+    // time (see StrictModeSetupWizardScreen / FocusViewModel.deactivateStrictModeViaOverride).
+    suspend fun deactivateStrictModeOverride() {
+        val active = focusSessionDao.getActiveSessionSync()
+        if (active != null && active.isActive && active.isStrict) {
+            focusSessionDao.updateSession(active.copy(isStrict = false))
+        }
+    }
+
     suspend fun insertSession(session: FocusSession) {
         focusSessionDao.insertSession(session)
     }

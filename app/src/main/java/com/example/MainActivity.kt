@@ -79,8 +79,106 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.text.font.FontWeight
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun StrictPasswordGate(
+    viewModel: com.example.viewmodel.FocusViewModel,
+    onUnlocked: () -> Unit,
+    onExit: () -> Unit
+) {
+    BackHandler { onExit() }
+
+    var password by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF121212))
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("strict_password_gate_card"),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Locked",
+                    tint = Color(0xFF3DFFC4),
+                    modifier = Modifier.size(56.dp)
+                )
+                Text(
+                    text = "Strict Mode Locked",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 22.sp,
+                    color = Color.White
+                )
+                Text(
+                    text = "Enter your password to open Focus Buddy while this Strict Mode session is active.",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it; error = false },
+                    label = { Text("Password") },
+                    isError = error,
+                    singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth().testTag("strict_password_input"),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    )
+                )
+                if (error) {
+                    Text("Incorrect password.", color = Color(0xFFFF5252), fontSize = 12.sp)
+                }
+                Button(
+                    onClick = {
+                        scope.launch {
+                            if (viewModel.verifyStrictModePassword(password)) {
+                                onUnlocked()
+                            } else {
+                                error = true
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("strict_password_unlock_button"),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3DFFC4), contentColor = Color.Black),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Unlock", fontWeight = FontWeight.Bold)
+                }
+                TextButton(onClick = onExit) {
+                    Text("Close Focus Buddy", color = Color.White.copy(alpha = 0.6f))
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun LaunchEnforcementGate(
@@ -329,6 +427,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 MyApplicationTheme(accentThemeName = accentTheme) {
+                    Box(modifier = Modifier.fillMaxSize()) {
                     if (!hasOverlayPermission || !hasDeviceAdmin) {
                         LaunchEnforcementGate(
                             hasOverlay = hasOverlayPermission,
@@ -367,6 +466,34 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     } else {
+                        var isPasswordGateActive by remember { mutableStateOf(false) }
+                        var passwordVerified by remember { mutableStateOf(false) }
+
+                        LaunchedEffect(Unit) {
+                            isPasswordGateActive = focusViewModel.isPasswordGateActive()
+                        }
+
+                        val gateLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+                        DisposableEffect(gateLifecycleOwner) {
+                            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                                when (event) {
+                                    androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
+                                        lifecycleScope.launch {
+                                            val active = focusViewModel.isPasswordGateActive()
+                                            isPasswordGateActive = active
+                                        }
+                                    }
+                                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                                        // Re-lock every time the app leaves the foreground while the gate is on.
+                                        passwordVerified = false
+                                    }
+                                    else -> {}
+                                }
+                            }
+                            gateLifecycleOwner.lifecycle.addObserver(observer)
+                            onDispose { gateLifecycleOwner.lifecycle.removeObserver(observer) }
+                        }
+
                         val navController = rememberNavController()
                         LaunchedEffect(pendingDeepLinkRoute.value) {
                             val route = pendingDeepLinkRoute.value
@@ -392,7 +519,7 @@ class MainActivity : ComponentActivity() {
                         val currentRoute = navBackStackEntry?.destination?.route
 
                         DisposableEffect(currentRoute) {
-                            if (currentRoute == "uninstall_reflection") {
+                            if (currentRoute == "uninstall_reflection" || currentRoute == "strict_override") {
                                 window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                             } else {
                                 window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -467,6 +594,7 @@ class MainActivity : ComponentActivity() {
                                                         sharedPrefs.edit().putFloat("wallpaper_opacity", newOpacity).apply()
                                                     },
                                                     onNavigateToUninstall = { navController.navigate("uninstall_reflection") },
+                                                    onNavigateToStrictOverride = { navController.navigate("strict_override") },
                                                     onNavigateToStudyPlanner = { navController.navigate("study_planner") }
                                                 )
                                             }
@@ -609,6 +737,12 @@ class MainActivity : ComponentActivity() {
                                                     onBack = { navController.popBackStack() }
                                                 )
                                             }
+                                            composable("strict_override") {
+                                                com.example.ui.screens.StrictOverrideScreen(
+                                                    viewModel = focusViewModel,
+                                                    onBack = { navController.popBackStack() }
+                                                )
+                                            }
 
                                         }
 
@@ -617,8 +751,17 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+
+                        if (isPasswordGateActive && !passwordVerified) {
+                            StrictPasswordGate(
+                                viewModel = focusViewModel,
+                                onUnlocked = { passwordVerified = true },
+                                onExit = { finishAffinity() }
+                            )
+                        }
                     }
                 }
+            }
             }
         }
     }

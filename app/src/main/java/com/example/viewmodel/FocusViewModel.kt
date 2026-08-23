@@ -163,8 +163,115 @@ class FocusViewModel(
     val allSchedules: StateFlow<List<StrictSchedule>> = repository.allSchedules
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // --- Strict Mode setup wizard: Restriction Editing lock ---
+    // "Restrict All" locks every editable category below while a strict session is
+    // running. "Restrict Specific" locks only the categories the user opted into at
+    // activation time. The blocked-apps list itself is always locked during any
+    // strict session regardless of this setting (see toggleAppBlocked) - that
+    // predates the wizard and was never configurable.
+    data class StrictEditLock(val rulesLocked: Boolean, val schedulesLocked: Boolean)
+
+    val strictEditLock: StateFlow<StrictEditLock> = combine(
+        isStrictModeActive,
+        repository.getSettingFlow("strict_restriction_editing_mode").map { it ?: "ALL" },
+        repository.getSettingFlow("strict_restrict_rules_specific").map { it?.toBoolean() ?: true },
+        repository.getSettingFlow("strict_restrict_schedules_specific").map { it?.toBoolean() ?: true }
+    ) { strictActive, mode, restrictRules, restrictSchedules ->
+        StrictEditLock(
+            rulesLocked = strictActive && (mode == "ALL" || restrictRules),
+            schedulesLocked = strictActive && (mode == "ALL" || restrictSchedules)
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StrictEditLock(false, false))
+
+    private suspend fun isRulesEditingLocked(): Boolean {
+        val active = repository.getActiveSessionSync()
+        val strictActive = active?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+        if (!strictActive) return false
+        val mode = repository.getSetting("strict_restriction_editing_mode") ?: "ALL"
+        if (mode == "ALL") return true
+        return repository.getSetting("strict_restrict_rules_specific")?.toBoolean() ?: true
+    }
+
+    private suspend fun isSchedulesEditingLocked(): Boolean {
+        val active = repository.getActiveSessionSync()
+        val strictActive = active?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+        if (!strictActive) return false
+        val mode = repository.getSetting("strict_restriction_editing_mode") ?: "ALL"
+        if (mode == "ALL") return true
+        return repository.getSetting("strict_restrict_schedules_specific")?.toBoolean() ?: true
+    }
+
+    // --- Strict Mode setup wizard: config persistence ---
+    data class StrictModeWizardConfig(
+        val restrictionEditingMode: String = "ALL",     // "ALL" | "SPECIFIC"
+        val restrictRulesSpecific: Boolean = true,
+        val restrictSchedulesSpecific: Boolean = true,
+        val restrictUninstall: Boolean = false,
+        val restrictSettings: Boolean = false,
+        val requirePassword: Boolean = false,
+        val deactivationMethod: String = "TIME_ONLY"    // "TIME_ONLY" | "EXTREME_OVERRIDE"
+    )
+
+    suspend fun getStrictModeWizardConfig(): StrictModeWizardConfig {
+        return StrictModeWizardConfig(
+            restrictionEditingMode = repository.getSetting("strict_restriction_editing_mode") ?: "ALL",
+            restrictRulesSpecific = repository.getSetting("strict_restrict_rules_specific")?.toBoolean() ?: true,
+            restrictSchedulesSpecific = repository.getSetting("strict_restrict_schedules_specific")?.toBoolean() ?: true,
+            restrictUninstall = repository.getSetting("strict_restrict_uninstall")?.toBoolean() ?: false,
+            restrictSettings = repository.getSetting("strict_restrict_settings")?.toBoolean() ?: false,
+            requirePassword = repository.getSetting("strict_require_password")?.toBoolean() ?: false,
+            deactivationMethod = repository.getSetting("strict_deactivation_method") ?: "TIME_ONLY"
+        )
+    }
+
+    suspend fun saveStrictModeWizardConfig(config: StrictModeWizardConfig) {
+        val active = repository.getActiveSessionSync()
+        val strictActive = active?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+        if (strictActive) return
+        repository.saveSetting("strict_restriction_editing_mode", config.restrictionEditingMode)
+        repository.saveSetting("strict_restrict_rules_specific", config.restrictRulesSpecific.toString())
+        repository.saveSetting("strict_restrict_schedules_specific", config.restrictSchedulesSpecific.toString())
+        repository.saveSetting("strict_restrict_uninstall", config.restrictUninstall.toString())
+        repository.saveSetting("strict_restrict_settings", config.restrictSettings.toString())
+        repository.saveSetting("strict_require_password", config.requirePassword.toString())
+        repository.saveSetting("strict_deactivation_method", config.deactivationMethod)
+    }
+
+    private fun sha256(input: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    suspend fun hasStrictModePassword(): Boolean {
+        return !repository.getSetting("strict_password_hash").isNullOrBlank()
+    }
+
+    suspend fun setStrictModePassword(password: String) {
+        repository.saveSetting("strict_password_hash", sha256(password))
+    }
+
+    suspend fun clearStrictModePassword() {
+        repository.saveSetting("strict_password_hash", "")
+    }
+
+    suspend fun verifyStrictModePassword(password: String): Boolean {
+        val stored = repository.getSetting("strict_password_hash") ?: return false
+        if (stored.isBlank()) return false
+        return stored == sha256(password)
+    }
+
+    /** True right now if a strict session is active AND the password gate is configured. */
+    suspend fun isPasswordGateActive(): Boolean {
+        val active = repository.getActiveSessionSync()
+        val strictActive = active?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+        if (!strictActive) return false
+        val requirePassword = repository.getSetting("strict_require_password")?.toBoolean() ?: false
+        return requirePassword && hasStrictModePassword()
+    }
+
     fun addSchedule(context: Context, schedule: StrictSchedule) {
         viewModelScope.launch {
+            if (isSchedulesEditingLocked()) return@launch
             val id = repository.addSchedule(schedule)
             if (schedule.isEnabled) {
                 AlarmScheduler.scheduleWindow(context, schedule.copy(id = id.toInt()))
@@ -174,6 +281,7 @@ class FocusViewModel(
 
     fun updateSchedule(context: Context, schedule: StrictSchedule) {
         viewModelScope.launch {
+            if (isSchedulesEditingLocked()) return@launch
             repository.updateSchedule(schedule)
             AlarmScheduler.cancelWindow(context, schedule.id)
             if (schedule.isEnabled) {
@@ -184,6 +292,7 @@ class FocusViewModel(
 
     fun deleteSchedule(context: Context, schedule: StrictSchedule) {
         viewModelScope.launch {
+            if (isSchedulesEditingLocked()) return@launch
             val currentlyActive = repository.getActiveSessionSync()
             if (currentlyActive != null && currentlyActive.origin == "SCHEDULE:${schedule.id}") {
                 return@launch
@@ -670,9 +779,43 @@ class FocusViewModel(
         }
     }
 
-    // Strict Mode has no in-app bypass by design: once a strict session starts, it can
-    // only end when its timer reaches zero. There is intentionally no deactivate/unlock
-    // function here anymore.
+    // Strict Mode has no in-app bypass by default: once a strict session starts, it
+    // can only end when its timer reaches zero - UNLESS "Extreme Override" was
+    // explicitly chosen as the deactivation method in the setup wizard, in which
+    // case the flow below (300-word typing + 45-min cooldown + night blackout,
+    // enforced by StrictOverrideScreen) is the only path in, and even it is
+    // completely unavailable 10 PM-6 AM.
+
+    val strictBypassRequestedAt: StateFlow<Long> = repository.getSettingFlow("strict_bypass_requested_at")
+        .map { it?.toLongOrNull() ?: 0L }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
+    suspend fun getDeactivationMethod(): String = repository.getSetting("strict_deactivation_method") ?: "TIME_ONLY"
+
+    val deactivationMethod: StateFlow<String> = repository.getSettingFlow("strict_deactivation_method")
+        .map { it ?: "TIME_ONLY" }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "TIME_ONLY")
+
+    fun requestStrictModeOverride() {
+        viewModelScope.launch {
+            repository.saveSetting("strict_bypass_requested_at", System.currentTimeMillis().toString())
+        }
+    }
+
+    fun cancelStrictModeOverrideRequest() {
+        viewModelScope.launch {
+            repository.saveSetting("strict_bypass_requested_at", "0")
+        }
+    }
+
+    fun deactivateStrictModeViaOverride() {
+        viewModelScope.launch {
+            val method = repository.getSetting("strict_deactivation_method") ?: "TIME_ONLY"
+            if (method != "EXTREME_OVERRIDE") return@launch
+            repository.deactivateStrictModeOverride()
+            repository.saveSetting("strict_bypass_requested_at", "0")
+        }
+    }
 
     private fun startExpiredBlocksDeactivationLoop() {
         viewModelScope.launch {
@@ -719,6 +862,7 @@ class FocusViewModel(
         dailyLimitSeconds: Long? = null
     ) {
         viewModelScope.launch {
+            if (isRulesEditingLocked()) return@launch
             val block = LongTermBlock(
                 type = type,
                 target = target,
@@ -735,6 +879,7 @@ class FocusViewModel(
 
     fun removeLongTermBlock(id: Int) {
         viewModelScope.launch {
+            if (isRulesEditingLocked()) return@launch
             val block = repository.getLongTermBlockById(id)
             val now = System.currentTimeMillis()
             if (block != null && now >= block.startDate && now <= block.endDate && block.isActive) {
@@ -747,6 +892,7 @@ class FocusViewModel(
 
     fun addWebsiteBlock(domain: String, reason: String, startDate: Long, endDate: Long) {
         viewModelScope.launch {
+            if (isRulesEditingLocked()) return@launch
             val cleaned = cleanDomain(domain)
             val block = WebsiteBlock(
                 domain = cleaned,
@@ -761,6 +907,7 @@ class FocusViewModel(
 
     fun removeWebsiteBlock(id: Int) {
         viewModelScope.launch {
+            if (isRulesEditingLocked()) return@launch
             val block = repository.getWebsiteBlockById(id)
             val now = System.currentTimeMillis()
             if (block != null && now >= block.startDate && now <= block.endDate && block.isActive) {

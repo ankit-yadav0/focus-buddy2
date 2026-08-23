@@ -100,6 +100,7 @@ fun HomeScreen(
     wallpaperOpacity: Float = 0.5f,
     onWallpaperOpacityChange: (Float) -> Unit = {},
     onNavigateToUninstall: () -> Unit = {},
+    onNavigateToStrictOverride: () -> Unit = {},
     onNavigateToStudyPlanner: () -> Unit = {},
 
     modifier: Modifier = Modifier
@@ -338,11 +339,14 @@ fun HomeScreen(
                         exit = fadeOut() + shrinkVertically()
                     ) {
                         activeSession?.let { session ->
+                            val deactivationMethod by viewModel.deactivationMethod.collectAsStateWithLifecycle()
                             ActiveSessionWidget(
                                 session = session,
                                 onStopSession = { viewModel.stopActiveSession() },
                                 completionPercentage = studyPlanCompletionPercentage,
-                                celebrateTrigger = celebrateTrigger
+                                celebrateTrigger = celebrateTrigger,
+                                showOverrideOption = session.isStrict && deactivationMethod == "EXTREME_OVERRIDE",
+                                onOverrideClick = onNavigateToStrictOverride
                             )
                         }
                     }
@@ -1023,7 +1027,9 @@ fun ActiveSessionWidget(
     session: FocusSession,
     onStopSession: () -> Unit,
     completionPercentage: Float? = null,
-    celebrateTrigger: Boolean = false
+    celebrateTrigger: Boolean = false,
+    showOverrideOption: Boolean = false,
+    onOverrideClick: () -> Unit = {}
 ) {
     var targetScale by remember { mutableStateOf(1f) }
     val scaleFactor by animateFloatAsState(
@@ -1308,6 +1314,23 @@ fun ActiveSessionWidget(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 1.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                if (showOverrideOption) {
+                    TextButton(
+                        onClick = onOverrideClick,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.fillMaxWidth().testTag("strict_override_button"),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Extreme Override (300-word typing + 45-min cooldown)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
                             maxLines = 1,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
@@ -3320,6 +3343,19 @@ fun FocusTimerScreen(
     var secondsInput by remember { mutableStateOf("0") }
     var isCustomSelected by remember { mutableStateOf(false) }
     var isStrict by remember { mutableStateOf(false) }
+    var showStrictWizard by remember { mutableStateOf(false) }
+
+    if (showStrictWizard) {
+        StrictModeSetupWizardScreen(
+            viewModel = viewModel,
+            onBack = { showStrictWizard = false },
+            onActivated = {
+                isStrict = true
+                showStrictWizard = false
+            }
+        )
+        return
+    }
 
     val presetDurations = listOf(
         15 to "15 Min",
@@ -3686,7 +3722,7 @@ fun FocusTimerScreen(
                 Card(
                     modifier = Modifier
                         .weight(1f)
-                        .clickable { isStrict = true },
+                        .clickable { showStrictWizard = true },
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = if (isStrict) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,

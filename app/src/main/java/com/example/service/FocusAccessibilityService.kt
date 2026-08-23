@@ -64,6 +64,7 @@ class FocusAccessibilityService : AccessibilityService() {
     private var sessionEndTime: Long = 0
     private var isSessionStrict = false
     private var blockedPackages = setOf<String>()
+    private var restrictSettingsFullyEnabled = false
     private var longTermBlocks = listOf<LongTermBlock>()
     private var activeWebsitesList = listOf<WebsiteBlock>()
     private var lastContentChangedProcessTime = 0L
@@ -112,6 +113,13 @@ class FocusAccessibilityService : AccessibilityService() {
                 repository.allBlockedApps.collectLatest { apps ->
                     blockedPackages = apps.map { it.packageName }.toSet()
                     Log.d("FocusService", "Blocked apps updated: count=${blockedPackages.size}")
+                }
+            }
+
+            // Observe the Strict Mode wizard's "Phone Settings" restriction toggle
+            serviceScope.launch {
+                repository.getSettingFlow("strict_restrict_settings").collectLatest { value ->
+                    restrictSettingsFullyEnabled = value?.toBoolean() ?: false
                 }
             }
 
@@ -305,6 +313,13 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
                 // Selective Settings Rules
                 if (packageName == "com.android.settings") {
+                    if (restrictSettingsFullyEnabled) {
+                        // Wizard's "Phone Settings" restriction is on for this session -
+                        // block Settings entirely, not just specific bypass actions.
+                        Log.d("FocusService", "Strict Mode: Phone Settings restriction is on - blocking Settings entirely")
+                        triggerBlockActivity(packageName, isLongTerm = false, reason = "Phone Settings is blocked for this Strict Mode session.", endDate = sessionEndTime)
+                        return
+                    }
                     val bypassKeywords = listOf(
                         "Reset", "Factory reset", "Erase all data",
                         "Clear storage", "Clear data", "Clear cache", "Storage & cache",
@@ -568,7 +583,7 @@ class FocusAccessibilityService : AccessibilityService() {
         quotaTickerJob?.cancel()
         quotaTickerJob = serviceScope.launch {
             while (true) {
-                kotlinx.coroutines.delay(5_000L)
+                kotlinx.coroutines.delay(2_000L)
                 val currentBlockId = quotaTrackingBlockId ?: break
                 val currentStartMs = quotaTrackingStartMs
                 val exceeded = persistQuotaProgress(currentBlockId, currentStartMs)
@@ -781,6 +796,26 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        // Best-effort final flush of any in-progress quota tracking before the
+        // coroutine scope dies below. This can't help against a silent low-memory
+        // kill (Android gives no callback at all for that - see the shortened
+        // ticker interval above, which is the real mitigation for that case), but
+        // it does catch normal teardowns: the user disabling the accessibility
+        // service, force-stopping the app, etc.
+        val blockId = quotaTrackingBlockId
+        val startMs = quotaTrackingStartMs
+        if (blockId != null) {
+            try {
+                kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.withTimeoutOrNull(1500L) {
+                        persistQuotaProgress(blockId, startMs)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("FocusService", "Error flushing quota progress on destroy", e)
+            }
+        }
+
         super.onDestroy()
         if (instance == this) {
             instance = null
