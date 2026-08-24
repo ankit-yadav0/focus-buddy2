@@ -311,21 +311,43 @@ class FocusAccessibilityService : AccessibilityService() {
                     triggerBlockActivity(packageName, isLongTerm = false, reason = "App uninstallation is blocked in Strict Mode.", endDate = sessionEndTime)
                     return
                 }
-                // Selective Settings Rules
+                // Selective Settings Rules - blocks screens that could be used to defeat
+                // enforcement (uninstalling, disabling the accessibility service or device
+                // admin, revoking the overlay permission), never a full Settings block, so
+                // WiFi/Bluetooth/mobile data/display/sound etc. always stay reachable.
                 if (packageName == "com.android.settings") {
-                    if (restrictSettingsFullyEnabled) {
-                        // Wizard's "Phone Settings" restriction is on for this session -
-                        // block Settings entirely, not just specific bypass actions.
-                        Log.d("FocusService", "Strict Mode: Phone Settings restriction is on - blocking Settings entirely")
-                        triggerBlockActivity(packageName, isLongTerm = false, reason = "Phone Settings is blocked for this Strict Mode session.", endDate = sessionEndTime)
+                    // Unconditional, regardless of the "Phone Settings" toggle: any Settings
+                    // screen that shows our own app's name is almost certainly App Info,
+                    // the accessibility-service toggle, the device-admin toggle, or battery
+                    // optimization for this app - all of which can be used to defeat
+                    // enforcement. This catches those screens even when reached via the
+                    // Settings search bar's direct-jump results, whose destination screens
+                    // often don't literally show the word "Accessibility" or "Device admin"
+                    // - just the app's own name and a toggle.
+                    if (screenTexts.any { it.contains(appName, ignoreCase = true) }) {
+                        Log.d("FocusService", "Strict Mode: Blocking Settings screen referencing our own app")
+                        triggerBlockActivity(packageName, isLongTerm = false, reason = "Settings bypass action is blocked in Strict Mode.", endDate = sessionEndTime)
                         return
                     }
-                    val bypassKeywords = listOf(
+                    val bypassKeywords = mutableListOf(
                         "Reset", "Factory reset", "Erase all data",
                         "Clear storage", "Clear data", "Clear cache", "Storage & cache",
                         "Force stop", "Uninstall",
-                        "Apps & notifications"
+                        "Apps & notifications",
+                        // Also unconditional: these are generic (not app-name-specific) paths
+                        // to the same disable-enforcement destinations, e.g. browsing/searching
+                        // the accessibility service list before a specific app is named on
+                        // screen.
+                        "Accessibility", "Device admin apps", "Deactivate this device admin app",
+                        "Special app access", "Display over other apps"
                     )
+                    if (restrictSettingsFullyEnabled) {
+                        // Wizard's "Phone Settings" restriction adds a couple of broader
+                        // screens on top, without blocking Settings wholesale.
+                        bypassKeywords.addAll(
+                            listOf("Modify system settings", "Usage access", "Battery optimization")
+                        )
+                    }
                     val containsBypass = screenTexts.any { text ->
                         bypassKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
                     }
