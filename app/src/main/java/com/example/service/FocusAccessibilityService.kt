@@ -77,6 +77,7 @@ class FocusAccessibilityService : AccessibilityService() {
     private var quotaTrackingPackage: String? = null
     private var quotaTrackingStartMs: Long = 0L
     private var quotaTickerJob: kotlinx.coroutines.Job? = null
+    private var quotaHeartbeatJob: kotlinx.coroutines.Job? = null
 
     private var overlayView: View? = null
     private val windowManager: WindowManager by lazy { getSystemService(android.content.Context.WINDOW_SERVICE) as WindowManager }
@@ -164,6 +165,8 @@ class FocusAccessibilityService : AccessibilityService() {
                     AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
             notificationTimeout = 100
         }
+
+        startQuotaHeartbeat()
     }
 
     /**
@@ -625,6 +628,62 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Everything above (startQuotaTracking / stopQuotaTrackingAndPersist) is driven by
+     * TYPE_WINDOW_STATE_CHANGED events - it only knows to (re)start tracking when the
+     * foreground package visibly changes. That assumption breaks for apps like games,
+     * which render through a single game-engine surface and generate few or no
+     * accessibility events for the entire time they're being played. If the service
+     * process also gets killed and restarted mid-game (very likely on a 2GB Go-edition
+     * device with a heavy game in foreground competing for RAM), there is no future
+     * event to ever re-trigger tracking - it silently never resumes for the rest of
+     * that play session.
+     *
+     * This heartbeat polls the actual foreground package directly every few seconds,
+     * independent of any event firing, and resumes tracking (or blocks immediately if
+     * already over quota) whenever it finds a quota-enabled app sitting untracked in
+     * the foreground. Started once for the service's lifetime from onServiceConnected().
+     */
+    private fun startQuotaHeartbeat() {
+        quotaHeartbeatJob?.cancel()
+        quotaHeartbeatJob = serviceScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(3_000L)
+                try {
+                    val fgPackage = rootInActiveWindow?.packageName?.toString() ?: continue
+                    if (quotaTrackingPackage == fgPackage) continue
+
+                    val now = System.currentTimeMillis()
+                    val activeBlock = longTermBlocks.firstOrNull {
+                        it.type == "APP" && it.target == fgPackage && it.isActive &&
+                            now >= it.startDate && now <= it.endDate && it.dailyLimitSeconds != null
+                    } ?: continue
+
+                    val today = currentEpochDay()
+                    val usedMillis = if (activeBlock.lastUsageResetEpochDay != today) 0L else activeBlock.usedMillisToday
+                    val limitMillis = (activeBlock.dailyLimitSeconds ?: continue) * 1000L
+
+                    if (usedMillis >= limitMillis) {
+                        Log.d("FocusService", "Quota heartbeat: $fgPackage already over quota, blocking")
+                        triggerBlockActivity(
+                            fgPackage,
+                            isLongTerm = true,
+                            reason = "Daily time limit reached: ${activeBlock.reason}",
+                            endDate = activeBlock.endDate,
+                            targetLabel = activeBlock.targetLabel,
+                            type = "APP"
+                        )
+                    } else {
+                        Log.d("FocusService", "Quota heartbeat: resuming untracked foreground app $fgPackage")
+                        startQuotaTracking(activeBlock)
+                    }
+                } catch (e: Exception) {
+                    Log.e("FocusService", "Error in quota heartbeat", e)
+                }
+            }
+        }
+    }
+
+    /**
      * Adds elapsed foreground time (since [startMs]) to the persisted usedSecondsToday
      * for [blockId], handling the midnight reset if the day has rolled over. Returns
      * true if the daily limit is now exceeded.
@@ -818,26 +877,11 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
-        // Best-effort final flush of any in-progress quota tracking before the
-        // coroutine scope dies below. This can't help against a silent low-memory
-        // kill (Android gives no callback at all for that - see the shortened
-        // ticker interval above, which is the real mitigation for that case), but
-        // it does catch normal teardowns: the user disabling the accessibility
-        // service, force-stopping the app, etc.
-        val blockId = quotaTrackingBlockId
-        val startMs = quotaTrackingStartMs
-        if (blockId != null) {
-            try {
-                kotlinx.coroutines.runBlocking {
-                    kotlinx.coroutines.withTimeoutOrNull(1500L) {
-                        persistQuotaProgress(blockId, startMs)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("FocusService", "Error flushing quota progress on destroy", e)
-            }
-        }
-
+        // No synchronous flush here anymore - a previous version used runBlocking to
+        // force a final quota-progress write, but that risked briefly blocking the
+        // main thread during teardown for marginal benefit. The quota heartbeat now
+        // self-heals within ~3 seconds of any restart regardless of cause, and the
+        // ticker's 2-second interval already caps normal-teardown loss on its own.
         super.onDestroy()
         if (instance == this) {
             instance = null

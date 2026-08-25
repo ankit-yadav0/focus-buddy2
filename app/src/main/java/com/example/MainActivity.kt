@@ -699,7 +699,8 @@ class MainActivity : ComponentActivity() {
                                                          com.example.ui.screens.StudyPlanDashboardScreen(
                                                              viewModel = focusViewModel,
                                                              onBack = { navController.popBackStack() },
-                                                             onEditPlan = { navController.navigate("study_planner_input") }
+                                                             onEditPlan = { navController.navigate("study_planner_input") },
+                                                             onNavigateToPyq = { navController.navigate("pyq_practice") }
                                                          )
                                                      } else {
                                                          com.example.ui.screens.SmartPlannerInputScreen(
@@ -718,7 +719,14 @@ class MainActivity : ComponentActivity() {
                                                  com.example.ui.screens.StudyPlanDashboardScreen(
                                                      viewModel = focusViewModel,
                                                      onBack = { navController.popBackStack() },
-                                                     onEditPlan = { navController.navigate("study_planner_input") }
+                                                     onEditPlan = { navController.navigate("study_planner_input") },
+                                                     onNavigateToPyq = { navController.navigate("pyq_practice") }
+                                                 )
+                                             }
+                                             composable("pyq_practice") {
+                                                 com.example.ui.screens.PyqPracticeScreen(
+                                                     viewModel = focusViewModel,
+                                                     onBack = { navController.popBackStack() }
                                                  )
                                              }
                                              composable("study_planner_input") {

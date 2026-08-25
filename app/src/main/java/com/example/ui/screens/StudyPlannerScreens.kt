@@ -130,7 +130,8 @@ private fun PlanTaskRow(
 fun StudyPlanDashboardScreen(
     viewModel: FocusViewModel,
     onBack: () -> Unit,
-    onEditPlan: () -> Unit
+    onEditPlan: () -> Unit,
+    onNavigateToPyq: () -> Unit = {}
 ) {
     var savedPlanText by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(true) }
@@ -249,6 +250,12 @@ fun StudyPlanDashboardScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = onNavigateToPyq,
+                        modifier = Modifier.testTag("pyq_practice_button")
+                    ) {
+                        Icon(Icons.Default.Quiz, contentDescription = "PYQ Practice", tint = Color.White)
+                    }
                     if (!savedPlanText.isNullOrBlank()) {
                         IconButton(
                             onClick = onEditPlan,
