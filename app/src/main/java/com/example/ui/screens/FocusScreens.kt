@@ -102,6 +102,7 @@ fun HomeScreen(
     onNavigateToUninstall: () -> Unit = {},
     onNavigateToStrictOverride: () -> Unit = {},
     onNavigateToStudyPlanner: () -> Unit = {},
+    onNavigateToJeeTracker: () -> Unit = {},
 
     modifier: Modifier = Modifier
 ) {
@@ -234,6 +235,13 @@ fun HomeScreen(
                         onPlannerClick = {
                             scope.launch { drawerState.close() }
                             onNavigateToStudyPlanner()
+                        }
+                    )
+
+                    JeeTrackerDrawerCard(
+                        onTrackerClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToJeeTracker()
                         }
                     )
 
@@ -6858,6 +6866,69 @@ fun StudyPlannerDrawerCard(onPlannerClick: () -> Unit) {
             ) {
                 Text(
                     text = "Launch Planner",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun JeeTrackerDrawerCard(onTrackerClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("jee_tracker_drawer_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White.copy(alpha = 0.05f)
+        ),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Checklist,
+                    contentDescription = "Tracker Icon",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Text(
+                    text = "120-Day Master Tracker",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = Color.White
+                )
+            }
+
+            Text(
+                text = "Day-by-day JEE plan with checklists, mock scores, and streaks.",
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+
+            Button(
+                onClick = onTrackerClick,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .testTag("jee_tracker_drawer_button"),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) {
+                Text(
+                    text = "Open Tracker",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )

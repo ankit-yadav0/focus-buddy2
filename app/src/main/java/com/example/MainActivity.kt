@@ -595,7 +595,8 @@ class MainActivity : ComponentActivity() {
                                                     },
                                                     onNavigateToUninstall = { navController.navigate("uninstall_reflection") },
                                                     onNavigateToStrictOverride = { navController.navigate("strict_override") },
-                                                    onNavigateToStudyPlanner = { navController.navigate("study_planner") }
+                                                    onNavigateToStudyPlanner = { navController.navigate("study_planner") },
+                                                    onNavigateToJeeTracker = { navController.navigate("jee_120_tracker") }
                                                 )
                                             }
                                             composable("blocks_progress") {
@@ -742,6 +743,14 @@ class MainActivity : ComponentActivity() {
                                              }
                                              composable("uninstall_reflection") {
                                                 com.example.ui.screens.UninstallReflectionScreen(
+                                                    onBack = { navController.popBackStack() }
+                                                )
+                                            }
+                                            composable("jee_120_tracker") {
+                                                val jeeFactory = com.example.viewmodel.JeeTrackerViewModelFactory(app.jeeTrackerRepository)
+                                                val jeeViewModel: com.example.viewmodel.JeeTrackerViewModel = viewModel(factory = jeeFactory)
+                                                com.example.ui.screens.JeeTrackerScreen(
+                                                    viewModel = jeeViewModel,
                                                     onBack = { navController.popBackStack() }
                                                 )
                                             }

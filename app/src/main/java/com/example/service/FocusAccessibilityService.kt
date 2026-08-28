@@ -746,6 +746,33 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Sends the device Home before the block screen appears, so the blocked app is
+     * pushed out of the foreground first instead of sitting behind the overlay/
+     * BlockActivity. Third-party accessibility services can't force-stop another
+     * app's process (that needs a system-level permission we don't have), but
+     * GLOBAL_ACTION_HOME reliably backgrounds it immediately and is what every
+     * major app-blocker relies on for this "close it first" behavior. If dispatch
+     * ever fails (e.g. an unusual OEM skin), we still fall through to showing the
+     * overlay/BlockActivity as before instead of silently doing nothing.
+     */
+    private fun closeBlockedAppThenBlock(packageName: String) {
+        try {
+            val sentHome = performGlobalAction(GLOBAL_ACTION_HOME)
+            if (!sentHome) {
+                Log.d("FocusService", "GLOBAL_ACTION_HOME returned false for $packageName")
+            }
+        } catch (e: Exception) {
+            Log.e("FocusService", "Error dispatching GLOBAL_ACTION_HOME", e)
+        }
+
+        if (Settings.canDrawOverlays(this)) {
+            showOverlay(packageName)
+        } else {
+            triggerOverlayPermissionRequest()
+        }
+    }
+
     private fun triggerBlockActivity(
         packageName: String,
         isLongTerm: Boolean,
@@ -763,11 +790,7 @@ class FocusAccessibilityService : AccessibilityService() {
             }
         }
 
-        if (Settings.canDrawOverlays(this)) {
-            showOverlay(packageName)
-        } else {
-            triggerOverlayPermissionRequest()
-        }
+        closeBlockedAppThenBlock(packageName)
 
         val intent = Intent(this, BlockActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
@@ -912,11 +935,7 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     private fun triggerContentBlockActivity(packageName: String, contentType: String) {
-        if (Settings.canDrawOverlays(this)) {
-            showOverlay(packageName)
-        } else {
-            triggerOverlayPermissionRequest()
-        }
+        closeBlockedAppThenBlock(packageName)
 
         val intent = Intent(this, BlockActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)

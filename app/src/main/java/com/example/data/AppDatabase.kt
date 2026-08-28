@@ -4,8 +4,12 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import com.example.data.jeetracker.JeeDayProgressEntity
+import com.example.data.jeetracker.JeeCustomTaskEntity
+import com.example.data.jeetracker.JeeMockRecordEntity
+import com.example.data.jeetracker.JeeTrackerDao
 
-@Database(entities = [BlockedApp::class, FocusSession::class, LongTermBlock::class, Analytics::class, WebsiteBlock::class, AppSetting::class, ChatMessage::class, StrictSchedule::class, ReflectionNote::class, TestEntry::class, PyqQuestion::class, PyqQuizAttempt::class, PyqQuizAnswer::class], version = 13, exportSchema = false)
+@Database(entities = [BlockedApp::class, FocusSession::class, LongTermBlock::class, Analytics::class, WebsiteBlock::class, AppSetting::class, ChatMessage::class, StrictSchedule::class, ReflectionNote::class, TestEntry::class, PyqQuestion::class, PyqQuizAttempt::class, PyqQuizAnswer::class, JeeDayProgressEntity::class, JeeCustomTaskEntity::class, JeeMockRecordEntity::class], version = 14, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun blockedAppDao(): BlockedAppDao
     abstract fun focusSessionDao(): FocusSessionDao
@@ -19,6 +23,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun testEntryDao(): TestEntryDao
     abstract fun pyqQuestionDao(): PyqQuestionDao
     abstract fun pyqQuizAttemptDao(): PyqQuizAttemptDao
+    abstract fun jeeTrackerDao(): JeeTrackerDao
 
     companion object {
         @Volatile
