@@ -1651,46 +1651,61 @@ fun LongTermBlockSection(
                                       horizontalArrangement = Arrangement.SpaceBetween,
                                       verticalAlignment = Alignment.CenterVertically
                                   ) {
-                                      Column(horizontalAlignment = Alignment.Start) {
+                                      Column(
+                                          modifier = Modifier.weight(1f),
+                                          horizontalAlignment = Alignment.Start
+                                      ) {
                                           Text(
                                               text = "START DATE",
                                               fontSize = 10.sp,
                                               color = Color.White.copy(alpha = 0.4f),
-                                              fontWeight = FontWeight.Bold
+                                              fontWeight = FontWeight.Bold,
+                                              maxLines = 1
                                           )
                                           Text(
                                               text = startDateStr,
                                               fontSize = 12.sp,
                                               color = Color.White,
-                                              fontWeight = FontWeight.SemiBold
+                                              fontWeight = FontWeight.SemiBold,
+                                              maxLines = 1
                                           )
                                       }
-                                      Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                      Column(
+                                          modifier = Modifier.weight(1f),
+                                          horizontalAlignment = Alignment.CenterHorizontally
+                                      ) {
                                           Text(
                                               text = "END DATE",
                                               fontSize = 10.sp,
                                               color = Color.White.copy(alpha = 0.4f),
-                                              fontWeight = FontWeight.Bold
+                                              fontWeight = FontWeight.Bold,
+                                              maxLines = 1
                                           )
                                           Text(
                                               text = endDateStr,
                                               fontSize = 12.sp,
                                               color = Color.White,
-                                              fontWeight = FontWeight.SemiBold
+                                              fontWeight = FontWeight.SemiBold,
+                                              maxLines = 1
                                           )
                                       }
-                                      Column(horizontalAlignment = Alignment.End) {
+                                      Column(
+                                          modifier = Modifier.weight(1f),
+                                          horizontalAlignment = Alignment.End
+                                      ) {
                                           Text(
                                               text = "REMAINING",
                                               fontSize = 10.sp,
                                               color = Color.White.copy(alpha = 0.4f),
-                                              fontWeight = FontWeight.Bold
+                                              fontWeight = FontWeight.Bold,
+                                              maxLines = 1
                                           )
                                           Text(
                                               text = if (isLocked) "$remainingDays Days" else "Expired",
                                               fontSize = 12.sp,
                                               color = if (isLocked) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.4f),
-                                              fontWeight = FontWeight.Black
+                                              fontWeight = FontWeight.Black,
+                                              maxLines = 1
                                           )
                                       }
                                   }
@@ -1815,46 +1830,61 @@ fun LongTermBlockSection(
                                       horizontalArrangement = Arrangement.SpaceBetween,
                                       verticalAlignment = Alignment.CenterVertically
                                   ) {
-                                      Column(horizontalAlignment = Alignment.Start) {
+                                      Column(
+                                          modifier = Modifier.weight(1f),
+                                          horizontalAlignment = Alignment.Start
+                                      ) {
                                           Text(
                                               text = "START DATE",
                                               fontSize = 10.sp,
                                               color = Color.White.copy(alpha = 0.4f),
-                                              fontWeight = FontWeight.Bold
+                                              fontWeight = FontWeight.Bold,
+                                              maxLines = 1
                                           )
                                           Text(
                                               text = startDateStr,
                                               fontSize = 12.sp,
                                               color = Color.White,
-                                              fontWeight = FontWeight.SemiBold
+                                              fontWeight = FontWeight.SemiBold,
+                                              maxLines = 1
                                           )
                                       }
-                                      Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                      Column(
+                                          modifier = Modifier.weight(1f),
+                                          horizontalAlignment = Alignment.CenterHorizontally
+                                      ) {
                                           Text(
                                               text = "END DATE",
                                               fontSize = 10.sp,
                                               color = Color.White.copy(alpha = 0.4f),
-                                              fontWeight = FontWeight.Bold
+                                              fontWeight = FontWeight.Bold,
+                                              maxLines = 1
                                           )
                                           Text(
                                               text = endDateStr,
                                               fontSize = 12.sp,
                                               color = Color.White,
-                                              fontWeight = FontWeight.SemiBold
+                                              fontWeight = FontWeight.SemiBold,
+                                              maxLines = 1
                                           )
                                       }
-                                      Column(horizontalAlignment = Alignment.End) {
+                                      Column(
+                                          modifier = Modifier.weight(1f),
+                                          horizontalAlignment = Alignment.End
+                                      ) {
                                           Text(
                                               text = "REMAINING",
                                               fontSize = 10.sp,
                                               color = Color.White.copy(alpha = 0.4f),
-                                              fontWeight = FontWeight.Bold
+                                              fontWeight = FontWeight.Bold,
+                                              maxLines = 1
                                           )
                                           Text(
                                               text = if (isLocked) "$remainingDays Days" else "Expired",
                                               fontSize = 12.sp,
                                               color = if (isLocked) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.4f),
-                                              fontWeight = FontWeight.Black
+                                              fontWeight = FontWeight.Black,
+                                              maxLines = 1
                                           )
                                       }
                                   }

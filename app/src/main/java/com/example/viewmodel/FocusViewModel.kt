@@ -19,6 +19,7 @@ import com.example.data.StrictSchedule
 import com.example.data.TestEntry
 import com.example.scheduler.AlarmScheduler
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -87,6 +88,13 @@ class FocusViewModel(
 
     private val _isInitialized = MutableStateFlow(false)
     val isInitialized = _isInitialized.asStateFlow()
+
+    // Emits a short user-facing message whenever an action (add/remove a
+    // long-term or website block) is skipped because Strict Mode's rule-editing
+    // lock is on. Previously these failed completely silently - the dialog would
+    // close and everything looked like it worked, but nothing was saved, which
+    // is exactly what made it look like the app "couldn't add" more blocks.
+    val actionBlockedMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -862,7 +870,10 @@ class FocusViewModel(
         dailyLimitSeconds: Long? = null
     ) {
         viewModelScope.launch {
-            if (isRulesEditingLocked()) return@launch
+            if (isRulesEditingLocked()) {
+                actionBlockedMessage.tryEmit("Can't add new blocks while a Strict Mode session is running. Rule changes are locked until it ends.")
+                return@launch
+            }
             val block = LongTermBlock(
                 type = type,
                 target = target,
@@ -879,11 +890,15 @@ class FocusViewModel(
 
     fun removeLongTermBlock(id: Int) {
         viewModelScope.launch {
-            if (isRulesEditingLocked()) return@launch
+            if (isRulesEditingLocked()) {
+                actionBlockedMessage.tryEmit("Can't remove blocks while a Strict Mode session is running. Rule changes are locked until it ends.")
+                return@launch
+            }
             val block = repository.getLongTermBlockById(id)
             val now = System.currentTimeMillis()
             if (block != null && now >= block.startDate && now <= block.endDate && block.isActive) {
                 Log.w("FocusViewModel", "Cannot delete active long-term app block!")
+                actionBlockedMessage.tryEmit("This block is currently active and can't be deleted until it ends.")
                 return@launch
             }
             repository.removeLongTermBlock(id)
@@ -892,7 +907,10 @@ class FocusViewModel(
 
     fun addWebsiteBlock(domain: String, reason: String, startDate: Long, endDate: Long) {
         viewModelScope.launch {
-            if (isRulesEditingLocked()) return@launch
+            if (isRulesEditingLocked()) {
+                actionBlockedMessage.tryEmit("Can't add new blocks while a Strict Mode session is running. Rule changes are locked until it ends.")
+                return@launch
+            }
             val cleaned = cleanDomain(domain)
             val block = WebsiteBlock(
                 domain = cleaned,
@@ -907,11 +925,15 @@ class FocusViewModel(
 
     fun removeWebsiteBlock(id: Int) {
         viewModelScope.launch {
-            if (isRulesEditingLocked()) return@launch
+            if (isRulesEditingLocked()) {
+                actionBlockedMessage.tryEmit("Can't remove blocks while a Strict Mode session is running. Rule changes are locked until it ends.")
+                return@launch
+            }
             val block = repository.getWebsiteBlockById(id)
             val now = System.currentTimeMillis()
             if (block != null && now >= block.startDate && now <= block.endDate && block.isActive) {
                 Log.w("FocusViewModel", "Cannot delete active website block!")
+                actionBlockedMessage.tryEmit("This block is currently active and can't be deleted until it ends.")
                 return@launch
             }
             repository.removeWebsiteBlock(id)

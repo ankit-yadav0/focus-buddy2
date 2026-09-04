@@ -55,6 +55,10 @@ class FocusAccessibilityService : AccessibilityService() {
         // which in turn makes the process a more likely low-memory-killer target. Window state
         // changes (app/tab switches) are never throttled so blocking still reacts instantly.
         private const val CONTENT_CHANGED_THROTTLE_MS = 300L
+
+        // Safety-net cap on how long the instant-block overlay can stay up if
+        // BlockActivity never calls dismissInstantOverlay() (e.g. it fails to launch).
+        private const val OVERLAY_SAFETY_TIMEOUT_MS = 4_000L
     }
 
     private val serviceJob = SupervisorJob()
@@ -227,7 +231,16 @@ class FocusAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
 
-        if (overlayView != null && packageName != currentBlockedPackage) {
+        // Only tear the overlay down once OUR OWN app (BlockActivity, or MainActivity
+        // for the uninstall-friction redirect) is actually the foreground package -
+        // not on the very next event with any differing package. The block flow
+        // dispatches GLOBAL_ACTION_HOME first, which briefly foregrounds the launcher
+        // before BlockActivity draws; removing the overlay on that launcher event (as
+        // the old check did) tore it down before BlockActivity could cover the
+        // transition, causing a visible home-screen flash. BlockActivity.onResume()
+        // already calls dismissInstantOverlay() explicitly for the normal case; this
+        // check now only acts as a safety net for when our app truly regains focus.
+        if (overlayView != null && packageName == applicationContext.packageName) {
             removeOverlay()
         }
 
@@ -613,6 +626,16 @@ class FocusAccessibilityService : AccessibilityService() {
                 val currentStartMs = quotaTrackingStartMs
                 val exceeded = persistQuotaProgress(currentBlockId, currentStartMs)
                 if (exceeded) {
+                    // Clear tracking state up front rather than waiting for a future
+                    // WINDOW_STATE_CHANGED event to a different package to do it via
+                    // stopQuotaTrackingAndPersist(). If GLOBAL_ACTION_HOME/BlockActivity
+                    // ever fails to actually move this app out of the foreground, that
+                    // event never comes - leaving quotaTrackingPackage stuck on this
+                    // app, which made the quota heartbeat's "continue" skip re-checking
+                    // it and silently give up re-triggering the block.
+                    quotaTrackingBlockId = null
+                    quotaTrackingPackage = null
+                    quotaTickerJob = null
                     triggerBlockActivity(
                         block.target,
                         isLongTerm = true,
@@ -757,6 +780,12 @@ class FocusAccessibilityService : AccessibilityService() {
      * overlay/BlockActivity as before instead of silently doing nothing.
      */
     private fun closeBlockedAppThenBlock(packageName: String) {
+        if (Settings.canDrawOverlays(this)) {
+            showOverlay(packageName)
+        } else {
+            triggerOverlayPermissionRequest()
+        }
+
         try {
             val sentHome = performGlobalAction(GLOBAL_ACTION_HOME)
             if (!sentHome) {
@@ -764,12 +793,6 @@ class FocusAccessibilityService : AccessibilityService() {
             }
         } catch (e: Exception) {
             Log.e("FocusService", "Error dispatching GLOBAL_ACTION_HOME", e)
-        }
-
-        if (Settings.canDrawOverlays(this)) {
-            showOverlay(packageName)
-        } else {
-            triggerOverlayPermissionRequest()
         }
     }
 
@@ -1031,42 +1054,56 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     private fun showOverlay(packageName: String) {
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            try {
-                if (overlayView == null) {
-                    val textView = TextView(this).apply {
-                        text = "App Blocked!"
-                        textSize = 24f
-                        setTextColor(Color.WHITE)
-                        gravity = Gravity.CENTER
-                        setBackgroundColor(Color.parseColor("#121212")) // Premium dark background
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                    }
-                    val params = WindowManager.LayoutParams(
-                        WindowManager.LayoutParams.MATCH_PARENT,
-                        WindowManager.LayoutParams.MATCH_PARENT,
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                        } else {
-                            @Suppress("DEPRECATION")
-                            WindowManager.LayoutParams.TYPE_PHONE
-                        },
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                        PixelFormat.TRANSLUCENT
+        // Runs synchronously (no Handler.post) - we're already on the main thread
+        // here (onAccessibilityEvent always dispatches on it), and posting only
+        // pushed the overlay's actual appearance later in the message queue,
+        // behind whatever else was pending - which is what made it show up late.
+        try {
+            if (overlayView == null) {
+                val textView = TextView(this).apply {
+                    text = "App Blocked!"
+                    textSize = 24f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                    setBackgroundColor(Color.parseColor("#121212")) // Premium dark background
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    windowManager.addView(textView, params)
-                    overlayView = textView
-                    currentBlockedPackage = packageName
-                    Log.d("FocusService", "Overlay added successfully for $packageName")
-                } else {
-                    currentBlockedPackage = packageName
                 }
-            } catch (e: Exception) {
-                Log.e("FocusService", "Error adding overlay view", e)
+                val params = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        WindowManager.LayoutParams.TYPE_PHONE
+                    },
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT
+                )
+                windowManager.addView(textView, params)
+                overlayView = textView
+                currentBlockedPackage = packageName
+                Log.d("FocusService", "Overlay added successfully for $packageName")
+
+                // Safety net: normally BlockActivity.onResume() calls
+                // dismissInstantOverlay() within a fraction of a second. If that
+                // never happens (e.g. BlockActivity failed to launch), force-remove
+                // the overlay after a short delay instead of leaving it stuck over
+                // whatever the user is doing.
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (overlayView == textView) {
+                        Log.d("FocusService", "Overlay safety-net timeout fired for $packageName")
+                        removeOverlay()
+                    }
+                }, OVERLAY_SAFETY_TIMEOUT_MS)
+            } else {
+                currentBlockedPackage = packageName
             }
+        } catch (e: Exception) {
+            Log.e("FocusService", "Error adding overlay view", e)
         }
     }
 

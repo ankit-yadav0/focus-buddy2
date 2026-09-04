@@ -14,8 +14,12 @@ android {
     applicationId = "com.aistudio.focussbuddy.kxmpzq"
     minSdk = 24
     targetSdk = 35
-    versionCode = 1
-    versionName = "1.0"
+    // Overridable from CI via -PappVersionCode=<n> so every published release
+    // gets a strictly increasing version code (e.g. the GitHub Actions run
+    // number) without needing a manual bump each time. Falls back to 1 for
+    // local/manual builds where the property isn't passed.
+    versionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
+    versionName = (project.findProperty("appVersionName") as String?) ?: "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
