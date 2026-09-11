@@ -231,6 +231,23 @@ class FocusAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
 
+        // Instant Strict-Mode Settings gate: cover the screen the moment a Settings
+        // window appears, BEFORE the node-tree walk + keyword check further below
+        // runs. That walk is real work (allocations, IPC, tree traversal) and on a
+        // 2GB Go device it can occasionally take long enough under GC pressure for
+        // the destination screen (already showing the accessibility/device-admin
+        // toggle) to stay touchable and tappable during the delay - an exploitable
+        // race window. We self-correct within this same event further down if the
+        // screen turns out to be a harmless one (WiFi, Bluetooth, Display, etc.).
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            packageName == "com.android.settings" &&
+            overlayView == null &&
+            isSessionActive && System.currentTimeMillis() < sessionEndTime && isSessionStrict &&
+            Settings.canDrawOverlays(this)
+        ) {
+            showOverlay(packageName)
+        }
+
         // Only tear the overlay down once OUR OWN app (BlockActivity, or MainActivity
         // for the uninstall-friction redirect) is actually the foreground package -
         // not on the very next event with any differing package. The block flow
@@ -371,6 +388,12 @@ class FocusAccessibilityService : AccessibilityService() {
                         Log.d("FocusService", "Strict Mode: Blocking settings bypass action in $packageName")
                         triggerBlockActivity(packageName, isLongTerm = false, reason = "Settings bypass action is blocked in Strict Mode.", endDate = sessionEndTime)
                         return
+                    }
+                    // Screen turned out to be harmless (WiFi, Bluetooth, Display, etc.) -
+                    // release the instant gate shown above before this tree walk finished,
+                    // rather than leaving the user stuck behind it.
+                    if (overlayView != null && currentBlockedPackage == packageName) {
+                        removeOverlay()
                     }
                 }
             }
