@@ -30,7 +30,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Park
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Timer
@@ -61,7 +60,6 @@ val controlDeckTabs = listOf(
     ControlDeckTab("home", "HOME", Icons.Default.Home),
     ControlDeckTab("timer", "FOCUS", Icons.Default.Timer),
     ControlDeckTab("schedule_manager", "STRICT", Icons.Default.Shield),
-    ControlDeckTab("study_planner", "PLAN", Icons.Default.MenuBook),
     ControlDeckTab("blocks_progress", "BLOCKS", Icons.Default.Block),
     ControlDeckTab("insights", "STATS", Icons.Default.BarChart),
     ControlDeckTab("forest_gallery", "FOREST", Icons.Default.Park)

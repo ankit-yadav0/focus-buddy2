@@ -101,8 +101,6 @@ fun HomeScreen(
     onWallpaperOpacityChange: (Float) -> Unit = {},
     onNavigateToUninstall: () -> Unit = {},
     onNavigateToStrictOverride: () -> Unit = {},
-    onNavigateToStudyPlanner: () -> Unit = {},
-    onNavigateToJeeTracker: () -> Unit = {},
 
     modifier: Modifier = Modifier
 ) {
@@ -230,20 +228,6 @@ fun HomeScreen(
 
 
 
-
-                    StudyPlannerDrawerCard(
-                        onPlannerClick = {
-                            scope.launch { drawerState.close() }
-                            onNavigateToStudyPlanner()
-                        }
-                    )
-
-                    JeeTrackerDrawerCard(
-                        onTrackerClick = {
-                            scope.launch { drawerState.close() }
-                            onNavigateToJeeTracker()
-                        }
-                    )
 
                     Spacer(modifier = Modifier.height(12.dp))
 
@@ -3370,7 +3354,7 @@ fun FocusTimerScreen(
     viewModel: FocusViewModel,
     onBack: () -> Unit,
     onNavigateToSchedule: () -> Unit = {},
-    onNavigateToPreSessionRitual: (Int, Boolean, Long?) -> Unit = { _, _, _ -> },
+    onStartSession: (Int, Boolean, Long?) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -3989,7 +3973,7 @@ fun FocusTimerScreen(
                         minutes = selectedMinutes
                         totalMs = null
                     }
-                    onNavigateToPreSessionRitual(minutes, isStrict, totalMs)
+                    onStartSession(minutes, isStrict, totalMs)
                 },
                 enabled = !isCustomSelected || isInputValid,
                 modifier = Modifier
@@ -6833,132 +6817,6 @@ fun FeatureDrawerCard(
             ) {
                 Text(
                     text = buttonText,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun StudyPlannerDrawerCard(onPlannerClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("study_planner_drawer_card"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White.copy(alpha = 0.05f)
-        ),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Timer,
-                    contentDescription = "Planner Icon",
-                    tint = MaterialTheme.colorScheme.secondary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Text(
-                    text = "Smart Study Planner",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    color = Color.White
-                )
-            }
-
-            Text(
-                text = "Configure and generate a dynamic custom-tailored plan.",
-                color = Color.White.copy(alpha = 0.6f),
-                fontSize = 12.sp,
-                lineHeight = 16.sp
-            )
-
-            Button(
-                onClick = onPlannerClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp)
-                    .testTag("study_planner_drawer_button"),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondary,
-                    contentColor = MaterialTheme.colorScheme.onSecondary
-                )
-            ) {
-                Text(
-                    text = "Launch Planner",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun JeeTrackerDrawerCard(onTrackerClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("jee_tracker_drawer_card"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White.copy(alpha = 0.05f)
-        ),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Checklist,
-                    contentDescription = "Tracker Icon",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Text(
-                    text = "120-Day Master Tracker",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    color = Color.White
-                )
-            }
-
-            Text(
-                text = "Day-by-day JEE plan with checklists, mock scores, and streaks.",
-                color = Color.White.copy(alpha = 0.6f),
-                fontSize = 12.sp,
-                lineHeight = 16.sp
-            )
-
-            Button(
-                onClick = onTrackerClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp)
-                    .testTag("jee_tracker_drawer_button"),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                )
-            ) {
-                Text(
-                    text = "Open Tracker",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )

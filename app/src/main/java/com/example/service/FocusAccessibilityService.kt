@@ -22,8 +22,11 @@ import com.example.data.WebsiteBlock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import android.provider.Settings
 import android.view.WindowManager
 import android.view.View
@@ -81,12 +84,42 @@ class FocusAccessibilityService : AccessibilityService() {
     private var quotaTrackingPackage: String? = null
     private var quotaTrackingStartMs: Long = 0L
     private var quotaTickerJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Guards the read-modify-write in persistQuotaProgress() below. Without this, the
+     * ticker's periodic persist and the stop-triggered persist (fired when an app-switch
+     * event races the ticker mid-write) can both read the same row's usedMillisToday
+     * before either has written back, then write independently - one overwriting the
+     * other (lost update) or both adding overlapping elapsed windows (double-count).
+     * Job cancellation alone doesn't prevent this: once the underlying Room write for a
+     * given call has actually started on the IO thread, cancelling that coroutine's Job
+     * does not abort the in-flight SQL statement, so the write still lands even though
+     * the caller goes on to throw CancellationException. Serializing the whole
+     * read-then-write section on this mutex means a second caller can only start its own
+     * read after the first caller's write (if any) has fully committed, so it always
+     * works from a fresh, consistent value.
+     */
+    private val quotaPersistMutex = Mutex()
     private var quotaHeartbeatJob: kotlinx.coroutines.Job? = null
 
     private var overlayView: View? = null
     private val windowManager: WindowManager by lazy { getSystemService(android.content.Context.WINDOW_SERVICE) as WindowManager }
     private var currentBlockedPackage: String? = null
     private var lastPermissionRequestTime = 0L
+
+    // Debounce state for the Strict-Mode Settings instant gate. On a 2GB Go
+    // device the very first node-tree read after the gate fires can catch the
+    // destination screen (e.g. the accessibility-service toggle) mid-render,
+    // before its title/description text has painted - that used to read as
+    // "no bypass keyword found" and release the overlay while the real toggle
+    // was still a frame or two from being fully there, which is exactly the
+    // window a fast, repeated tap could land in. We now require two
+    // consecutive harmless reads AND a minimum elapsed time since the gate
+    // fired before trusting a "harmless" verdict enough to release it.
+    private var settingsHarmlessStreak = 0
+    private var settingsGateShownAtMs = 0L
+    private val SETTINGS_RELEASE_MIN_ELAPSED_MS = 200L
+    private val SETTINGS_RELEASE_MIN_STREAK = 2
 
     override fun onCreate() {
         super.onCreate()
@@ -246,6 +279,8 @@ class FocusAccessibilityService : AccessibilityService() {
             Settings.canDrawOverlays(this)
         ) {
             showOverlay(packageName)
+            settingsHarmlessStreak = 0
+            settingsGateShownAtMs = System.currentTimeMillis()
         }
 
         // Only tear the overlay down once OUR OWN app (BlockActivity, or MainActivity
@@ -358,8 +393,10 @@ class FocusAccessibilityService : AccessibilityService() {
                     // often don't literally show the word "Accessibility" or "Device admin"
                     // - just the app's own name and a toggle.
                     if (screenTexts.any { it.contains(appName, ignoreCase = true) }) {
-                        Log.d("FocusService", "Strict Mode: Blocking Settings screen referencing our own app")
-                        triggerBlockActivity(packageName, isLongTerm = false, reason = "Settings bypass action is blocked in Strict Mode.", endDate = sessionEndTime)
+                        Log.d("FocusService", "Strict Mode: Bouncing back from our own app's Settings screen")
+                        settingsHarmlessStreak = 0
+                        settingsGateShownAtMs = System.currentTimeMillis()
+                        bounceBackFromSettingsBypass(packageName)
                         return
                     }
                     val bypassKeywords = mutableListOf(
@@ -386,14 +423,26 @@ class FocusAccessibilityService : AccessibilityService() {
                     }
                     if (containsBypass) {
                         Log.d("FocusService", "Strict Mode: Blocking settings bypass action in $packageName")
+                        settingsHarmlessStreak = 0
+                        settingsGateShownAtMs = System.currentTimeMillis()
                         triggerBlockActivity(packageName, isLongTerm = false, reason = "Settings bypass action is blocked in Strict Mode.", endDate = sessionEndTime)
                         return
                     }
                     // Screen turned out to be harmless (WiFi, Bluetooth, Display, etc.) -
                     // release the instant gate shown above before this tree walk finished,
-                    // rather than leaving the user stuck behind it.
+                    // rather than leaving the user stuck behind it. Debounced: require two
+                    // consecutive harmless reads AND a minimum elapsed time since the gate
+                    // fired, so a screen that's still mid-render on the first read (e.g. the
+                    // accessibility toggle's text not painted yet on a low-RAM device) can't
+                    // pass as "harmless" and release the overlay while it's still tappable.
                     if (overlayView != null && currentBlockedPackage == packageName) {
-                        removeOverlay()
+                        settingsHarmlessStreak++
+                        val elapsedMs = System.currentTimeMillis() - settingsGateShownAtMs
+                        if (settingsHarmlessStreak >= SETTINGS_RELEASE_MIN_STREAK &&
+                            elapsedMs >= SETTINGS_RELEASE_MIN_ELAPSED_MS
+                        ) {
+                            removeOverlay()
+                        }
                     }
                 }
             }
@@ -741,12 +790,12 @@ class FocusAccessibilityService : AccessibilityService() {
      * stopQuotaTrackingAndPersist() nulling them before this suspend function got a
      * chance to run, silently dropping the final segment of usage on every app switch.
      */
-    private suspend fun persistQuotaProgress(blockId: Int, startMs: Long): Boolean {
+    private suspend fun persistQuotaProgress(blockId: Int, startMs: Long): Boolean = quotaPersistMutex.withLock {
         val elapsedMillis = (System.currentTimeMillis() - startMs).coerceAtLeast(0L)
 
         val repository = (application as FocusApplication).repository
-        val block = repository.getLongTermBlockById(blockId) ?: return false
-        val limit = block.dailyLimitSeconds ?: return false
+        val block = repository.getLongTermBlockById(blockId) ?: return@withLock false
+        val limit = block.dailyLimitSeconds ?: return@withLock false
         val today = currentEpochDay()
 
         // Accumulate in milliseconds so brief sub-second segments (rapid Reels
@@ -765,7 +814,7 @@ class FocusAccessibilityService : AccessibilityService() {
             quotaTrackingStartMs = System.currentTimeMillis()
         }
 
-        return newMillis >= limit * 1000L
+        newMillis >= limit * 1000L
     }
 
     /** Stops tracking (app switched away or session ending) and persists final elapsed time. */
@@ -816,6 +865,66 @@ class FocusAccessibilityService : AccessibilityService() {
             }
         } catch (e: Exception) {
             Log.e("FocusService", "Error dispatching GLOBAL_ACTION_HOME", e)
+        }
+    }
+
+    /**
+     * Silent, lightweight response used ONLY when the user has navigated straight to
+     * Focuss Buddy's own accessibility/app-info/device-admin toggle screen (i.e. is
+     * literally looking at the toggle that would disable enforcement). Unlike
+     * triggerBlockActivity(), this does NOT launch the full-screen BlockActivity and
+     * does NOT dispatch GLOBAL_ACTION_HOME - it just dispatches GLOBAL_ACTION_BACK to
+     * pop that one screen off Settings' back stack, so the user lands back on the
+     * previous screen (e.g. the Accessibility services list) and stays inside
+     * Settings, instead of being kicked out with a full "App Blocked" screen.
+     *
+     * The overlay drawn by the instant Settings gate is removed right away rather
+     * than left up: GLOBAL_ACTION_BACK is a single fast system call (no Activity
+     * launch, no WindowManager churn), so by the time this runs the offending screen
+     * is already being torn down - there's no meaningful window left for the overlay
+     * to protect. Generic bypass actions (Reset, Uninstall, Force stop, etc. - see
+     * bypassKeywords below) intentionally keep going through triggerBlockActivity()
+     * instead: those are more consequential and still get the full friction screen.
+     *
+     * Dispatches BACK twice, not once: a single back only pops the offending
+     * toggle screen and lands on its immediate parent (e.g. the Accessibility
+     * services list) - one tap away from walking straight back into it. A
+     * second back, fired a beat later once the first has actually been
+     * processed, clears that parent screen too and drops the user out to the
+     * Settings root, so a repeat attempt has to re-navigate the whole path
+     * again instead of just tapping back in.
+     */
+    private fun bounceBackFromSettingsBypass(packageName: String) {
+        val repository = (application as FocusApplication).repository
+        serviceScope.launch {
+            try {
+                repository.incrementBlockedLaunches()
+            } catch (e: Exception) {
+                Log.e("FocusService", "Error incrementing blocked launch", e)
+            }
+        }
+
+        try {
+            val wentBack = performGlobalAction(GLOBAL_ACTION_BACK)
+            if (!wentBack) {
+                Log.d("FocusService", "GLOBAL_ACTION_BACK returned false for $packageName")
+            }
+        } catch (e: Exception) {
+            Log.e("FocusService", "Error dispatching GLOBAL_ACTION_BACK", e)
+        }
+
+        removeOverlay()
+
+        // Second back, slightly delayed so it lands after the first one has
+        // actually navigated - firing both in the same instant can race the
+        // first transition and get silently dropped by the system.
+        serviceScope.launch {
+            delay(60)
+            try {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            } catch (e: Exception) {
+                Log.e("FocusService", "Error dispatching second GLOBAL_ACTION_BACK", e)
+            }
         }
     }
 

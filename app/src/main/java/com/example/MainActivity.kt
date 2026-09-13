@@ -50,7 +50,6 @@ import androidx.navigation.compose.rememberNavController
 import com.example.ui.helper.WallpaperBox
 import com.example.ui.screens.AppSelectionScreen
 import com.example.ui.screens.FocusTimerScreen
-import com.example.ui.screens.PreSessionRitualScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.BlockDetailsScreen
 import com.example.ui.screens.StrictScheduleManagerScreen
@@ -617,9 +616,7 @@ class MainActivity : ComponentActivity() {
                                                         sharedPrefs.edit().putFloat("wallpaper_opacity", newOpacity).apply()
                                                     },
                                                     onNavigateToUninstall = { navController.navigate("uninstall_reflection") },
-                                                    onNavigateToStrictOverride = { navController.navigate("strict_override") },
-                                                    onNavigateToStudyPlanner = { navController.navigate("study_planner") },
-                                                    onNavigateToJeeTracker = { navController.navigate("jee_120_tracker") }
+                                                    onNavigateToStrictOverride = { navController.navigate("strict_override") }
                                                 )
                                             }
                                             composable("blocks_progress") {
@@ -646,34 +643,14 @@ class MainActivity : ComponentActivity() {
                                                     viewModel = focusViewModel,
                                                     onBack = { navController.popBackStack() },
                                                     onNavigateToSchedule = { navController.navigate("schedule_manager") },
-                                                    onNavigateToPreSessionRitual = { minutes, isStrict, totalMs ->
-                                                        navController.currentBackStackEntry?.savedStateHandle?.set("minutes", minutes)
-                                                        navController.currentBackStackEntry?.savedStateHandle?.set("isStrict", isStrict)
-                                                        navController.currentBackStackEntry?.savedStateHandle?.set("totalMs", totalMs)
-                                                        navController.navigate("pre_session_ritual")
+                                                    onStartSession = { minutes, isStrict, totalMs ->
+                                                        // Ritual screen removed entirely - every session (strict or
+                                                        // normal) starts immediately with no pre-session gate.
+                                                        focusViewModel.startFocusSession(minutes, isStrict, totalMs)
+                                                        navController.navigate("home") {
+                                                            popUpTo("home") { inclusive = false }
+                                                        }
                                                      }
-                                                )
-                                            }
-                                            composable("pre_session_ritual") {
-                                                val prevBackStackEntry = remember { navController.previousBackStackEntry }
-                                                val minutes = prevBackStackEntry?.savedStateHandle?.get<Int>("minutes") ?: 15
-                                                val isStrict = prevBackStackEntry?.savedStateHandle?.get<Boolean>("isStrict") ?: false
-                                                val totalMs = prevBackStackEntry?.savedStateHandle?.get<Long?>("totalMs")
-
-                                                PreSessionRitualScreen(
-                                                    viewModel = focusViewModel,
-                                                    onRitualComplete = {
-                                                        focusViewModel.startFocusSession(minutes, isStrict, totalMs)
-                                                        navController.navigate("home") {
-                                                            popUpTo("home") { inclusive = false }
-                                                        }
-                                                    },
-                                                    onSkip = {
-                                                        focusViewModel.startFocusSession(minutes, isStrict, totalMs)
-                                                        navController.navigate("home") {
-                                                            popUpTo("home") { inclusive = false }
-                                                        }
-                                                    }
                                                 )
                                             }
                                             composable("schedule_manager") {
@@ -698,82 +675,8 @@ class MainActivity : ComponentActivity() {
                                                     onNavigateBack = { navController.popBackStack() }
                                                 )
                                             }
-                                             composable("study_planner") {
-                                                 var checkingState by remember { mutableStateOf(true) }
-                                                 var startInDashboard by remember { mutableStateOf(false) }
-
-                                                 LaunchedEffect(Unit) {
-                                                     val plan = focusViewModel.getSetting("saved_study_plan")
-                                                     startInDashboard = !plan.isNullOrBlank()
-                                                     checkingState = false
-                                                 }
-
-                                                 if (checkingState) {
-                                                     Box(
-                                                         modifier = Modifier.fillMaxSize().background(Color(0xFF121212)),
-                                                         contentAlignment = Alignment.Center
-                                                     ) {
-                                                         androidx.compose.material3.CircularProgressIndicator(
-                                                             modifier = Modifier.testTag("planner_router_loader"),
-                                                             color = MaterialTheme.colorScheme.primary
-                                                         )
-                                                     }
-                                                 } else {
-                                                     if (startInDashboard) {
-                                                         com.example.ui.screens.StudyPlanDashboardScreen(
-                                                             viewModel = focusViewModel,
-                                                             onBack = { navController.popBackStack() },
-                                                             onEditPlan = { navController.navigate("study_planner_input") },
-                                                             onNavigateToPyq = { navController.navigate("pyq_practice") }
-                                                         )
-                                                     } else {
-                                                         com.example.ui.screens.SmartPlannerInputScreen(
-                                                             viewModel = focusViewModel,
-                                                             onBack = { navController.popBackStack() },
-                                                             onSaved = {
-                                                                 navController.navigate("study_plan_dashboard") {
-                                                                     popUpTo("study_planner") { inclusive = true }
-                                                                 }
-                                                             }
-                                                         )
-                                                     }
-                                                 }
-                                             }
-                                             composable("study_plan_dashboard") {
-                                                 com.example.ui.screens.StudyPlanDashboardScreen(
-                                                     viewModel = focusViewModel,
-                                                     onBack = { navController.popBackStack() },
-                                                     onEditPlan = { navController.navigate("study_planner_input") },
-                                                     onNavigateToPyq = { navController.navigate("pyq_practice") }
-                                                 )
-                                             }
-                                             composable("pyq_practice") {
-                                                 com.example.ui.screens.PyqPracticeScreen(
-                                                     viewModel = focusViewModel,
-                                                     onBack = { navController.popBackStack() }
-                                                 )
-                                             }
-                                             composable("study_planner_input") {
-                                                 com.example.ui.screens.SmartPlannerInputScreen(
-                                                     viewModel = focusViewModel,
-                                                     onBack = { navController.popBackStack() },
-                                                     onSaved = {
-                                                         navController.navigate("study_plan_dashboard") {
-                                                             popUpTo("study_planner_input") { inclusive = true }
-                                                         }
-                                                     }
-                                                 )
-                                             }
                                              composable("uninstall_reflection") {
                                                 com.example.ui.screens.UninstallReflectionScreen(
-                                                    onBack = { navController.popBackStack() }
-                                                )
-                                            }
-                                            composable("jee_120_tracker") {
-                                                val jeeFactory = com.example.viewmodel.JeeTrackerViewModelFactory(app.jeeTrackerRepository)
-                                                val jeeViewModel: com.example.viewmodel.JeeTrackerViewModel = viewModel(factory = jeeFactory)
-                                                com.example.ui.screens.JeeTrackerScreen(
-                                                    viewModel = jeeViewModel,
                                                     onBack = { navController.popBackStack() }
                                                 )
                                             }

@@ -7,7 +7,6 @@ import com.example.data.FocusRepository
 class FocusApplication : Application() {
     val database by lazy { AppDatabase.getDatabase(this) }
     val repository by lazy { FocusRepository(database.blockedAppDao(), database.focusSessionDao(), database.longTermBlockDao(), database.analyticsDao(), database.websiteBlockDao(), database.appSettingDao(), database.chatMessageDao(), database.strictScheduleDao(), database.reflectionNoteDao(), database.testEntryDao(), database.pyqQuestionDao(), database.pyqQuizAttemptDao()) }
-    val jeeTrackerRepository by lazy { com.example.data.jeetracker.JeeTrackerRepository(database.jeeTrackerDao()) }
 
     override fun onCreate() {
         super.onCreate()
