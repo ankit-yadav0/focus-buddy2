@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.app.NotificationManager
 import android.content.Context
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -712,6 +713,7 @@ private fun LauncherStatCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LauncherAppIcon(
     app: LauncherAppInfo,
