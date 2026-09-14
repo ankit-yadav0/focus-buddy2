@@ -3,6 +3,7 @@ package com.example
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.BorderStroke
@@ -48,6 +49,17 @@ class BlockActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
+
+        // The block screen must stay up until the user explicitly dismisses it through
+        // its own "Return Home" / "Go Back" button - not by pressing the hardware back
+        // button or doing a back gesture, which would otherwise just finish() this
+        // activity (it's the sole activity in its own task) and could briefly reveal
+        // the blocked app underneath before the accessibility service reacts again.
+        // This callback absorbs every back press/gesture and does nothing, so the only
+        // way out is through the deliberate button taps already wired below.
+        onBackPressedDispatcher.addCallback(this) {
+            // Intentionally left blank - back is disabled on this screen.
+        }
 
         val blockedPackage = intent.getStringExtra("BLOCKED_PACKAGE") ?: "Unknown App"
         val fallbackEndTime = intent.getLongExtra("END_TIME", 0L)

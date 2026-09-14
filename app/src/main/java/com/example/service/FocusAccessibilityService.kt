@@ -107,20 +107,6 @@ class FocusAccessibilityService : AccessibilityService() {
     private var currentBlockedPackage: String? = null
     private var lastPermissionRequestTime = 0L
 
-    // Debounce state for the Strict-Mode Settings instant gate. On a 2GB Go
-    // device the very first node-tree read after the gate fires can catch the
-    // destination screen (e.g. the accessibility-service toggle) mid-render,
-    // before its title/description text has painted - that used to read as
-    // "no bypass keyword found" and release the overlay while the real toggle
-    // was still a frame or two from being fully there, which is exactly the
-    // window a fast, repeated tap could land in. We now require two
-    // consecutive harmless reads AND a minimum elapsed time since the gate
-    // fired before trusting a "harmless" verdict enough to release it.
-    private var settingsHarmlessStreak = 0
-    private var settingsGateShownAtMs = 0L
-    private val SETTINGS_RELEASE_MIN_ELAPSED_MS = 200L
-    private val SETTINGS_RELEASE_MIN_STREAK = 2
-
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -264,25 +250,6 @@ class FocusAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
 
-        // Instant Strict-Mode Settings gate: cover the screen the moment a Settings
-        // window appears, BEFORE the node-tree walk + keyword check further below
-        // runs. That walk is real work (allocations, IPC, tree traversal) and on a
-        // 2GB Go device it can occasionally take long enough under GC pressure for
-        // the destination screen (already showing the accessibility/device-admin
-        // toggle) to stay touchable and tappable during the delay - an exploitable
-        // race window. We self-correct within this same event further down if the
-        // screen turns out to be a harmless one (WiFi, Bluetooth, Display, etc.).
-        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            packageName == "com.android.settings" &&
-            overlayView == null &&
-            isSessionActive && System.currentTimeMillis() < sessionEndTime && isSessionStrict &&
-            Settings.canDrawOverlays(this)
-        ) {
-            showOverlay(packageName)
-            settingsHarmlessStreak = 0
-            settingsGateShownAtMs = System.currentTimeMillis()
-        }
-
         // Only tear the overlay down once OUR OWN app (BlockActivity, or MainActivity
         // for the uninstall-friction redirect) is actually the foreground package -
         // not on the very next event with any differing package. The block flow
@@ -379,13 +346,19 @@ class FocusAccessibilityService : AccessibilityService() {
                     triggerBlockActivity(packageName, isLongTerm = false, reason = "App uninstallation is blocked in Strict Mode.", endDate = sessionEndTime)
                     return
                 }
-                // Selective Settings Rules - blocks screens that could be used to defeat
-                // enforcement (uninstalling, disabling the accessibility service or device
-                // admin, revoking the overlay permission), never a full Settings block, so
-                // WiFi/Bluetooth/mobile data/display/sound etc. always stay reachable.
-                if (packageName == "com.android.settings") {
-                    // Unconditional, regardless of the "Phone Settings" toggle: any Settings
-                    // screen that shows our own app's name is almost certainly App Info,
+                // Selective Settings Rules - only active when the user has turned on the
+                // "Phone Settings" restriction in Focuss Buddy's own Strict Mode setup
+                // (restrictSettingsFullyEnabled / "strict_restrict_settings"). If that's off,
+                // Settings behaves completely normally in Strict Mode - no bounce, no block.
+                // When it's on, this never blocks Settings wholesale - WiFi/Bluetooth/mobile
+                // data/display/sound etc. always stay reachable - it only silently backs the
+                // user out (GLOBAL_ACTION_BACK, no overlay, no full "App Blocked" screen) the
+                // moment a screen that could defeat enforcement (uninstalling, disabling the
+                // accessibility service or device admin, revoking the overlay permission)
+                // shows up. Settings opens and stays visibly usable the whole time - the
+                // bounce only fires once a bypass-capable screen is actually identified.
+                if (packageName == "com.android.settings" && restrictSettingsFullyEnabled) {
+                    // A screen that shows our own app's name is almost certainly App Info,
                     // the accessibility-service toggle, the device-admin toggle, or battery
                     // optimization for this app - all of which can be used to defeat
                     // enforcement. This catches those screens even when reached via the
@@ -394,56 +367,28 @@ class FocusAccessibilityService : AccessibilityService() {
                     // - just the app's own name and a toggle.
                     if (screenTexts.any { it.contains(appName, ignoreCase = true) }) {
                         Log.d("FocusService", "Strict Mode: Bouncing back from our own app's Settings screen")
-                        settingsHarmlessStreak = 0
-                        settingsGateShownAtMs = System.currentTimeMillis()
                         bounceBackFromSettingsBypass(packageName)
                         return
                     }
-                    val bypassKeywords = mutableListOf(
+                    val bypassKeywords = listOf(
                         "Reset", "Factory reset", "Erase all data",
                         "Clear storage", "Clear data", "Clear cache", "Storage & cache",
                         "Force stop", "Uninstall",
                         "Apps & notifications",
-                        // Also unconditional: these are generic (not app-name-specific) paths
-                        // to the same disable-enforcement destinations, e.g. browsing/searching
-                        // the accessibility service list before a specific app is named on
-                        // screen.
                         "Accessibility", "Device admin apps", "Deactivate this device admin app",
-                        "Special app access", "Display over other apps"
+                        "Special app access", "Display over other apps",
+                        "Modify system settings", "Usage access", "Battery optimization"
                     )
-                    if (restrictSettingsFullyEnabled) {
-                        // Wizard's "Phone Settings" restriction adds a couple of broader
-                        // screens on top, without blocking Settings wholesale.
-                        bypassKeywords.addAll(
-                            listOf("Modify system settings", "Usage access", "Battery optimization")
-                        )
-                    }
                     val containsBypass = screenTexts.any { text ->
                         bypassKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
                     }
                     if (containsBypass) {
-                        Log.d("FocusService", "Strict Mode: Blocking settings bypass action in $packageName")
-                        settingsHarmlessStreak = 0
-                        settingsGateShownAtMs = System.currentTimeMillis()
-                        triggerBlockActivity(packageName, isLongTerm = false, reason = "Settings bypass action is blocked in Strict Mode.", endDate = sessionEndTime)
+                        Log.d("FocusService", "Strict Mode: Bouncing back from settings bypass screen in $packageName")
+                        bounceBackFromSettingsBypass(packageName)
                         return
                     }
-                    // Screen turned out to be harmless (WiFi, Bluetooth, Display, etc.) -
-                    // release the instant gate shown above before this tree walk finished,
-                    // rather than leaving the user stuck behind it. Debounced: require two
-                    // consecutive harmless reads AND a minimum elapsed time since the gate
-                    // fired, so a screen that's still mid-render on the first read (e.g. the
-                    // accessibility toggle's text not painted yet on a low-RAM device) can't
-                    // pass as "harmless" and release the overlay while it's still tappable.
-                    if (overlayView != null && currentBlockedPackage == packageName) {
-                        settingsHarmlessStreak++
-                        val elapsedMs = System.currentTimeMillis() - settingsGateShownAtMs
-                        if (settingsHarmlessStreak >= SETTINGS_RELEASE_MIN_STREAK &&
-                            elapsedMs >= SETTINGS_RELEASE_MIN_ELAPSED_MS
-                        ) {
-                            removeOverlay()
-                        }
-                    }
+                    // Anything else (WiFi, Bluetooth, Display, etc.) - no action, the screen
+                    // just stays open and usable.
                 }
             }
 
@@ -869,22 +814,13 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Silent, lightweight response used ONLY when the user has navigated straight to
-     * Focuss Buddy's own accessibility/app-info/device-admin toggle screen (i.e. is
-     * literally looking at the toggle that would disable enforcement). Unlike
-     * triggerBlockActivity(), this does NOT launch the full-screen BlockActivity and
-     * does NOT dispatch GLOBAL_ACTION_HOME - it just dispatches GLOBAL_ACTION_BACK to
-     * pop that one screen off Settings' back stack, so the user lands back on the
-     * previous screen (e.g. the Accessibility services list) and stays inside
-     * Settings, instead of being kicked out with a full "App Blocked" screen.
-     *
-     * The overlay drawn by the instant Settings gate is removed right away rather
-     * than left up: GLOBAL_ACTION_BACK is a single fast system call (no Activity
-     * launch, no WindowManager churn), so by the time this runs the offending screen
-     * is already being torn down - there's no meaningful window left for the overlay
-     * to protect. Generic bypass actions (Reset, Uninstall, Force stop, etc. - see
-     * bypassKeywords below) intentionally keep going through triggerBlockActivity()
-     * instead: those are more consequential and still get the full friction screen.
+     * Silent, lightweight response used for every Strict-Mode Settings bypass detection
+     * (our own app's accessibility/app-info/device-admin toggle, or a generic bypass
+     * screen like Accessibility's list, Uninstall, Force stop, etc.). No overlay, no
+     * full-screen BlockActivity, no GLOBAL_ACTION_HOME - Settings stays open and visibly
+     * usable the whole session; this just dispatches GLOBAL_ACTION_BACK to pop the
+     * offending screen off Settings' own back stack; the user lands back on the previous
+     * screen and stays inside Settings.
      *
      * Dispatches BACK twice, not once: a single back only pops the offending
      * toggle screen and lands on its immediate parent (e.g. the Accessibility

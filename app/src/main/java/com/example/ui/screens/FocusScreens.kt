@@ -101,6 +101,7 @@ fun HomeScreen(
     onWallpaperOpacityChange: (Float) -> Unit = {},
     onNavigateToUninstall: () -> Unit = {},
     onNavigateToStrictOverride: () -> Unit = {},
+    onNavigateToLauncherMode: () -> Unit = {},
 
     modifier: Modifier = Modifier
 ) {
@@ -235,6 +236,13 @@ fun HomeScreen(
                         onUninstallClick = {
                             scope.launch { drawerState.close() }
                             onNavigateToUninstall()
+                        }
+                    )
+
+                    LauncherModeDrawerCard(
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToLauncherMode()
                         }
                     )
                 }
@@ -6694,6 +6702,50 @@ fun UninstallDrawerCard(onUninstallClick: () -> Unit) {
                     fontSize = 14.sp
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun LauncherModeDrawerCard(onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("launcher_mode_drawer_card")
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Apps,
+                    contentDescription = "Launcher Mode",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Text(
+                    text = "Launcher Mode",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = Color.White
+                )
+            }
+            Text(
+                text = "Preview the study-only home screen, or pick it as your device's default Home app from Settings.",
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
         }
     }
 }
