@@ -24,9 +24,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.getValue
@@ -34,12 +31,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import android.view.WindowManager
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -49,17 +44,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.ui.helper.WallpaperBox
 import com.example.ui.screens.AppSelectionScreen
-import com.example.ui.screens.FocusTimerScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.BlockDetailsScreen
-import com.example.ui.screens.StrictScheduleManagerScreen
 import com.example.ui.screens.BlocksProgressScreen
-import com.example.ui.screens.InsightsScreen
-import com.example.ui.screens.ForestGalleryScreen
-import com.example.ui.screens.LauncherHomeScreen
-import com.example.ui.screens.AppDrawerScreen
-import com.example.ui.screens.LauncherModeSettingsScreen
-import com.example.ui.screens.PyqPracticeScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.FocusViewModel
 import com.example.viewmodel.FocusViewModelFactory
@@ -82,106 +69,10 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.ui.text.font.FontWeight
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun StrictPasswordGate(
-    viewModel: com.example.viewmodel.FocusViewModel,
-    onUnlocked: () -> Unit,
-    onExit: () -> Unit
-) {
-    BackHandler { onExit() }
-
-    var password by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF121212))
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Card(
-            modifier = Modifier.fillMaxWidth().testTag("strict_password_gate_card"),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = "Locked",
-                    tint = Color(0xFF3DFFC4),
-                    modifier = Modifier.size(56.dp)
-                )
-                Text(
-                    text = "Strict Mode Locked",
-                    fontWeight = FontWeight.Black,
-                    fontSize = 22.sp,
-                    color = Color.White
-                )
-                Text(
-                    text = "Enter your password to open Focus Buddy while this Strict Mode session is active.",
-                    color = Color.White.copy(alpha = 0.6f),
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it; error = false },
-                    label = { Text("Password") },
-                    isError = error,
-                    singleLine = true,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth().testTag("strict_password_input"),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
-                    )
-                )
-                if (error) {
-                    Text("Incorrect password.", color = Color(0xFFFF5252), fontSize = 12.sp)
-                }
-                Button(
-                    onClick = {
-                        scope.launch {
-                            if (viewModel.verifyStrictModePassword(password)) {
-                                onUnlocked()
-                            } else {
-                                error = true
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("strict_password_unlock_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3DFFC4), contentColor = Color.Black),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("Unlock", fontWeight = FontWeight.Bold)
-                }
-                TextButton(onClick = onExit) {
-                    Text("Close Focus Buddy", color = Color.White.copy(alpha = 0.6f))
-                }
-            }
-        }
-    }
-}
 
 @Composable
 fun LaunchEnforcementGate(
@@ -204,7 +95,7 @@ fun LaunchEnforcementGate(
         verticalArrangement = Arrangement.Center
     ) {
         Card(
-            modifier = Modifier.fillMaxWidth().testTag("launch_gate_card"),
+            modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = Color(0xFF1E1E1E)
@@ -264,8 +155,7 @@ fun LaunchEnforcementGate(
                     onClick = onExit,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("gate_exit_button"),
+                        .height(48.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color.White.copy(alpha = 0.08f),
                         contentColor = Color.White
@@ -335,41 +225,10 @@ class MainActivity : ComponentActivity() {
 
     private val pendingDeepLinkRoute = mutableStateOf<String?>(null)
 
-    /**
-     * Bumped whenever a new HOME-category intent arrives (i.e. the user pressed the
-     * device Home button while Focuss Buddy is already the running task, in
-     * Launcher Mode). A LaunchedEffect below observes this and pops the back stack
-     * to "launcher_home", matching how every other launcher returns to its home
-     * screen on a Home press instead of just re-showing whatever sub-screen was open.
-     */
-    private val homeSignal = mutableStateOf(0L)
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingDeepLinkRoute.value = intent.getStringExtra("deep_link_route")
-        handleUpdateIntent(intent)
-        if (intent.hasCategory(Intent.CATEGORY_HOME)) {
-            homeSignal.value = System.currentTimeMillis()
-        }
-    }
-
-    /**
-     * If this intent came from tapping the "update available" notification,
-     * starts the download immediately - no extra confirmation screen.
-     */
-    private fun handleUpdateIntent(intent: Intent) {
-        if (!intent.getBooleanExtra("start_update_download", false)) return
-        val url = intent.getStringExtra("update_download_url") ?: return
-        val versionName = intent.getStringExtra("update_version_name") ?: "latest"
-        com.example.update.UpdateManager.startDownload(this, url, versionName)
-        android.widget.Toast.makeText(
-            this,
-            "Downloading update $versionName - you'll get a notification when it's ready to install.",
-            android.widget.Toast.LENGTH_LONG
-        ).show()
-        // Consume so a later recreate()/config change doesn't re-trigger the download.
-        intent.putExtra("start_update_download", false)
     }
 
     private val pickWallpaperLauncher = registerForActivityResult(
@@ -407,10 +266,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pendingDeepLinkRoute.value = intent.getStringExtra("deep_link_route")
-        handleUpdateIntent(intent)
-        lifecycleScope.launch(Dispatchers.IO) {
-            com.example.update.UpdateManager.checkAndNotify(applicationContext)
-        }
         lifecycleScope.launch(Dispatchers.Default) {
             try {
                 val label = getString(R.string.app_name)
@@ -504,75 +359,14 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     } else {
-                        var isPasswordGateActive by remember { mutableStateOf(false) }
-                        var passwordVerified by remember { mutableStateOf(false) }
-
-                        LaunchedEffect(Unit) {
-                            isPasswordGateActive = focusViewModel.isPasswordGateActive()
-                        }
-
-                        val gateLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-                        DisposableEffect(gateLifecycleOwner) {
-                            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-                                when (event) {
-                                    androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
-                                        lifecycleScope.launch {
-                                            val active = focusViewModel.isPasswordGateActive()
-                                            isPasswordGateActive = active
-                                        }
-                                    }
-                                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
-                                        // Re-lock every time the app leaves the foreground while the gate is on.
-                                        passwordVerified = false
-                                    }
-                                    else -> {}
-                                }
-                            }
-                            gateLifecycleOwner.lifecycle.addObserver(observer)
-                            onDispose { gateLifecycleOwner.lifecycle.removeObserver(observer) }
-                        }
-
                         val navController = rememberNavController()
-                        val initialStartDestination = remember {
-                            if (intent?.hasCategory(Intent.CATEGORY_HOME) == true) "launcher_home" else "home"
-                        }
-                        LaunchedEffect(homeSignal.value) {
-                            if (homeSignal.value != 0L) {
-                                try {
-                                    navController.popBackStack("launcher_home", inclusive = false)
-                                } catch (e: Exception) {
-                                }
-                            }
-                        }
-                        LaunchedEffect(pendingDeepLinkRoute.value) {
-                            val route = pendingDeepLinkRoute.value
-                            if (route != null) {
-                                try {
-                                    navController.navigate(route) {
-                                        launchSingleTop = true
-                                    }
-                                } catch (e: Exception) {
-                                }
-                                pendingDeepLinkRoute.value = null
-                            }
-                        }
-                        LaunchedEffect(Unit) {
-                            focusViewModel.seedTestScheduleIfNeeded()
-                            try {
-                                com.example.scheduler.TestCountdownScheduler.clearNotification(applicationContext)
-                                com.example.scheduler.TestCountdownScheduler.cancelUpdates(applicationContext)
-                            } catch (e: Exception) {
-                            }
-                        }
+                        LaunchedEffectDeepLink(navController, pendingDeepLinkRoute)
+
                         val navBackStackEntry by navController.currentBackStackEntryAsState()
                         val currentRoute = navBackStackEntry?.destination?.route
 
                         DisposableEffect(currentRoute) {
-                            if (currentRoute == "uninstall_reflection" || currentRoute == "strict_override") {
-                                window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                            } else {
-                                window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                            }
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                             onDispose { }
                         }
 
@@ -626,27 +420,12 @@ class MainActivity : ComponentActivity() {
                                     Box(modifier = Modifier.fillMaxSize()) {
                                         NavHost(
                                             navController = navController,
-                                            startDestination = initialStartDestination,
+                                            startDestination = "home",
                                             modifier = Modifier.padding(innerPadding)
                                         ) {
-                                            composable("launcher_home") {
-                                                LauncherHomeScreen(
-                                                    viewModel = focusViewModel,
-                                                    onOpenAppDrawer = { navController.navigate("app_drawer") },
-                                                    onOpenDashboard = { navController.navigate("home") },
-                                                    onOpenShortcut = { route -> navController.navigate(route) }
-                                                )
-                                            }
-                                            composable("app_drawer") {
-                                                AppDrawerScreen(
-                                                    viewModel = focusViewModel,
-                                                    onBack = { navController.popBackStack() }
-                                                )
-                                            }
                                             composable("home") {
                                                 HomeScreen(
                                                     viewModel = focusViewModel,
-                                                    onNavigateToTimer = { navController.navigate("timer") },
                                                     onNavigateToAppSelection = { navController.navigate("app_selection") },
                                                     onNavigateToBlockDetails = { id, type -> navController.navigate("block_details/$type/$id") },
                                                     onPickWallpaper = { launchWallpaperPicker() },
@@ -655,16 +434,7 @@ class MainActivity : ComponentActivity() {
                                                     onWallpaperOpacityChange = { newOpacity ->
                                                         wallpaperOpacity = newOpacity
                                                         sharedPrefs.edit().putFloat("wallpaper_opacity", newOpacity).apply()
-                                                    },
-                                                    onNavigateToUninstall = { navController.navigate("uninstall_reflection") },
-                                                    onNavigateToStrictOverride = { navController.navigate("strict_override") },
-                                                    onNavigateToLauncherMode = { navController.navigate("launcher_mode_settings") }
-                                                )
-                                            }
-                                            composable("launcher_mode_settings") {
-                                                LauncherModeSettingsScreen(
-                                                    onBack = { navController.popBackStack() },
-                                                    onPreview = { navController.navigate("launcher_home") }
+                                                    }
                                                 )
                                             }
                                             composable("blocks_progress") {
@@ -672,45 +442,6 @@ class MainActivity : ComponentActivity() {
                                                     viewModel = focusViewModel,
                                                     onBack = { navController.popBackStack() },
                                                     onNavigateToBlockDetails = { id, type -> navController.navigate("block_details/$type/$id") }
-                                                )
-                                            }
-                                            composable("insights") {
-                                                InsightsScreen(
-                                                    viewModel = focusViewModel,
-                                                    onBack = { navController.popBackStack() }
-                                                )
-                                            }
-                                            composable("forest_gallery") {
-                                                ForestGalleryScreen(
-                                                    viewModel = focusViewModel,
-                                                    onBack = { navController.popBackStack() }
-                                                )
-                                            }
-                                            composable("pyq_practice") {
-                                                PyqPracticeScreen(
-                                                    viewModel = focusViewModel,
-                                                    onBack = { navController.popBackStack() }
-                                                )
-                                            }
-                                            composable("timer") {
-                                                FocusTimerScreen(
-                                                    viewModel = focusViewModel,
-                                                    onBack = { navController.popBackStack() },
-                                                    onNavigateToSchedule = { navController.navigate("schedule_manager") },
-                                                    onStartSession = { minutes, isStrict, totalMs ->
-                                                        // Ritual screen removed entirely - every session (strict or
-                                                        // normal) starts immediately with no pre-session gate.
-                                                        focusViewModel.startFocusSession(minutes, isStrict, totalMs)
-                                                        navController.navigate("home") {
-                                                            popUpTo("home") { inclusive = false }
-                                                        }
-                                                     }
-                                                )
-                                            }
-                                            composable("schedule_manager") {
-                                                StrictScheduleManagerScreen(
-                                                    viewModel = focusViewModel,
-                                                    onBack = { navController.popBackStack() }
                                                 )
                                             }
                                             composable("app_selection") {
@@ -729,37 +460,34 @@ class MainActivity : ComponentActivity() {
                                                     onNavigateBack = { navController.popBackStack() }
                                                 )
                                             }
-                                             composable("uninstall_reflection") {
-                                                com.example.ui.screens.UninstallReflectionScreen(
-                                                    onBack = { navController.popBackStack() }
-                                                )
-                                            }
-                                            composable("strict_override") {
-                                                com.example.ui.screens.StrictOverrideScreen(
-                                                    viewModel = focusViewModel,
-                                                    onBack = { navController.popBackStack() }
-                                                )
-                                            }
-
                                         }
-
-                                        // Floating Wallpaper Action Row specifically on the HomeScreen has been removed to keep the dashboard screen clean
                                     }
                                 }
                             }
                         }
-
-                        if (isPasswordGateActive && !passwordVerified) {
-                            StrictPasswordGate(
-                                viewModel = focusViewModel,
-                                onUnlocked = { passwordVerified = true },
-                                onExit = { finishAffinity() }
-                            )
-                        }
+                    }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun LaunchedEffectDeepLink(
+    navController: androidx.navigation.NavHostController,
+    pendingDeepLinkRoute: androidx.compose.runtime.MutableState<String?>
+) {
+    androidx.compose.runtime.LaunchedEffect(pendingDeepLinkRoute.value) {
+        val route = pendingDeepLinkRoute.value
+        if (route != null) {
+            try {
+                navController.navigate(route) {
+                    launchSingleTop = true
+                }
+            } catch (e: Exception) {
             }
+            pendingDeepLinkRoute.value = null
         }
     }
 }

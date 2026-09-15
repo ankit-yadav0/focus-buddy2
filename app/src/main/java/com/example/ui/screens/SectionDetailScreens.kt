@@ -3,7 +3,6 @@ package com.example.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -31,10 +30,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.viewmodel.FocusViewModel
 
 /**
- * Dedicated screen for Long-Term Blocks + Daily Dashboard.
- * Previously these were embedded inline in HomeScreen; they now live behind
- * their own bottom-nav tab ("BLOCKS") so Home doesn't need a giant scroll
- * and this content only shows up when that tab is tapped.
+ * Dedicated screen for Long-Term Blocks + Website Blocks. Reachable via the
+ * "BLOCKS" bottom-nav tab.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,7 +70,7 @@ fun BlocksProgressScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Blocks & Daily Progress", fontWeight = FontWeight.Bold) },
+                title = { Text("Blocks", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -113,8 +110,6 @@ fun BlocksProgressScreen(
                 }
             )
 
-            DailyDashboardCard(viewModel = viewModel)
-
             androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(80.dp))
         }
     }
@@ -144,116 +139,5 @@ fun BlocksProgressScreen(
                 showBatteryOptimizationDialog = false
             }
         )
-    }
-}
-
-/**
- * Dedicated screen for Focuss Buddy Insights (analytics), previously an
- * inline card at the bottom of HomeScreen. Reachable only via the "STATS"
- * bottom-nav tab.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun InsightsScreen(
-    viewModel: FocusViewModel,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val analytics by viewModel.analytics.collectAsStateWithLifecycle()
-    val dailyAnalytics by viewModel.dailyAnalytics.collectAsStateWithLifecycle()
-    val weeklyTrends by viewModel.weeklyTrends.collectAsStateWithLifecycle()
-    val advancedAnalytics by viewModel.advancedAnalytics.collectAsStateWithLifecycle()
-    val allSessions by viewModel.allSessions.collectAsStateWithLifecycle()
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Focuss Buddy Insights", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent
-                )
-            )
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-        modifier = modifier
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 24.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
-        ) {
-            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
-
-            AnalyticsCard(
-                analytics = analytics,
-                dailyAnalytics = dailyAnalytics,
-                weeklyTrends = weeklyTrends,
-                advancedAnalytics = advancedAnalytics,
-                allSessions = allSessions
-            )
-
-            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(80.dp))
-        }
-    }
-}
-
-/**
- * Dedicated screen for My Forest Gallery, previously an inline card in
- * HomeScreen. Reachable only via the "FOREST" bottom-nav tab.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ForestGalleryScreen(
-    viewModel: FocusViewModel,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val maturedSessions by viewModel.maturedSessions.collectAsStateWithLifecycle()
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("My Forest Gallery", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent
-                )
-            )
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-        modifier = modifier
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 24.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
-        ) {
-            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
-
-            MyForestGalleryCard(maturedSessions = maturedSessions)
-
-            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(80.dp))
-        }
     }
 }

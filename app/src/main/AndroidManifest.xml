@@ -6,21 +6,8 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- In-app update: checking GitHub Releases and downloading the new APK. -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- In-app update: lets us launch the system package installer for the
-         downloaded APK. The user still gets the normal system "install unknown
-         apps" prompt the first time. -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    
     <!-- Permission to check active application op status -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
-
-    <!-- Lets Launcher Mode's Quick DND toggle flip Do Not Disturb on/off. The app still
-         needs the user to separately grant "Do Not Disturb access" via Settings before
-         this permission actually does anything - this just allows attempting it. -->
-    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
 
     <!-- Lets the Accessibility Service pin itself at foreground priority so
          Android (especially Go Edition's aggressive low-memory killer) is far
@@ -35,7 +22,6 @@
          for the accessibility service to survive in the background. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:name=".FocusApplication"
@@ -59,13 +45,6 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <!-- Lets the user pick this app as their Home app under Settings >
-                 Apps > Default apps > Home app, powering Launcher Mode. -->
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.HOME" />
-                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 
@@ -111,15 +90,6 @@
             </intent-filter>
         </receiver>
 
-        <!-- BroadcastReceiver for scheduled strict mode sessions -->
-        <receiver
-            android:name=".receiver.StrictScheduleReceiver"
-            android:exported="false" />
-
-        <receiver
-            android:name=".receiver.TestCountdownReceiver"
-            android:exported="false" />
-
         <!-- Device Administrator Receiver for Zero-Leak Uninstall Block -->
         <receiver
             android:name=".receiver.MyDeviceAdminReceiver"
@@ -132,16 +102,6 @@
                 android:resource="@xml/device_admin_sample" />
             <intent-filter>
                 <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-            </intent-filter>
-        </receiver>
-
-        <!-- In-app update: fires once the DownloadManager download of the new
-             APK finishes, and hands it to the system package installer. -->
-        <receiver
-            android:name=".receiver.UpdateDownloadReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
             </intent-filter>
         </receiver>
 
