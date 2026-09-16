@@ -132,6 +132,28 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
+            // Independent watchdog that expires a finished session on a fixed clock,
+            // regardless of whether any app-switch (WINDOW_STATE_CHANGED) event happens
+            // to fire around the same time. Without this, a session (in particular a
+            // Strict Mode session, which the user cannot end early any other way) could
+            // stay marked active - and its app blocking / settings lock kept in force -
+            // for an unbounded extra stretch if the phone just sits on one screen past
+            // the timer's actual end time. This runs inside the foreground service
+            // itself, not the ViewModel, so it keeps working even if MainActivity has
+            // been closed or swiped away.
+            serviceScope.launch {
+                while (true) {
+                    try {
+                        if (isSessionActive && System.currentTimeMillis() >= sessionEndTime) {
+                            repository.stopActiveSession("Expired")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("FocusService", "Error in session-expiry watchdog", e)
+                    }
+                    delay(5_000L)
+                }
+            }
+
             // Observe blocked apps
             serviceScope.launch {
                 repository.allBlockedApps.collectLatest { apps ->
@@ -357,7 +379,7 @@ class FocusAccessibilityService : AccessibilityService() {
                 // accessibility service or device admin, revoking the overlay permission)
                 // shows up. Settings opens and stays visibly usable the whole time - the
                 // bounce only fires once a bypass-capable screen is actually identified.
-                if (packageName == "com.android.settings" && restrictSettingsFullyEnabled) {
+                if (packageName == "com.android.settings") {
                     // A screen that shows our own app's name is almost certainly App Info,
                     // the accessibility-service toggle, the device-admin toggle, or battery
                     // optimization for this app - all of which can be used to defeat
@@ -802,15 +824,13 @@ class FocusAccessibilityService : AccessibilityService() {
         } else {
             triggerOverlayPermissionRequest()
         }
-
-        try {
-            val sentHome = performGlobalAction(GLOBAL_ACTION_HOME)
-            if (!sentHome) {
-                Log.d("FocusService", "GLOBAL_ACTION_HOME returned false for $packageName")
-            }
-        } catch (e: Exception) {
-            Log.e("FocusService", "Error dispatching GLOBAL_ACTION_HOME", e)
-        }
+        // Note: we deliberately do NOT dispatch GLOBAL_ACTION_HOME here anymore.
+        // BlockActivity is launched right after this with FLAG_ACTIVITY_NEW_TASK |
+        // FLAG_ACTIVITY_CLEAR_TASK, which already replaces the blocked app in its
+        // task. Firing GLOBAL_ACTION_HOME as well was a race: the system sometimes
+        // processed the Home action after BlockActivity had already come to the
+        // foreground, which sent BlockActivity itself back to the launcher a moment
+        // after it appeared - the block screen would flash and immediately vanish.
     }
 
     /**

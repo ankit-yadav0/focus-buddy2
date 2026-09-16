@@ -93,6 +93,9 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val blockedApps by viewModel.blockedApps.collectAsStateWithLifecycle()
+    val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
+    val isStrictActive by viewModel.isStrictModeActive.collectAsStateWithLifecycle()
+    var showStrictDialog by remember { mutableStateOf(false) }
 
     var isAccessibilityEnabled by remember { mutableStateOf(viewModel.isAccessibilityServiceEnabled()) }
     var isUsageEnabled by remember { mutableStateOf(viewModel.isUsageStatsPermissionGranted()) }
@@ -251,6 +254,12 @@ fun HomeScreen(
                         )
                     }
 
+                    // Strict Mode - active session banner (no way to stop it early) or the
+                    // button to start one.
+                    if (isStrictActive) {
+                        StrictSessionBanner(endTime = activeSession?.endTime ?: 0L)
+                    }
+
                     // Content-Level Blocking Settings (YouTube Shorts / Reels / Spotlight)
                     ContentLevelBlockingCard(viewModel = viewModel)
 
@@ -270,6 +279,35 @@ fun HomeScreen(
                             .padding(bottom = 32.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
+                        if (!isStrictActive) {
+                            Button(
+                                onClick = { showStrictDialog = true },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp)
+                                    .testTag("start_strict_mode_button"),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFFF5252)
+                                )
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = "Strict Mode Icon"
+                                    )
+                                    Text(
+                                        text = "Start Strict Mode",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+
                         OutlinedButton(
                             onClick = onNavigateToAppSelection,
                             modifier = Modifier
@@ -398,6 +436,16 @@ fun HomeScreen(
                 }
             }
         }
+    }
+
+    if (showStrictDialog) {
+        StartStrictSessionDialog(
+            onDismiss = { showStrictDialog = false },
+            onConfirm = { totalSeconds ->
+                viewModel.startStrictSession(totalSeconds)
+                showStrictDialog = false
+            }
+        )
     }
 }
 
@@ -2287,3 +2335,191 @@ fun WallpaperSettingsDrawerCard(
     }
 }
 
+
+/**
+ * Countdown banner shown on the Home screen while a Strict Mode session is
+ * active. Deliberately has no stop/cancel control - the session can only
+ * end when the timer the user set actually runs out.
+ */
+@Composable
+fun StrictSessionBanner(endTime: Long, modifier: Modifier = Modifier) {
+    var remainingMillis by remember(endTime) {
+        mutableStateOf((endTime - System.currentTimeMillis()).coerceAtLeast(0L))
+    }
+
+    LaunchedEffect(endTime) {
+        while (true) {
+            remainingMillis = (endTime - System.currentTimeMillis()).coerceAtLeast(0L)
+            if (remainingMillis <= 0L) break
+            kotlinx.coroutines.delay(1000L)
+        }
+    }
+
+    val totalSeconds = remainingMillis / 1000L
+    val days = totalSeconds / 86400
+    val hours = (totalSeconds % 86400) / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+
+    val timeLabel = when {
+        days > 0 -> String.format(Locale.getDefault(), "%dd %02dh %02dm %02ds", days, hours, minutes, seconds)
+        hours > 0 -> String.format(Locale.getDefault(), "%02dh %02dm %02ds", hours, minutes, seconds)
+        else -> String.format(Locale.getDefault(), "%02dm %02ds", minutes, seconds)
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFFFF5252).copy(alpha = 0.12f)
+        ),
+        border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.4f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Strict Mode Active",
+                    tint = Color(0xFFFF5252)
+                )
+                Text(
+                    text = "STRICT MODE ACTIVE",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 15.sp,
+                    letterSpacing = 1.sp,
+                    color = Color(0xFFFF5252)
+                )
+            }
+            Text(
+                text = timeLabel,
+                fontWeight = FontWeight.Black,
+                fontSize = 32.sp,
+                color = Color.White
+            )
+            Text(
+                text = "Locked until this timer runs out. There is no way to end it early.",
+                fontSize = 12.sp,
+                color = Color.White.copy(alpha = 0.6f),
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+/**
+ * Duration picker + a deliberate two-step confirmation before Strict Mode
+ * starts, since starting it cannot be undone until the timer expires.
+ */
+@Composable
+fun StartStrictSessionDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (totalSeconds: Long) -> Unit
+) {
+    var days by remember { mutableStateOf(0) }
+    var hours by remember { mutableStateOf(0) }
+    var minutes by remember { mutableStateOf(10) }
+    var seconds by remember { mutableStateOf(0) }
+    var showConfirmStep by remember { mutableStateOf(false) }
+
+    val totalSeconds = days.toLong() * 86400 + hours.toLong() * 3600 + minutes.toLong() * 60 + seconds.toLong()
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Strict Mode Icon",
+                    tint = Color(0xFFFF5252),
+                    modifier = Modifier.size(40.dp)
+                )
+
+                Text(
+                    text = if (showConfirmStep) "Are you sure?" else "Start Strict Mode",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 20.sp,
+                    color = Color.White
+                )
+
+                if (!showConfirmStep) {
+                    Text(
+                        text = "Set how long it stays locked. Once started, it cannot be turned off early - not from Settings, not by disabling this app.",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.6f),
+                        textAlign = TextAlign.Center
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        QuotaNumberField(label = "DAYS", value = days, range = 0..30, onValueChange = { days = it })
+                        QuotaNumberField(label = "HOURS", value = hours, range = 0..23, onValueChange = { hours = it })
+                        QuotaNumberField(label = "MIN", value = minutes, range = 0..59, onValueChange = { minutes = it })
+                        QuotaNumberField(label = "SEC", value = seconds, range = 0..59, onValueChange = { seconds = it })
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Cancel")
+                        }
+                        Button(
+                            onClick = { showConfirmStep = true },
+                            modifier = Modifier.weight(1f),
+                            enabled = totalSeconds > 0,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252))
+                        ) {
+                            Text("Continue")
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "Strict Mode will lock for the duration you set and cannot be stopped early. Are you sure you want to start it now?",
+                        fontSize = 13.sp,
+                        color = Color.White.copy(alpha = 0.75f),
+                        textAlign = TextAlign.Center
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showConfirmStep = false },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Go Back")
+                        }
+                        Button(
+                            onClick = { onConfirm(totalSeconds) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252))
+                        ) {
+                            Text("Start Strict Mode", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

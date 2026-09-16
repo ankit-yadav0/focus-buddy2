@@ -184,6 +184,38 @@ class FocusViewModel(
         }
     }
 
+    fun startStrictSession(durationSeconds: Long) {
+        viewModelScope.launch {
+            val active = repository.getActiveSessionSync()
+            if (active != null && active.isActive) {
+                if (System.currentTimeMillis() < active.endTime) {
+                    // A session is already genuinely running - don't allow starting
+                    // another on top of it.
+                    return@launch
+                }
+                // The previous session's timer has already run out but nothing has
+                // flipped its isActive flag to false yet (the watchdog runs on its own
+                // few-second cycle). Close it out here first - otherwise both rows would
+                // briefly have isActive = 1, and the "get the active session" query
+                // (LIMIT 1, no ordering) could just as easily return this stale, already-
+                // expired row instead of the new one we're about to insert.
+                repository.stopActiveSession("Expired")
+            }
+            val now = System.currentTimeMillis()
+            val durationMinutes = ((durationSeconds + 59) / 60).toInt().coerceAtLeast(1)
+            val session = FocusSession(
+                startTime = now,
+                durationMinutes = durationMinutes,
+                endTime = now + durationSeconds * 1000L,
+                isActive = true,
+                isStrict = true,
+                plannedDurationMinutes = durationMinutes,
+                origin = "STRICT_MANUAL"
+            )
+            repository.insertSession(session)
+        }
+    }
+
     fun stopActiveSession() {
         viewModelScope.launch {
             repository.stopActiveSession()
