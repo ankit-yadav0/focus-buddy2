@@ -11,8 +11,11 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.BlockedApp
 import com.example.data.FocusRepository
 import com.example.data.FocusSession
+import com.example.data.LockedApp
 import com.example.data.LongTermBlock
 import com.example.data.WebsiteBlock
+import com.example.update.UpdateInfo
+import com.example.update.UpdateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,11 +26,13 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 
 data class AppInfo(
     val packageName: String,
     val appName: String,
-    val isBlocked: Boolean = false
+    val isBlocked: Boolean = false,
+    val isLocked: Boolean = false
 )
 
 class FocusViewModel(
@@ -78,10 +83,20 @@ class FocusViewModel(
     val blockedApps: StateFlow<List<BlockedApp>> = repository.allBlockedApps
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val lockedApps: StateFlow<List<LockedApp>> = repository.allLockedApps
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val appListState: StateFlow<List<AppInfo>> = kotlinx.coroutines.flow.combine(_installedApps, blockedApps) { installed, blocked ->
         val blockedPackages = blocked.map { it.packageName }.toSet()
         installed.map { app ->
             app.copy(isBlocked = blockedPackages.contains(app.packageName))
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val appLockListState: StateFlow<List<AppInfo>> = kotlinx.coroutines.flow.combine(_installedApps, lockedApps) { installed, locked ->
+        val lockedPackages = locked.map { it.packageName }.toSet()
+        installed.map { app ->
+            app.copy(isLocked = lockedPackages.contains(app.packageName))
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -180,6 +195,36 @@ class FocusViewModel(
                 repository.removeBlockedApp(app.packageName)
             } else {
                 repository.addBlockedApp(BlockedApp(app.packageName, app.appName))
+            }
+        }
+    }
+
+    // --- App Lock (PIN-gated apps) ---
+
+    private fun sha256(input: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    suspend fun hasAppLockPin(): Boolean {
+        return repository.getSetting("app_lock_pin_hash") != null
+    }
+
+    suspend fun setAppLockPin(pin: String) {
+        repository.saveSetting("app_lock_pin_hash", sha256(pin))
+    }
+
+    suspend fun verifyAppLockPin(pin: String): Boolean {
+        val stored = repository.getSetting("app_lock_pin_hash") ?: return false
+        return stored == sha256(pin)
+    }
+
+    fun toggleAppLocked(app: AppInfo) {
+        viewModelScope.launch {
+            if (app.isLocked) {
+                repository.removeLockedApp(app.packageName)
+            } else {
+                repository.addLockedApp(LockedApp(app.packageName, app.appName))
             }
         }
     }
@@ -415,6 +460,27 @@ class FocusViewModel(
 
     suspend fun getSetting(key: String): String? {
         return repository.getSetting(key)
+    }
+
+    // --- In-app update ---
+
+    private val _updateInfo = MutableStateFlow<UpdateInfo?>(null)
+    val updateInfo = _updateInfo.asStateFlow()
+
+    private val _isCheckingForUpdate = MutableStateFlow(false)
+    val isCheckingForUpdate = _isCheckingForUpdate.asStateFlow()
+
+    fun checkForUpdate() {
+        viewModelScope.launch {
+            _isCheckingForUpdate.value = true
+            _updateInfo.value = UpdateManager.checkForUpdate(context, force = true)
+            _isCheckingForUpdate.value = false
+        }
+    }
+
+    fun startUpdateDownload() {
+        val info = _updateInfo.value ?: return
+        UpdateManager.startDownload(context, info.downloadUrl, info.versionName)
     }
 
     override fun onCleared() {

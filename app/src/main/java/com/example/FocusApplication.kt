@@ -13,7 +13,8 @@ class FocusApplication : Application() {
             database.longTermBlockDao(),
             database.analyticsDao(),
             database.websiteBlockDao(),
-            database.appSettingDao()
+            database.appSettingDao(),
+            database.lockedAppDao()
         )
     }
 

@@ -76,6 +76,13 @@ class FocusAccessibilityService : AccessibilityService() {
     private var activeWebsitesList = listOf<WebsiteBlock>()
     private var lastContentChangedProcessTime = 0L
 
+    // App Lock (PIN-gated apps): packages the user chose to lock, and which one (if
+    // any) has already had its PIN entered for the current foreground visit. The
+    // grant is cleared the moment the foreground package changes to anything else,
+    // so re-opening a locked app always asks for the PIN again.
+    private var lockedPackages = setOf<String>()
+    private var unlockedPackage: String? = null
+
     // Daily time-quota tracking: while a quota-mode long-term-blocked app is in the
     // foreground, we track how long it's been open and periodically add that to its
     // persisted usedSecondsToday, so quota enforcement works both across app
@@ -159,6 +166,14 @@ class FocusAccessibilityService : AccessibilityService() {
                 repository.allBlockedApps.collectLatest { apps ->
                     blockedPackages = apps.map { it.packageName }.toSet()
                     Log.d("FocusService", "Blocked apps updated: count=${blockedPackages.size}")
+                }
+            }
+
+            // Observe PIN-locked apps
+            serviceScope.launch {
+                repository.allLockedApps.collectLatest { apps ->
+                    lockedPackages = apps.map { it.packageName }.toSet()
+                    Log.d("FocusService", "Locked apps updated: count=${lockedPackages.size}")
                 }
             }
 
@@ -308,6 +323,15 @@ class FocusAccessibilityService : AccessibilityService() {
             stopQuotaTrackingAndPersist()
         }
 
+        // A previously PIN-unlocked app is only "unlocked" for as long as it stays in
+        // the foreground. The moment focus moves to any other package, drop the grant
+        // so re-entering it later asks for the PIN again.
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            unlockedPackage != null && unlockedPackage != packageName
+        ) {
+            unlockedPackage = null
+        }
+
         val eventTypeStr = when (eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "TYPE_WINDOW_STATE_CHANGED"
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "TYPE_WINDOW_CONTENT_CHANGED"
@@ -392,12 +416,19 @@ class FocusAccessibilityService : AccessibilityService() {
                         bounceBackFromSettingsBypass(packageName)
                         return
                     }
+                    // These are deliberately screen-specific action/permission phrases, not
+                    // generic top-level category names like "Accessibility" or "Apps &
+                    // notifications" - those show up as ordinary menu items on the Settings
+                    // home screen itself and would bounce the user out before Settings even
+                    // finishes opening. The goal is to only step in once an actual
+                    // bypass-capable control is on screen (a toggle, an uninstall/reset
+                    // button, a specific app's permission page) - not merely because the
+                    // word "Accessibility" is visible as a menu entry somewhere in the list.
                     val bypassKeywords = listOf(
                         "Reset", "Factory reset", "Erase all data",
                         "Clear storage", "Clear data", "Clear cache", "Storage & cache",
                         "Force stop", "Uninstall",
-                        "Apps & notifications",
-                        "Accessibility", "Device admin apps", "Deactivate this device admin app",
+                        "Device admin apps", "Deactivate this device admin app",
                         "Special app access", "Display over other apps",
                         "Modify system settings", "Usage access", "Battery optimization"
                     )
@@ -506,6 +537,15 @@ class FocusAccessibilityService : AccessibilityService() {
                             startQuotaTracking(activeLongTermAppBlock)
                         }
                     }
+                }
+
+                // 3. Check for App Lock (PIN-gated apps) - only relevant for an app that
+                // wasn't already handled by a hard block above, and only if it hasn't
+                // already had its PIN entered for this foreground visit.
+                if (lockedPackages.contains(packageName) && unlockedPackage != packageName) {
+                    Log.d("FocusService", "Prompting for PIN - locked app opened: $packageName")
+                    triggerAppLockPrompt(packageName)
+                    return
                 }
             }
 
@@ -914,6 +954,32 @@ class FocusAccessibilityService : AccessibilityService() {
             putExtra("END_TIME", endDate)
         }
         startActivity(intent)
+    }
+
+    /**
+     * Shows the PIN-entry screen over a locked app. Unlike triggerBlockActivity(),
+     * this deliberately does NOT use FLAG_ACTIVITY_CLEAR_TASK: the locked app's own
+     * task is left completely intact underneath, so once the correct PIN is entered
+     * AppLockUnlockActivity just finishes and the locked app reappears exactly as the
+     * user left it, instead of being relaunched from scratch.
+     */
+    private fun triggerAppLockPrompt(packageName: String) {
+        if (Settings.canDrawOverlays(this)) {
+            showOverlay(packageName)
+        } else {
+            triggerOverlayPermissionRequest()
+        }
+
+        val intent = Intent(this, com.example.AppLockUnlockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra("LOCKED_PACKAGE", packageName)
+        }
+        startActivity(intent)
+    }
+
+    /** Called by AppLockUnlockActivity once the correct PIN has been entered. */
+    fun grantAppUnlock(packageName: String) {
+        unlockedPackage = packageName
     }
 
     private fun extractHost(urlText: String): String {

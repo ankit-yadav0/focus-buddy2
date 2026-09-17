@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [BlockedApp::class, FocusSession::class, LongTermBlock::class, Analytics::class, WebsiteBlock::class, AppSetting::class], version = 16, exportSchema = false)
+@Database(entities = [BlockedApp::class, FocusSession::class, LongTermBlock::class, Analytics::class, WebsiteBlock::class, AppSetting::class, LockedApp::class], version = 17, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun blockedAppDao(): BlockedAppDao
     abstract fun focusSessionDao(): FocusSessionDao
@@ -13,6 +13,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun analyticsDao(): AnalyticsDao
     abstract fun websiteBlockDao(): WebsiteBlockDao
     abstract fun appSettingDao(): AppSettingDao
+    abstract fun lockedAppDao(): LockedAppDao
 
     companion object {
         @Volatile

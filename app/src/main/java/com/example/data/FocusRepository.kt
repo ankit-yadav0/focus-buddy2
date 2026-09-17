@@ -8,10 +8,12 @@ class FocusRepository(
     private val longTermBlockDao: LongTermBlockDao,
     private val analyticsDao: AnalyticsDao,
     private val websiteBlockDao: WebsiteBlockDao,
-    private val appSettingDao: AppSettingDao
+    private val appSettingDao: AppSettingDao,
+    private val lockedAppDao: LockedAppDao
 ) {
     val allBlockedApps: Flow<List<BlockedApp>> = blockedAppDao.getAllBlockedApps()
     val activeSession: Flow<FocusSession?> = focusSessionDao.getActiveSession()
+    val allLockedApps: Flow<List<LockedApp>> = lockedAppDao.getAllLockedApps()
 
     val allLongTermBlocks: Flow<List<LongTermBlock>> = longTermBlockDao.getAllLongTermBlocks()
     val activeLongTermBlocks: Flow<List<LongTermBlock>> = longTermBlockDao.getActiveLongTermBlocks()
@@ -126,5 +128,22 @@ class FocusRepository(
 
     suspend fun saveSetting(key: String, value: String) {
         appSettingDao.insertSetting(AppSetting(key, value))
+    }
+
+    // App Lock (PIN-gated apps) operations
+    suspend fun getLockedAppsList(): List<LockedApp> {
+        return lockedAppDao.getLockedAppsList()
+    }
+
+    suspend fun addLockedApp(app: LockedApp) {
+        lockedAppDao.insertApp(app)
+    }
+
+    suspend fun removeLockedApp(packageName: String) {
+        lockedAppDao.deleteApp(packageName)
+    }
+
+    suspend fun isAppLocked(packageName: String): Boolean {
+        return lockedAppDao.isAppLocked(packageName)
     }
 }

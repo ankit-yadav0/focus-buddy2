@@ -44,6 +44,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.ui.helper.WallpaperBox
 import com.example.ui.screens.AppSelectionScreen
+import com.example.ui.screens.AppLockScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.BlockDetailsScreen
 import com.example.ui.screens.BlocksProgressScreen
@@ -229,6 +230,26 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingDeepLinkRoute.value = intent.getStringExtra("deep_link_route")
+        handleUpdateIntent(intent)
+    }
+
+    /**
+     * If this intent came from tapping the "update available" notification (or
+     * the in-app Update button already started the download itself), starts
+     * the download immediately - no extra confirmation screen.
+     */
+    private fun handleUpdateIntent(intent: Intent) {
+        if (!intent.getBooleanExtra("start_update_download", false)) return
+        val url = intent.getStringExtra("update_download_url") ?: return
+        val versionName = intent.getStringExtra("update_version_name") ?: "latest"
+        com.example.update.UpdateManager.startDownload(this, url, versionName)
+        android.widget.Toast.makeText(
+            this,
+            "Downloading update $versionName - you'll get a notification when it's ready to install.",
+            android.widget.Toast.LENGTH_LONG
+        ).show()
+        // Consume so a later recreate()/config change doesn't re-trigger the download.
+        intent.putExtra("start_update_download", false)
     }
 
     private val pickWallpaperLauncher = registerForActivityResult(
@@ -266,6 +287,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pendingDeepLinkRoute.value = intent.getStringExtra("deep_link_route")
+        handleUpdateIntent(intent)
+        lifecycleScope.launch(Dispatchers.IO) {
+            com.example.update.UpdateManager.checkAndNotify(applicationContext)
+        }
         lifecycleScope.launch(Dispatchers.Default) {
             try {
                 val label = getString(R.string.app_name)
@@ -427,6 +452,7 @@ class MainActivity : ComponentActivity() {
                                                 HomeScreen(
                                                     viewModel = focusViewModel,
                                                     onNavigateToAppSelection = { navController.navigate("app_selection") },
+                                                    onNavigateToAppLock = { navController.navigate("app_lock") },
                                                     onNavigateToBlockDetails = { id, type -> navController.navigate("block_details/$type/$id") },
                                                     onPickWallpaper = { launchWallpaperPicker() },
                                                     onClearWallpaper = { removeCustomWallpaper() },
@@ -446,6 +472,12 @@ class MainActivity : ComponentActivity() {
                                             }
                                             composable("app_selection") {
                                                 AppSelectionScreen(
+                                                    viewModel = focusViewModel,
+                                                    onBack = { navController.popBackStack() }
+                                                )
+                                            }
+                                            composable("app_lock") {
+                                                AppLockScreen(
                                                     viewModel = focusViewModel,
                                                     onBack = { navController.popBackStack() }
                                                 )
