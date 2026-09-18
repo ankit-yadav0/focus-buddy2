@@ -1,15 +1,15 @@
 name: Build APK
-
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch: {}
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to create the GitHub Release + tag
 
     steps:
       - name: Checkout repo
@@ -21,27 +21,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Project's gradlew wrapper script (gradlew / gradlew.bat / gradle-wrapper.jar)
-      # isn't committed to the repo - only gradle-wrapper.properties is present.
-      # This action installs Gradle directly so the build doesn't depend on ./gradlew.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
 
-      # The Secrets Gradle Plugin (used for API keys like Gemini) requires its
-      # default properties file to exist even when no real secrets are needed for
-      # a debug build. This file is normally gitignored (correctly - it shouldn't
-      # contain real keys in the repo), so CI creates an empty placeholder here.
       - name: Ensure .env.example exists for Secrets Gradle Plugin
         run: touch .env.example
 
-      # The project's debugConfig signing config points at a debug.keystore file
-      # in the repo root, which isn't committed (keystores are usually gitignored).
-      # This generates a standard Android debug keystore with the conventional
-      # credentials (store/key password "android", alias "androiddebugkey") that
-      # Android Studio itself uses by default. If the project's actual signing
-      # config uses different values, this step needs updating to match.
       - name: Generate debug keystore
         run: |
           keytool -genkeypair -v \
@@ -52,8 +39,20 @@ jobs:
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
+      # versionCode must go UP on every build the in-app updater should ever
+      # notice - github.run_number does that automatically (1, 2, 3, ... on
+      # every workflow run). versionName is just a human-readable label.
+      - name: Compute version
+        id: version
+        run: |
+          echo "code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "name=1.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          gradle assembleDebug --no-daemon --stacktrace \
+            -PappVersionCode=${{ steps.version.outputs.code }} \
+            -PappVersionName=${{ steps.version.outputs.name }}
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -61,18 +60,14 @@ jobs:
           name: focussbuddy-debug-apk
           path: app/build/outputs/apk/debug/*.apk
 
-      # Decode the release keystore from a repo secret (never committed to the repo).
       - name: Decode release keystore
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.keystore
 
-      # -Pandroid.injected.signing.* are Gradle properties the Android Gradle Plugin
-      # recognizes automatically for whichever signingConfig references them. If the
-      # project's build.gradle.kts doesn't yet have a "release" signingConfig block at
-      # all, this build may still produce an unsigned APK - in that case the
-      # signingConfigs block needs to be added to app/build.gradle.kts.
       - name: Build release APK
         run: |
           gradle assembleRelease --no-daemon --stacktrace \
+            -PappVersionCode=${{ steps.version.outputs.code }} \
+            -PappVersionName=${{ steps.version.outputs.name }} \
             -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/release.keystore" \
             -Pandroid.injected.signing.store.password="${{ secrets.KEYSTORE_PASSWORD }}" \
             -Pandroid.injected.signing.key.alias="${{ secrets.KEY_ALIAS }}" \
@@ -83,3 +78,18 @@ jobs:
         with:
           name: focussbuddy-release-apk
           path: app/build/outputs/apk/release/*.apk
+
+      # This is the step that was missing entirely: UpdateManager.kt polls
+      # GitHub's /releases/latest API and expects a tag named "v<versionCode>"
+      # with the APK attached as a downloadable asset. Uploading to Actions
+      # artifacts (above) does NOT satisfy that - artifacts need a login to
+      # download and never show up in the Releases API at all. Only runs on
+      # an actual push to main, not on pull_request builds, so PRs don't spam
+      # releases and don't need a real signing secret to build/test.
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.code }}
+          name: v${{ steps.version.outputs.code }}
+          files: app/build/outputs/apk/release/*.apk
