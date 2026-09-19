@@ -76,6 +76,13 @@ class FocusAccessibilityService : AccessibilityService() {
     private var activeWebsitesList = listOf<WebsiteBlock>()
     private var lastContentChangedProcessTime = 0L
 
+    // App Lock (PIN-gated apps): packages the user chose to lock, and which one (if
+    // any) has already had its PIN entered for the current foreground visit. The
+    // grant is cleared the moment the foreground package changes to anything else,
+    // so re-opening a locked app always asks for the PIN again.
+    private var lockedPackages = setOf<String>()
+    private var unlockedPackage: String? = null
+
     // Daily time-quota tracking: while a quota-mode long-term-blocked app is in the
     // foreground, we track how long it's been open and periodically add that to its
     // persisted usedSecondsToday, so quota enforcement works both across app
@@ -137,6 +144,14 @@ class FocusAccessibilityService : AccessibilityService() {
                 repository.allBlockedApps.collectLatest { apps ->
                     blockedPackages = apps.map { it.packageName }.toSet()
                     Log.d("FocusService", "Blocked apps updated: count=${blockedPackages.size}")
+                }
+            }
+
+            // Observe PIN-locked apps
+            serviceScope.launch {
+                repository.allLockedApps.collectLatest { apps ->
+                    lockedPackages = apps.map { it.packageName }.toSet()
+                    Log.d("FocusService", "Locked apps updated: count=${lockedPackages.size}")
                 }
             }
 
@@ -243,6 +258,37 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * True for windows that pop over the current app without the user actually
+     * switching away from it - soft keyboard, runtime permission dialogs, the
+     * notification shade / quick settings, share sheets. Used to keep App Lock's
+     * unlock grant alive through normal in-app activity (typing, calls, etc.)
+     * instead of revoking it on every transient system window.
+     */
+    private fun isTransientSystemPackage(packageName: String): Boolean {
+        if (packageName == "com.android.systemui") return true
+        if (packageName == "android") return true
+        if (packageName == "com.android.permissioncontroller" ||
+            packageName == "com.google.android.permissioncontroller"
+        ) return true
+        // In-call / telecom UI: OEMs each ship this under a different package
+        // (com.android.dialer, com.android.incallui, com.coloros.dialer,
+        // com.realme.dialer, com.android.server.telecom, and more). A voice/video
+        // call started from a locked app (WhatsApp, Messenger, etc.) can briefly
+        // foreground whichever one this device uses, without the user having
+        // actually left the locked app - so match generically instead of trying
+        // to enumerate every OEM's exact package name.
+        val lower = packageName.lowercase()
+        if (lower.contains("dialer") || lower.contains("telecom") || lower.contains("incallui")) return true
+        val currentImePackage = try {
+            Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+                ?.substringBefore("/")
+        } catch (e: Exception) {
+            null
+        }
+        return packageName == currentImePackage
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val eventType = event.eventType
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && 
@@ -284,6 +330,26 @@ class FocusAccessibilityService : AccessibilityService() {
             quotaTrackingPackage != null && quotaTrackingPackage != packageName
         ) {
             stopQuotaTrackingAndPersist()
+        }
+
+        // A previously PIN-unlocked app is only "unlocked" for as long as it stays in
+        // the foreground. The moment focus moves to any other REAL app, drop the grant
+        // so re-entering it later asks for the PIN again.
+        //
+        // IMPORTANT: don't drop the grant just because SOME other package briefly
+        // reported a window-state-changed event. Transient system windows constantly
+        // pop over a locked app without the user ever actually leaving it - the soft
+        // keyboard when typing in a chat, a runtime permission dialog (mic/camera for
+        // a call), the notification shade, share sheets, the in-call UI overlay. Each
+        // of those has its own packageName, and treating them as "the user switched
+        // apps" was wiping the unlock on every keystroke/tab-switch/call inside the
+        // locked app itself, forcing the PIN again a moment later even though the user
+        // never left. Only a transition to a genuine other app should revoke it.
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            unlockedPackage != null && unlockedPackage != packageName &&
+            !isTransientSystemPackage(packageName)
+        ) {
+            unlockedPackage = null
         }
 
         val eventTypeStr = when (eventType) {
@@ -484,6 +550,15 @@ class FocusAccessibilityService : AccessibilityService() {
                             startQuotaTracking(activeLongTermAppBlock)
                         }
                     }
+                }
+
+                // Check for App Lock (PIN-gated apps) - only relevant for an app that
+                // wasn't already handled by a hard block above, and only if it hasn't
+                // already had its PIN entered for this foreground visit.
+                if (lockedPackages.contains(packageName) && unlockedPackage != packageName) {
+                    Log.d("FocusService", "Prompting for PIN - locked app opened: $packageName")
+                    triggerAppLockPrompt(packageName)
+                    return
                 }
             }
 
@@ -894,6 +969,32 @@ class FocusAccessibilityService : AccessibilityService() {
             putExtra("END_TIME", endDate)
         }
         startActivity(intent)
+    }
+
+    /**
+     * Shows the PIN-entry screen over a locked app. Unlike triggerBlockActivity(),
+     * this deliberately does NOT use FLAG_ACTIVITY_CLEAR_TASK: the locked app's own
+     * task is left completely intact underneath, so once the correct PIN is entered
+     * AppLockUnlockActivity just finishes and the locked app reappears exactly as the
+     * user left it, instead of being relaunched from scratch.
+     */
+    private fun triggerAppLockPrompt(packageName: String) {
+        if (Settings.canDrawOverlays(this)) {
+            showOverlay(packageName)
+        } else {
+            triggerOverlayPermissionRequest()
+        }
+
+        val intent = Intent(this, com.example.AppLockUnlockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra("LOCKED_PACKAGE", packageName)
+        }
+        startActivity(intent)
+    }
+
+    /** Called by AppLockUnlockActivity once the correct PIN has been entered. */
+    fun grantAppUnlock(packageName: String) {
+        unlockedPackage = packageName
     }
 
     private fun extractHost(urlText: String): String {

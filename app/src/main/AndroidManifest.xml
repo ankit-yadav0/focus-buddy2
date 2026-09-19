@@ -76,6 +76,12 @@
             android:launchMode="singleTask" />
 
         <activity
+            android:name=".AppLockUnlockActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MyApplication"
+            android:launchMode="singleTask" />
+
+        <activity
             android:name=".UninstallFrictionActivity"
             android:exported="false"
             android:theme="@style/Theme.MyApplication"
