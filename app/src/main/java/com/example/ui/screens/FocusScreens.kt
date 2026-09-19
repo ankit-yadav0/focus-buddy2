@@ -2516,7 +2516,7 @@ fun StartStrictSessionDialog(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        QuotaNumberField(label = "DAYS", value = days, range = 0..30, onValueChange = { days = it })
+                        QuotaNumberField(label = "DAYS", value = days, range = 0..365, onValueChange = { days = it })
                         QuotaNumberField(label = "HOURS", value = hours, range = 0..23, onValueChange = { hours = it })
                         QuotaNumberField(label = "MIN", value = minutes, range = 0..59, onValueChange = { minutes = it })
                         QuotaNumberField(label = "SEC", value = seconds, range = 0..59, onValueChange = { seconds = it })
