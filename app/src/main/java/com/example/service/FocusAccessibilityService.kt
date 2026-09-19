@@ -460,30 +460,43 @@ class FocusAccessibilityService : AccessibilityService() {
                 // teeth at all - so this part is unconditional whenever Strict Mode is
                 // active, the same way it must always have been intended to work.
                 if (packageName == "com.android.settings") {
-                    // A screen that shows our own app's name is almost certainly App Info,
-                    // the accessibility-service toggle, the device-admin toggle, or battery
-                    // optimization for this app - all of which can be used to defeat
-                    // enforcement. This catches those screens even when reached via the
-                    // Settings search bar's direct-jump results, whose destination screens
-                    // often don't literally show the word "Accessibility" or "Device admin"
-                    // - just the app's own name and a toggle.
-                    if (screenTexts.any { it.contains(appName, ignoreCase = true) }) {
+                    // A screen that shows our own app's name is NOT enough by itself -
+                    // "Focuss Buddy" can also show up as just one row in a plain LIST
+                    // (Apps & notifications' "recently used apps" mini-list, a usage/
+                    // battery list, a permission-manager app list) since its
+                    // Accessibility Service keeps it near the top of most such lists.
+                    // Bouncing on the name alone fired every time the user merely
+                    // scrolled past a list that happened to mention this app, without
+                    // ever tapping into it - not what we want. Require a genuine
+                    // detail/toggle-page marker alongside the name - text that only
+                    // appears once you're actually ON that app's own App Info,
+                    // accessibility-service, or device-admin screen, never on a list
+                    // row that just names it in passing.
+                    val ownAppDetailMarkers = listOf(
+                        "Uninstall", "Force stop", "Storage & cache", "App info",
+                        "Open by default", "Mobile data & Wi", "Use service",
+                        "Deactivate", "device admin", "This app can"
+                    )
+                    if (screenTexts.any { it.contains(appName, ignoreCase = true) } &&
+                        screenTexts.any { text -> ownAppDetailMarkers.any { text.contains(it, ignoreCase = true) } }
+                    ) {
                         Log.d("FocusService", "Strict Mode: Bouncing back from our own app's Settings screen")
                         bounceBackFromSettingsBypass(packageName)
                         return
                     }
                 }
-                // Broader Settings Rules - only active when the user has turned on the
-                // "Phone Settings" restriction in Focuss Buddy's own Strict Mode setup
-                // (restrictSettingsFullyEnabled / "strict_restrict_settings"). If that's
-                // off, these GLOBAL (not app-specific) screens stay reachable - only the
-                // own-app protection above still applies regardless. When it's on, this
-                // never blocks Settings wholesale - WiFi/Bluetooth/mobile data/display/
-                // sound etc. always stay reachable - it only silently backs the user out
-                // (GLOBAL_ACTION_BACK, no overlay, no full "App Blocked" screen) the
-                // moment a screen that could defeat enforcement in some other way (a
-                // factory reset, the device-admin list) shows up.
-                if (packageName == "com.android.settings" && restrictSettingsFullyEnabled) {
+                // Broader Settings Rules - the "Phone Settings" wizard toggle that used to
+                // gate this was removed from the UI, leaving restrictSettingsFullyEnabled
+                // permanently false and this whole block unreachable dead code. Per
+                // Ankit's decision, this is now unconditional (always on) during Strict
+                // Mode instead of tied to a setting nothing can ever turn on - these GLOBAL
+                // (not app-specific) screens (Reset, Factory reset, Device admin apps list,
+                // Special app access) are blocked the same way the own-app protection above
+                // always is. This never blocks Settings wholesale - WiFi/Bluetooth/mobile
+                // data/display/sound etc. always stay reachable - it only silently backs
+                // the user out (GLOBAL_ACTION_BACK, no overlay, no full "App Blocked"
+                // screen) the moment one of these specific screens shows up.
+                if (packageName == "com.android.settings") {
                     // IMPORTANT: only keywords here that are truly GLOBAL screen titles -
                     // ones that never appear on an arbitrary other app's own App Info /
                     // permission page. Anything that shows up on EVERY app's info page
