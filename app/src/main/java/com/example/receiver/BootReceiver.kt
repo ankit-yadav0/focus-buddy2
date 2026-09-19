@@ -85,6 +85,15 @@ class BootReceiver : BroadcastReceiver() {
                     } else {
                         Log.d("BootReceiver", "No active strict session. Accessibility check not required.")
                     }
+
+                    // Reschedule enabled schedules on boot
+                    try {
+                        val enabledSchedules = db.strictScheduleDao().getEnabledSchedulesSync()
+                        com.example.scheduler.AlarmScheduler.rescheduleAll(context, enabledSchedules)
+                        Log.d("BootReceiver", "Rescheduled ${enabledSchedules.size} enabled schedules on boot.")
+                    } catch (e: Exception) {
+                        Log.e("BootReceiver", "Error rescheduling schedules on boot", e)
+                    }
                 } catch (e: Exception) {
                     Log.e("BootReceiver", "Error while handling broadcast $action", e)
                 } finally {

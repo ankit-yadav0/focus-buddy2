@@ -27,8 +27,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Park
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -54,7 +58,11 @@ data class ControlDeckTab(
 
 val controlDeckTabs = listOf(
     ControlDeckTab("home", "HOME", Icons.Default.Home),
-    ControlDeckTab("blocks_progress", "BLOCKS", Icons.Default.Block)
+    ControlDeckTab("timer", "FOCUS", Icons.Default.Timer),
+    ControlDeckTab("schedule_manager", "STRICT", Icons.Default.Shield),
+    ControlDeckTab("blocks_progress", "BLOCKS", Icons.Default.Block),
+    ControlDeckTab("insights", "STATS", Icons.Default.BarChart),
+    ControlDeckTab("forest_gallery", "FOREST", Icons.Default.Park)
 )
 
 /**

@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [BlockedApp::class, FocusSession::class, LongTermBlock::class, Analytics::class, WebsiteBlock::class, AppSetting::class, LockedApp::class], version = 17, exportSchema = false)
+@Database(entities = [BlockedApp::class, FocusSession::class, LongTermBlock::class, Analytics::class, WebsiteBlock::class, AppSetting::class, ChatMessage::class, StrictSchedule::class, ReflectionNote::class, TestEntry::class, PyqQuestion::class, PyqQuizAttempt::class, PyqQuizAnswer::class], version = 15, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun blockedAppDao(): BlockedAppDao
     abstract fun focusSessionDao(): FocusSessionDao
@@ -13,7 +13,12 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun analyticsDao(): AnalyticsDao
     abstract fun websiteBlockDao(): WebsiteBlockDao
     abstract fun appSettingDao(): AppSettingDao
-    abstract fun lockedAppDao(): LockedAppDao
+    abstract fun chatMessageDao(): ChatMessageDao
+    abstract fun strictScheduleDao(): StrictScheduleDao
+    abstract fun reflectionNoteDao(): ReflectionNoteDao
+    abstract fun testEntryDao(): TestEntryDao
+    abstract fun pyqQuestionDao(): PyqQuestionDao
+    abstract fun pyqQuizAttemptDao(): PyqQuizAttemptDao
 
     companion object {
         @Volatile

@@ -76,13 +76,6 @@ class FocusAccessibilityService : AccessibilityService() {
     private var activeWebsitesList = listOf<WebsiteBlock>()
     private var lastContentChangedProcessTime = 0L
 
-    // App Lock (PIN-gated apps): packages the user chose to lock, and which one (if
-    // any) has already had its PIN entered for the current foreground visit. The
-    // grant is cleared the moment the foreground package changes to anything else,
-    // so re-opening a locked app always asks for the PIN again.
-    private var lockedPackages = setOf<String>()
-    private var unlockedPackage: String? = null
-
     // Daily time-quota tracking: while a quota-mode long-term-blocked app is in the
     // foreground, we track how long it's been open and periodically add that to its
     // persisted usedSecondsToday, so quota enforcement works both across app
@@ -139,41 +132,11 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Independent watchdog that expires a finished session on a fixed clock,
-            // regardless of whether any app-switch (WINDOW_STATE_CHANGED) event happens
-            // to fire around the same time. Without this, a session (in particular a
-            // Strict Mode session, which the user cannot end early any other way) could
-            // stay marked active - and its app blocking / settings lock kept in force -
-            // for an unbounded extra stretch if the phone just sits on one screen past
-            // the timer's actual end time. This runs inside the foreground service
-            // itself, not the ViewModel, so it keeps working even if MainActivity has
-            // been closed or swiped away.
-            serviceScope.launch {
-                while (true) {
-                    try {
-                        if (isSessionActive && System.currentTimeMillis() >= sessionEndTime) {
-                            repository.stopActiveSession("Expired")
-                        }
-                    } catch (e: Exception) {
-                        Log.e("FocusService", "Error in session-expiry watchdog", e)
-                    }
-                    delay(5_000L)
-                }
-            }
-
             // Observe blocked apps
             serviceScope.launch {
                 repository.allBlockedApps.collectLatest { apps ->
                     blockedPackages = apps.map { it.packageName }.toSet()
                     Log.d("FocusService", "Blocked apps updated: count=${blockedPackages.size}")
-                }
-            }
-
-            // Observe PIN-locked apps
-            serviceScope.launch {
-                repository.allLockedApps.collectLatest { apps ->
-                    lockedPackages = apps.map { it.packageName }.toSet()
-                    Log.d("FocusService", "Locked apps updated: count=${lockedPackages.size}")
                 }
             }
 
@@ -280,37 +243,6 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * True for windows that pop over the current app without the user actually
-     * switching away from it - soft keyboard, runtime permission dialogs, the
-     * notification shade / quick settings, share sheets. Used to keep App Lock's
-     * unlock grant alive through normal in-app activity (typing, calls, etc.)
-     * instead of revoking it on every transient system window.
-     */
-    private fun isTransientSystemPackage(packageName: String): Boolean {
-        if (packageName == "com.android.systemui") return true
-        if (packageName == "android") return true
-        if (packageName == "com.android.permissioncontroller" ||
-            packageName == "com.google.android.permissioncontroller"
-        ) return true
-        // In-call / telecom UI: OEMs each ship this under a different package
-        // (com.android.dialer, com.android.incallui, com.coloros.dialer,
-        // com.realme.dialer, com.android.server.telecom, and more). A voice/video
-        // call started from a locked app (WhatsApp, Messenger, etc.) can briefly
-        // foreground whichever one this device uses, without the user having
-        // actually left the locked app - so match generically instead of trying
-        // to enumerate every OEM's exact package name.
-        val lower = packageName.lowercase()
-        if (lower.contains("dialer") || lower.contains("telecom") || lower.contains("incallui")) return true
-        val currentImePackage = try {
-            Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-                ?.substringBefore("/")
-        } catch (e: Exception) {
-            null
-        }
-        return packageName == currentImePackage
-    }
-
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val eventType = event.eventType
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && 
@@ -347,37 +279,12 @@ class FocusAccessibilityService : AccessibilityService() {
         currentPackage.value = packageName
 
         // If a quota-tracked app is no longer in the foreground, stop the ticker and
-        // persist however much time was actually spent in it this session. Same
-        // transient-window guard as the App Lock check below - a keyboard popup or
-        // permission dialog inside the tracked app must not prematurely stop the
-        // ticker and split/undercount the session's usage.
+        // persist however much time was actually spent in it this session.
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            quotaTrackingPackage != null && quotaTrackingPackage != packageName &&
-            !isTransientSystemPackage(packageName)
+            quotaTrackingPackage != null && quotaTrackingPackage != packageName
         ) {
             stopQuotaTrackingAndPersist()
         }
-
-        // A previously PIN-unlocked app is only "unlocked" for as long as it stays in
-        // the foreground. The moment focus moves to any other REAL app, drop the grant
-        // so re-entering it later asks for the PIN again.
-        //
-        // IMPORTANT: don't drop the grant just because SOME other package briefly
-        // reported a window-state-changed event. Transient system windows constantly
-        // pop over a locked app without the user ever actually leaving it - the soft
-        // keyboard when typing in a chat, a runtime permission dialog (mic/camera for
-        // a call), the notification shade, share sheets, the in-call UI overlay. Each
-        // of those has its own packageName, and treating them as "the user switched
-        // apps" was wiping the unlock on every keystroke/tab-switch/call inside the
-        // locked app itself, forcing the PIN again a moment later even though the user
-        // never left. Only a transition to a genuine other app should revoke it.
-        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            unlockedPackage != null && unlockedPackage != packageName &&
-            !isTransientSystemPackage(packageName)
-        ) {
-            unlockedPackage = null
-        }
-
 
         val eventTypeStr = when (eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "TYPE_WINDOW_STATE_CHANGED"
@@ -433,82 +340,44 @@ class FocusAccessibilityService : AccessibilityService() {
             // Strict-Mode Guard
             val isStrictModeActive = isSessionActive && now < sessionEndTime && isSessionStrict
             if (isStrictModeActive) {
-                // Blocking Rules: block uninstallation of FOCUS BUDDY ITSELF only.
-                // packageinstaller foregrounds for every install AND uninstall of ANY
-                // app - installing a brand new app, or installing an updated Focus
-                // Buddy APK signed with the same release key, both bring up this same
-                // package. Blocking on packageName alone (as before) blocked ALL of
-                // those too, not just uninstalling this app - so during an active
-                // Strict session the user couldn't install anything at all, including
-                // their own updated build. Only step in when the screen is actually
-                // an uninstall confirmation naming this app.
+                // Blocking Rules: block uninstallation
                 if (packageName == "com.android.packageinstaller" || packageName == "com.google.android.packageinstaller") {
-                    val isUninstallingUs = screenTexts.any { it.contains(appName, ignoreCase = true) } &&
-                        screenTexts.any { it.contains("uninstall", ignoreCase = true) }
-                    if (isUninstallingUs) {
-                        Log.d("FocusService", "Strict Mode: Blocking app uninstaller: $packageName")
-                        triggerBlockActivity(packageName, isLongTerm = false, reason = "App uninstallation is blocked in Strict Mode.", endDate = sessionEndTime)
-                        return
-                    }
-                    // Anything else here (installing/updating some other app, or even
-                    // reinstalling/updating Focus Buddy itself) - let it proceed normally.
+                    Log.d("FocusService", "Strict Mode: Blocking app uninstaller: $packageName")
+                    triggerBlockActivity(packageName, isLongTerm = false, reason = "App uninstallation is blocked in Strict Mode.", endDate = sessionEndTime)
+                    return
                 }
-                // Own-app protection: ALWAYS active during a Strict session, regardless
-                // of the "Phone Settings" toggle below. If the user could freely reach
-                // Focus Buddy's own App Info / Accessibility-service / Device-admin
-                // toggle screens and disable them from there, Strict Mode would have no
-                // teeth at all - so this part is unconditional whenever Strict Mode is
-                // active, the same way it must always have been intended to work.
-                if (packageName == "com.android.settings") {
-                    // A screen that shows our own app's name is NOT enough by itself -
-                    // "Focuss Buddy" can also show up as just one row in a plain LIST
-                    // (Apps & notifications' "recently used apps" mini-list, a usage/
-                    // battery list, a permission-manager app list) since its
-                    // Accessibility Service keeps it near the top of most such lists.
-                    // Bouncing on the name alone fired every time the user merely
-                    // scrolled past a list that happened to mention this app, without
-                    // ever tapping into it - not what we want. Require a genuine
-                    // detail/toggle-page marker alongside the name - text that only
-                    // appears once you're actually ON that app's own App Info,
-                    // accessibility-service, or device-admin screen, never on a list
-                    // row that just names it in passing.
-                    val ownAppDetailMarkers = listOf(
-                        "Uninstall", "Force stop", "Storage & cache", "App info",
-                        "Open by default", "Mobile data & Wi", "Use service",
-                        "Deactivate", "device admin", "This app can"
-                    )
-                    if (screenTexts.any { it.contains(appName, ignoreCase = true) } &&
-                        screenTexts.any { text -> ownAppDetailMarkers.any { text.contains(it, ignoreCase = true) } }
-                    ) {
+                // Selective Settings Rules - only active when the user has turned on the
+                // "Phone Settings" restriction in Focuss Buddy's own Strict Mode setup
+                // (restrictSettingsFullyEnabled / "strict_restrict_settings"). If that's off,
+                // Settings behaves completely normally in Strict Mode - no bounce, no block.
+                // When it's on, this never blocks Settings wholesale - WiFi/Bluetooth/mobile
+                // data/display/sound etc. always stay reachable - it only silently backs the
+                // user out (GLOBAL_ACTION_BACK, no overlay, no full "App Blocked" screen) the
+                // moment a screen that could defeat enforcement (uninstalling, disabling the
+                // accessibility service or device admin, revoking the overlay permission)
+                // shows up. Settings opens and stays visibly usable the whole time - the
+                // bounce only fires once a bypass-capable screen is actually identified.
+                if (packageName == "com.android.settings" && restrictSettingsFullyEnabled) {
+                    // A screen that shows our own app's name is almost certainly App Info,
+                    // the accessibility-service toggle, the device-admin toggle, or battery
+                    // optimization for this app - all of which can be used to defeat
+                    // enforcement. This catches those screens even when reached via the
+                    // Settings search bar's direct-jump results, whose destination screens
+                    // often don't literally show the word "Accessibility" or "Device admin"
+                    // - just the app's own name and a toggle.
+                    if (screenTexts.any { it.contains(appName, ignoreCase = true) }) {
                         Log.d("FocusService", "Strict Mode: Bouncing back from our own app's Settings screen")
                         bounceBackFromSettingsBypass(packageName)
                         return
                     }
-                }
-                // Broader Settings Rules - the "Phone Settings" wizard toggle that used to
-                // gate this was removed from the UI, leaving restrictSettingsFullyEnabled
-                // permanently false and this whole block unreachable dead code. Per
-                // Ankit's decision, this is now unconditional (always on) during Strict
-                // Mode instead of tied to a setting nothing can ever turn on - these GLOBAL
-                // (not app-specific) screens (Reset, Factory reset, Device admin apps list,
-                // Special app access) are blocked the same way the own-app protection above
-                // always is. This never blocks Settings wholesale - WiFi/Bluetooth/mobile
-                // data/display/sound etc. always stay reachable - it only silently backs
-                // the user out (GLOBAL_ACTION_BACK, no overlay, no full "App Blocked"
-                // screen) the moment one of these specific screens shows up.
-                if (packageName == "com.android.settings") {
-                    // IMPORTANT: only keywords here that are truly GLOBAL screen titles -
-                    // ones that never appear on an arbitrary other app's own App Info /
-                    // permission page. Anything that shows up on EVERY app's info page
-                    // (Force stop, Uninstall, Clear cache/data, Storage & cache, Battery
-                    // optimization, Usage access, Display over other apps, Modify system
-                    // settings, Deactivate this device admin app) must NOT be listed here,
-                    // or opening any other app's info screen bounces the user out too.
-                    // Those per-app actions on OUR OWN app are already caught above by the
-                    // "screenTexts contains appName" check - no keyword needed for that case.
                     val bypassKeywords = listOf(
                         "Reset", "Factory reset", "Erase all data",
-                        "Device admin apps", "Special app access"
+                        "Clear storage", "Clear data", "Clear cache", "Storage & cache",
+                        "Force stop", "Uninstall",
+                        "Apps & notifications",
+                        "Accessibility", "Device admin apps", "Deactivate this device admin app",
+                        "Special app access", "Display over other apps",
+                        "Modify system settings", "Usage access", "Battery optimization"
                     )
                     val containsBypass = screenTexts.any { text ->
                         bypassKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
@@ -615,15 +484,6 @@ class FocusAccessibilityService : AccessibilityService() {
                             startQuotaTracking(activeLongTermAppBlock)
                         }
                     }
-                }
-
-                // 3. Check for App Lock (PIN-gated apps) - only relevant for an app that
-                // wasn't already handled by a hard block above, and only if it hasn't
-                // already had its PIN entered for this foreground visit.
-                if (lockedPackages.contains(packageName) && unlockedPackage != packageName) {
-                    Log.d("FocusService", "Prompting for PIN - locked app opened: $packageName")
-                    triggerAppLockPrompt(packageName)
-                    return
                 }
             }
 
@@ -942,13 +802,15 @@ class FocusAccessibilityService : AccessibilityService() {
         } else {
             triggerOverlayPermissionRequest()
         }
-        // Note: we deliberately do NOT dispatch GLOBAL_ACTION_HOME here anymore.
-        // BlockActivity is launched right after this with FLAG_ACTIVITY_NEW_TASK |
-        // FLAG_ACTIVITY_CLEAR_TASK, which already replaces the blocked app in its
-        // task. Firing GLOBAL_ACTION_HOME as well was a race: the system sometimes
-        // processed the Home action after BlockActivity had already come to the
-        // foreground, which sent BlockActivity itself back to the launcher a moment
-        // after it appeared - the block screen would flash and immediately vanish.
+
+        try {
+            val sentHome = performGlobalAction(GLOBAL_ACTION_HOME)
+            if (!sentHome) {
+                Log.d("FocusService", "GLOBAL_ACTION_HOME returned false for $packageName")
+            }
+        } catch (e: Exception) {
+            Log.e("FocusService", "Error dispatching GLOBAL_ACTION_HOME", e)
+        }
     }
 
     /**
@@ -968,24 +830,7 @@ class FocusAccessibilityService : AccessibilityService() {
      * Settings root, so a repeat attempt has to re-navigate the whole path
      * again instead of just tapping back in.
      */
-    // Guards bounceBackFromSettingsBypass against re-firing while a bounce it just
-    // triggered is still in flight. Settings' content-changed events are
-    // deliberately left un-throttled (see the throttle comment above) so blocking
-    // reacts instantly - but that also means a bypass screen that stays visible for
-    // even 2-3 rapid content-changed events (a list re-render, a ripple/focus
-    // animation, anything) would call this repeatedly before the first double-back
-    // has actually navigated away, stacking up extra GLOBAL_ACTION_BACK calls and
-    // shoving the user further back than intended - sometimes out of Settings
-    // entirely. One bounce (its own two backs, ~60ms apart) is enough; ignore any
-    // further trigger for a short cooldown after starting one.
-    private var lastBounceBackTime = 0L
-    private val BOUNCE_BACK_COOLDOWN_MS = 800L
-
     private fun bounceBackFromSettingsBypass(packageName: String) {
-        val now = System.currentTimeMillis()
-        if (now - lastBounceBackTime < BOUNCE_BACK_COOLDOWN_MS) return
-        lastBounceBackTime = now
-
         val repository = (application as FocusApplication).repository
         serviceScope.launch {
             try {
@@ -1049,32 +894,6 @@ class FocusAccessibilityService : AccessibilityService() {
             putExtra("END_TIME", endDate)
         }
         startActivity(intent)
-    }
-
-    /**
-     * Shows the PIN-entry screen over a locked app. Unlike triggerBlockActivity(),
-     * this deliberately does NOT use FLAG_ACTIVITY_CLEAR_TASK: the locked app's own
-     * task is left completely intact underneath, so once the correct PIN is entered
-     * AppLockUnlockActivity just finishes and the locked app reappears exactly as the
-     * user left it, instead of being relaunched from scratch.
-     */
-    private fun triggerAppLockPrompt(packageName: String) {
-        if (Settings.canDrawOverlays(this)) {
-            showOverlay(packageName)
-        } else {
-            triggerOverlayPermissionRequest()
-        }
-
-        val intent = Intent(this, com.example.AppLockUnlockActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            putExtra("LOCKED_PACKAGE", packageName)
-        }
-        startActivity(intent)
-    }
-
-    /** Called by AppLockUnlockActivity once the correct PIN has been entered. */
-    fun grantAppUnlock(packageName: String) {
-        unlockedPackage = packageName
     }
 
     private fun extractHost(urlText: String): String {
