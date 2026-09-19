@@ -293,6 +293,15 @@ class FocusAccessibilityService : AccessibilityService() {
         if (packageName == "com.android.permissioncontroller" ||
             packageName == "com.google.android.permissioncontroller"
         ) return true
+        // In-call / telecom UI: OEMs each ship this under a different package
+        // (com.android.dialer, com.android.incallui, com.coloros.dialer,
+        // com.realme.dialer, com.android.server.telecom, and more). A voice/video
+        // call started from a locked app (WhatsApp, Messenger, etc.) can briefly
+        // foreground whichever one this device uses, without the user having
+        // actually left the locked app - so match generically instead of trying
+        // to enumerate every OEM's exact package name.
+        val lower = packageName.lowercase()
+        if (lower.contains("dialer") || lower.contains("telecom") || lower.contains("incallui")) return true
         val currentImePackage = try {
             Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
                 ?.substringBefore("/")
@@ -444,18 +453,13 @@ class FocusAccessibilityService : AccessibilityService() {
                     // Anything else here (installing/updating some other app, or even
                     // reinstalling/updating Focus Buddy itself) - let it proceed normally.
                 }
-                // Selective Settings Rules - only active when the user has turned on the
-                // "Phone Settings" restriction in Focuss Buddy's own Strict Mode setup
-                // (restrictSettingsFullyEnabled / "strict_restrict_settings"). If that's off,
-                // Settings behaves completely normally in Strict Mode - no bounce, no block.
-                // When it's on, this never blocks Settings wholesale - WiFi/Bluetooth/mobile
-                // data/display/sound etc. always stay reachable - it only silently backs the
-                // user out (GLOBAL_ACTION_BACK, no overlay, no full "App Blocked" screen) the
-                // moment a screen that could defeat enforcement (uninstalling, disabling the
-                // accessibility service or device admin, revoking the overlay permission)
-                // shows up. Settings opens and stays visibly usable the whole time - the
-                // bounce only fires once a bypass-capable screen is actually identified.
-                if (packageName == "com.android.settings" && restrictSettingsFullyEnabled) {
+                // Own-app protection: ALWAYS active during a Strict session, regardless
+                // of the "Phone Settings" toggle below. If the user could freely reach
+                // Focus Buddy's own App Info / Accessibility-service / Device-admin
+                // toggle screens and disable them from there, Strict Mode would have no
+                // teeth at all - so this part is unconditional whenever Strict Mode is
+                // active, the same way it must always have been intended to work.
+                if (packageName == "com.android.settings") {
                     // A screen that shows our own app's name is almost certainly App Info,
                     // the accessibility-service toggle, the device-admin toggle, or battery
                     // optimization for this app - all of which can be used to defeat
@@ -468,6 +472,18 @@ class FocusAccessibilityService : AccessibilityService() {
                         bounceBackFromSettingsBypass(packageName)
                         return
                     }
+                }
+                // Broader Settings Rules - only active when the user has turned on the
+                // "Phone Settings" restriction in Focuss Buddy's own Strict Mode setup
+                // (restrictSettingsFullyEnabled / "strict_restrict_settings"). If that's
+                // off, these GLOBAL (not app-specific) screens stay reachable - only the
+                // own-app protection above still applies regardless. When it's on, this
+                // never blocks Settings wholesale - WiFi/Bluetooth/mobile data/display/
+                // sound etc. always stay reachable - it only silently backs the user out
+                // (GLOBAL_ACTION_BACK, no overlay, no full "App Blocked" screen) the
+                // moment a screen that could defeat enforcement in some other way (a
+                // factory reset, the device-admin list) shows up.
+                if (packageName == "com.android.settings" && restrictSettingsFullyEnabled) {
                     // IMPORTANT: only keywords here that are truly GLOBAL screen titles -
                     // ones that never appear on an arbitrary other app's own App Info /
                     // permission page. Anything that shows up on EVERY app's info page
@@ -939,7 +955,24 @@ class FocusAccessibilityService : AccessibilityService() {
      * Settings root, so a repeat attempt has to re-navigate the whole path
      * again instead of just tapping back in.
      */
+    // Guards bounceBackFromSettingsBypass against re-firing while a bounce it just
+    // triggered is still in flight. Settings' content-changed events are
+    // deliberately left un-throttled (see the throttle comment above) so blocking
+    // reacts instantly - but that also means a bypass screen that stays visible for
+    // even 2-3 rapid content-changed events (a list re-render, a ripple/focus
+    // animation, anything) would call this repeatedly before the first double-back
+    // has actually navigated away, stacking up extra GLOBAL_ACTION_BACK calls and
+    // shoving the user further back than intended - sometimes out of Settings
+    // entirely. One bounce (its own two backs, ~60ms apart) is enough; ignore any
+    // further trigger for a short cooldown after starting one.
+    private var lastBounceBackTime = 0L
+    private val BOUNCE_BACK_COOLDOWN_MS = 800L
+
     private fun bounceBackFromSettingsBypass(packageName: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastBounceBackTime < BOUNCE_BACK_COOLDOWN_MS) return
+        lastBounceBackTime = now
+
         val repository = (application as FocusApplication).repository
         serviceScope.launch {
             try {
