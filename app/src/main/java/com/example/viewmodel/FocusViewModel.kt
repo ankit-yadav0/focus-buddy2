@@ -6,6 +6,7 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
 import androidx.core.graphics.drawable.toBitmap
+import kotlin.math.roundToInt
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -100,6 +101,17 @@ class FocusViewModel(
     private val repository: FocusRepository,
     private val context: Context
 ) : ViewModel() {
+
+    // Launcher icons are only ever displayed at 36dp (drawer/home grid) or 28dp
+    // (pinned row). Decoding every installed app's icon at its full intrinsic
+    // adaptive-icon resolution (often 300px+ per icon on modern densities) and
+    // keeping all of them resident as ARGB_8888 Bitmaps was the actual cause of
+    // the launcher lag on 2GB RAM devices - with 100-300 apps installed that's
+    // tens of MB of icon bitmaps alone, plus GC churn every time the list reloads.
+    // Decoding directly at display size cuts per-icon memory by roughly 10-20x.
+    private val launcherIconPx: Int by lazy {
+        (48f * context.resources.displayMetrics.density).roundToInt().coerceAtLeast(1)
+    }
 
     val youtubeBlockShorts = MutableStateFlow(false)
     val instagramBlockReels = MutableStateFlow(false)
@@ -855,7 +867,7 @@ class FocusViewModel(
                         val packageName = info.activityInfo.packageName
                         val appName = info.loadLabel(pm).toString()
                         val icon = try {
-                            info.loadIcon(pm).toBitmap()
+                            info.loadIcon(pm).toBitmap(width = launcherIconPx, height = launcherIconPx)
                         } catch (e: Exception) {
                             null
                         }
@@ -928,7 +940,7 @@ class FocusViewModel(
                                 val appInfo = pm.getApplicationInfo(stat.packageName, 0)
                                 val appName = pm.getApplicationLabel(appInfo).toString()
                                 val icon = try {
-                                    pm.getApplicationIcon(stat.packageName).toBitmap()
+                                    pm.getApplicationIcon(stat.packageName).toBitmap(width = launcherIconPx, height = launcherIconPx)
                                 } catch (e: Exception) {
                                     null
                                 }

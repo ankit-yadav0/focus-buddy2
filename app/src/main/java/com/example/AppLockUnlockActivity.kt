@@ -31,6 +31,17 @@ import kotlinx.coroutines.launch
 
 class AppLockUnlockActivity : ComponentActivity() {
 
+    // Held in mutableStateOf (not local vals) because this activity is
+    // launchMode="singleTask": if it's still alive in the background (e.g. the
+    // user pressed the physical Home button instead of the in-screen Cancel)
+    // and a DIFFERENT locked app is opened next, Android reuses this same
+    // instance via onNewIntent() instead of a fresh onCreate(). Without this,
+    // the screen kept showing the PIN prompt for the first app and, on a
+    // correct PIN, unlocked that stale package instead of the one the user
+    // actually just opened.
+    private var lockedPackageState by mutableStateOf("")
+    private var appLabelState by mutableStateOf("")
+
     override fun onResume() {
         super.onResume()
         FocusAccessibilityService.instance?.dismissInstantOverlay()
@@ -45,6 +56,28 @@ class AppLockUnlockActivity : ComponentActivity() {
         finish()
     }
 
+    private fun resolveAppLabel(lockedPackage: String): String {
+        val pm = packageManager
+        return try {
+            val appInfo = pm.getApplicationInfo(lockedPackage, 0)
+            pm.getApplicationLabel(appInfo).toString()
+        } catch (e: Exception) {
+            lockedPackage.substringAfterLast(".")
+        }
+    }
+
+    private fun applyIntent(newIntent: Intent) {
+        val lockedPackage = newIntent.getStringExtra("LOCKED_PACKAGE") ?: ""
+        lockedPackageState = lockedPackage
+        appLabelState = resolveAppLabel(lockedPackage)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyIntent(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
@@ -57,14 +90,7 @@ class AppLockUnlockActivity : ComponentActivity() {
             goHomeAndFinish()
         }
 
-        val lockedPackage = intent.getStringExtra("LOCKED_PACKAGE") ?: ""
-        val pm = packageManager
-        val appLabel = try {
-            val appInfo = pm.getApplicationInfo(lockedPackage, 0)
-            pm.getApplicationLabel(appInfo).toString()
-        } catch (e: Exception) {
-            lockedPackage.substringAfterLast(".")
-        }
+        applyIntent(intent)
 
         setContent {
             MyApplicationTheme(darkTheme = true) {
@@ -76,7 +102,7 @@ class AppLockUnlockActivity : ComponentActivity() {
                     val scope = rememberCoroutineScope()
 
                     PinUnlockScreen(
-                        appName = appLabel,
+                        appName = appLabelState,
                         onCancel = { goHomeAndFinish() },
                         onVerifyPin = { pin, onResult ->
                             scope.launch {
@@ -85,7 +111,7 @@ class AppLockUnlockActivity : ComponentActivity() {
                                     stored != null && stored == sha256(pin)
                                 }
                                 if (correct) {
-                                    FocusAccessibilityService.instance?.grantAppUnlock(lockedPackage)
+                                    FocusAccessibilityService.instance?.grantAppUnlock(lockedPackageState)
                                     finish()
                                 } else {
                                     onResult(false)
@@ -110,8 +136,11 @@ fun PinUnlockScreen(
     onCancel: () -> Unit,
     onVerifyPin: (pin: String, onResult: (Boolean) -> Unit) -> Unit
 ) {
-    var pin by remember { mutableStateOf("") }
-    var showError by remember { mutableStateOf(false) }
+    // Keyed on appName: if onNewIntent() swaps the target app while this screen
+    // is still alive (singleTask reuse), any digits typed for the previous app
+    // must not carry over.
+    var pin by remember(appName) { mutableStateOf("") }
+    var showError by remember(appName) { mutableStateOf(false) }
 
     fun onDigit(d: String) {
         if (pin.length < 6) {

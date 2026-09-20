@@ -2,6 +2,9 @@ package com.example.ui.screens
 
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -77,6 +80,32 @@ private fun launchApp(context: Context, packageName: String) {
     val intent = context.packageManager.getLaunchIntentForPackage(packageName)
     if (intent != null) {
         context.startActivity(intent)
+    }
+}
+
+/** Opens the system "App info" screen for [packageName] - same screen Settings > Apps shows. */
+private fun openAppInfo(context: Context, packageName: String) {
+    try {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        // No-op: nothing sensible to fall back to if App Info genuinely isn't reachable.
+    }
+}
+
+/** Fires the system uninstall confirmation for [packageName], same as any other launcher. */
+private fun uninstallApp(context: Context, packageName: String) {
+    try {
+        val intent = Intent(Intent.ACTION_DELETE).apply {
+            data = Uri.fromParts("package", packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        // No-op: e.g. a protected system package that can't be uninstalled at all.
     }
 }
 
@@ -404,7 +433,8 @@ fun LauncherHomeScreen(
                                     viewModel.recordRecentApp(app.packageName)
                                     launchApp(context, app.packageName)
                                 },
-                                onLongClick = { viewModel.toggleStudyApp(app.packageName) }
+                                onTogglePin = { viewModel.toggleStudyApp(app.packageName) },
+                                isPinned = app.packageName in studyAppPackages
                             )
                             if (app.packageName in lockedAppPackages) {
                                 LockBadge(modifier = Modifier.align(Alignment.TopStart))
@@ -473,7 +503,8 @@ fun LauncherHomeScreen(
                                     viewModel.recordRecentApp(app.packageName)
                                     launchApp(context, app.packageName)
                                 },
-                                onLongClick = { viewModel.toggleStudyApp(app.packageName) },
+                                onTogglePin = { viewModel.toggleStudyApp(app.packageName) },
+                                isPinned = true,
                                 quotaFraction = quotaFraction
                             )
                             if (app.packageName in lockedAppPackages) {
@@ -716,9 +747,13 @@ private fun LauncherStatCard(
 private fun LauncherAppIcon(
     app: LauncherAppInfo,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    onTogglePin: () -> Unit,
+    isPinned: Boolean = false,
     quotaFraction: Float? = null
 ) {
+    val context = LocalContext.current
+    var showMenu by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -726,7 +761,7 @@ private fun LauncherAppIcon(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
-                onLongClick = onLongClick
+                onLongClick = { showMenu = true }
             ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -786,6 +821,30 @@ private fun LauncherAppIcon(
             maxLines = 1,
             textAlign = TextAlign.Center
         )
+
+        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+            DropdownMenuItem(
+                text = { Text(if (isPinned) "Unpin from Study Apps" else "Pin as Study App") },
+                onClick = {
+                    showMenu = false
+                    onTogglePin()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("App info") },
+                onClick = {
+                    showMenu = false
+                    openAppInfo(context, app.packageName)
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Uninstall") },
+                onClick = {
+                    showMenu = false
+                    uninstallApp(context, app.packageName)
+                }
+            )
+        }
     }
 }
 
@@ -880,7 +939,8 @@ fun AppDrawerScreen(
                                 viewModel.recordRecentApp(app.packageName)
                                 launchApp(context, app.packageName)
                             },
-                            onLongClick = { viewModel.toggleStudyApp(app.packageName) }
+                            onTogglePin = { viewModel.toggleStudyApp(app.packageName) },
+                            isPinned = isPinned
                         )
                         if (isPinned) {
                             Box(

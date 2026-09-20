@@ -436,25 +436,40 @@ class FocusAccessibilityService : AccessibilityService() {
                         bounceBackFromSettingsBypass(packageName)
                         return
                     }
-                    val bypassKeywords = listOf(
+                    // These two lists exist because per-app screens (App Info: Uninstall,
+                    // Force stop, Clear storage/data/cache, Battery optimization) show the
+                    // same generic text for EVERY app, not just Focuss Buddy. The check above
+                    // already catches Focuss Buddy's own App Info via its app name; without
+                    // splitting these out, this keyword match fired on any app's App Info
+                    // screen and silently bounced the user out of it - "App info"/"Uninstall"
+                    // from the launcher's long-press menu appeared to do nothing for ANY app.
+                    // Only screens with no per-app identity (the Accessibility services list,
+                    // the Device admin apps list, Special app access, the system Reset screen,
+                    // etc.) are safe to bounce unconditionally.
+                    val globalBypassKeywords = listOf(
                         "Reset", "Factory reset", "Erase all data",
-                        "Clear storage", "Clear data", "Clear cache", "Storage & cache",
-                        "Force stop", "Uninstall",
-                        "Apps & notifications",
                         "Accessibility", "Device admin apps", "Deactivate this device admin app",
                         "Special app access", "Display over other apps",
-                        "Modify system settings", "Usage access", "Battery optimization"
+                        "Modify system settings", "Usage access"
                     )
-                    val containsBypass = screenTexts.any { text ->
-                        bypassKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
+                    val perAppBypassKeywords = listOf(
+                        "Clear storage", "Clear data", "Clear cache", "Storage & cache",
+                        "Force stop", "Uninstall", "Battery optimization"
+                    )
+                    val isFocussBuddyScreen = screenTexts.any { it.contains(appName, ignoreCase = true) }
+                    val containsGlobalBypass = screenTexts.any { text ->
+                        globalBypassKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
                     }
-                    if (containsBypass) {
+                    val containsPerAppBypass = isFocussBuddyScreen && screenTexts.any { text ->
+                        perAppBypassKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
+                    }
+                    if (containsGlobalBypass || containsPerAppBypass) {
                         Log.d("FocusService", "Strict Mode: Bouncing back from settings bypass screen in $packageName")
                         bounceBackFromSettingsBypass(packageName)
                         return
                     }
-                    // Anything else (WiFi, Bluetooth, Display, etc.) - no action, the screen
-                    // just stays open and usable.
+                    // Anything else (WiFi, Bluetooth, Display, another app's App Info, etc.)
+                    // - no action, the screen just stays open and usable.
                 }
             }
 
@@ -980,7 +995,7 @@ class FocusAccessibilityService : AccessibilityService() {
      */
     private fun triggerAppLockPrompt(packageName: String) {
         if (Settings.canDrawOverlays(this)) {
-            showOverlay(packageName)
+            showOverlay(packageName, message = "App Locked")
         } else {
             triggerOverlayPermissionRequest()
         }
@@ -1222,7 +1237,7 @@ class FocusAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun showOverlay(packageName: String) {
+    private fun showOverlay(packageName: String, message: String = "App Blocked!") {
         // Runs synchronously (no Handler.post) - we're already on the main thread
         // here (onAccessibilityEvent always dispatches on it), and posting only
         // pushed the overlay's actual appearance later in the message queue,
@@ -1230,7 +1245,7 @@ class FocusAccessibilityService : AccessibilityService() {
         try {
             if (overlayView == null) {
                 val textView = TextView(this).apply {
-                    text = "App Blocked!"
+                    text = message
                     textSize = 24f
                     setTextColor(Color.WHITE)
                     gravity = Gravity.CENTER
@@ -1270,6 +1285,7 @@ class FocusAccessibilityService : AccessibilityService() {
                 }, OVERLAY_SAFETY_TIMEOUT_MS)
             } else {
                 currentBlockedPackage = packageName
+                (overlayView as? TextView)?.text = message
             }
         } catch (e: Exception) {
             Log.e("FocusService", "Error adding overlay view", e)
