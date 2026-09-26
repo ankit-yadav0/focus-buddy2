@@ -10,8 +10,8 @@ package com.example.service
  *    accessibility-service toggle page, App Info, Storage, Notifications, Permissions,
  *    Battery/background-restriction, the Device Admin detail page) - or a follow-on
  *    confirmation dialog for one of those - where a bypass can actually happen, or
- *  - PROTECTED_DEVICE_WIDE for the one class of screen that threatens enforcement
- *    without ever naming any app (factory reset), or
+ *  - PROTECTED_DEVICE_WIDE for the class of screens that threaten enforcement without
+ *    ever naming any app (factory reset, "Reset app preferences"), or
  *  - SAFE, meaning there is no reason to believe this screen can defeat enforcement.
  *
  * Deliberately window/class-agnostic: Settings' underlying Activity/Fragment class
@@ -55,9 +55,12 @@ object SettingsScreenClassifier {
     )
 
     // Threatens the whole device regardless of app identity, so no app-identity match
-    // is required before treating this as protected.
+    // is required before treating this as protected. "Reset app preferences" undoes
+    // things like battery-optimization exemptions and re-enables disabled apps/services
+    // device-wide - it doesn't need to name Focuss Buddy to defeat enforcement.
     private val DEVICE_WIDE_KEYWORDS = listOf(
-        "Erase all data", "Factory data reset", "Erase all data (factory reset)"
+        "Erase all data", "Factory data reset", "Erase all data (factory reset)",
+        "Reset app preferences"
     )
 
     /**
@@ -68,7 +71,7 @@ object SettingsScreenClassifier {
      */
     fun classify(screenTexts: List<String>, checkableNodeCount: Int): Result {
         if (screenTexts.any { text -> DEVICE_WIDE_KEYWORDS.any { text.contains(it, ignoreCase = true) } }) {
-            return Result(ScreenKind.PROTECTED_DEVICE_WIDE, "device-wide destructive screen (factory reset)")
+            return Result(ScreenKind.PROTECTED_DEVICE_WIDE, "device-wide destructive screen (factory reset / reset app preferences)")
         }
 
         val mentionsUs = screenTexts.any { text -> IDENTITY_STRINGS.any { text.contains(it, ignoreCase = true) } }
@@ -78,11 +81,31 @@ object SettingsScreenClassifier {
 
         val detailHits = screenTexts.count { text -> APP_DETAIL_KEYWORDS.any { text.contains(it, ignoreCase = true) } }
 
-        // A LIST screen shows several OTHER short, capitalized, name-like rows alongside
-        // ours (other apps/services). We can't enumerate every app/service name on the
-        // device, but we can recognise the *shape* of a list: multiple short,
-        // capitalized text nodes that are neither our identity string nor one of the
-        // detail-only keywords above.
+        // A detail-only keyword is decisive on its own: Android never renders "Uninstall",
+        // "Force stop", "Use Focuss Buddy", "Deactivate this device admin app", etc. as row
+        // text on a screen that lists many apps/services side by side - only on that one
+        // app's own detail/config page. A single checkable control alongside our identity
+        // is the same kind of decisive signal for a one-app toggle page (the accessibility
+        // service page, notification access, etc.) that has no other keyword to match.
+        // Neither of these needs, or should be overruled by, the list-shape check below -
+        // that check exists only for the leftover case where identity text is present but
+        // nothing else tells us anything (previously, giving it veto power over a real
+        // keyword match was itself a bug: a detail page's own description text - bullet
+        // points like "View screen content", "Perform actions" - reads as several short
+        // capitalized "sibling rows" and was wrongly vetoing the real Accessibility
+        // service toggle page, letting the service be disabled with Strict Mode on).
+        if (detailHits > 0) {
+            return Result(ScreenKind.PROTECTED_APP_DETAIL, "app-identity + $detailHits detail-only keyword(s)")
+        }
+        if (checkableNodeCount == 1) {
+            return Result(ScreenKind.PROTECTED_APP_DETAIL, "app-identity + a single toggle control")
+        }
+
+        // Neither signal fired - fall back to list-shape purely to decide between LIST and
+        // SAFE for the ambiguous leftover case (e.g. our name in a Settings search
+        // suggestion). A LIST screen shows several OTHER short, capitalized, name-like
+        // rows alongside ours (other apps/services); we can't enumerate every app/service
+        // name on the device, but we can recognise that shape.
         val siblingRowCount = screenTexts.count { raw ->
             val t = raw.trim()
             t.length in 2..40 &&
@@ -90,23 +113,10 @@ object SettingsScreenClassifier {
                 IDENTITY_STRINGS.none { t.contains(it, ignoreCase = true) } &&
                 APP_DETAIL_KEYWORDS.none { t.contains(it, ignoreCase = true) }
         }
-        val looksLikeList = siblingRowCount >= 3
-
-        return when {
-            looksLikeList ->
-                // Fail-safe: even if a detail keyword also matched somewhere (e.g. the
-                // word "Permissions" as a category row on an unrelated list), a
-                // list-shaped screen is never treated as the protected detail page.
-                Result(ScreenKind.LIST, "app-identity present but screen looks list-shaped ($siblingRowCount sibling rows)")
-
-            detailHits > 0 ->
-                Result(ScreenKind.PROTECTED_APP_DETAIL, "app-identity + $detailHits detail-only keyword(s), not list-shaped")
-
-            checkableNodeCount == 1 ->
-                Result(ScreenKind.PROTECTED_APP_DETAIL, "app-identity + a single toggle control, not list-shaped")
-
-            else ->
-                Result(ScreenKind.SAFE, "app-identity present but inconclusive - failing safe")
+        return if (siblingRowCount >= 3) {
+            Result(ScreenKind.LIST, "app-identity present but screen looks list-shaped ($siblingRowCount sibling rows), no detail signal")
+        } else {
+            Result(ScreenKind.SAFE, "app-identity present but inconclusive - failing safe")
         }
     }
 }
