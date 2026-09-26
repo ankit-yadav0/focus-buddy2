@@ -44,8 +44,9 @@ data class UpdateInfo(
  */
 object UpdateManager {
 
-    // GitHub repo the CI workflow (.github/workflows/main2.yml) publishes releases to.
-    private const val GITHUB_REPO = "ankit-yadav0/focus-buddy2"
+    // Set this to your GitHub repo as "owner/repo", e.g. "ankit123/focus-buddy2".
+    // Update checks are a no-op until this is filled in.
+    private const val GITHUB_REPO = "YOUR_GITHUB_USERNAME/YOUR_REPO_NAME"
 
     private const val PREFS_NAME = "focuss_buddy_settings"
     private const val KEY_LAST_CHECK = "update_last_check_time"

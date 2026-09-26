@@ -14,10 +14,8 @@ class FocusRepository(
     private val reflectionNoteDao: ReflectionNoteDao,
     private val testEntryDao: TestEntryDao,
     private val pyqQuestionDao: PyqQuestionDao,
-    private val pyqQuizAttemptDao: PyqQuizAttemptDao,
-    private val lockedAppDao: LockedAppDao
+    private val pyqQuizAttemptDao: PyqQuizAttemptDao
 ) {
-    val allLockedApps: Flow<List<LockedApp>> = lockedAppDao.getAllLockedApps()
     val allTests: Flow<List<TestEntry>> = testEntryDao.getAllTests()
     suspend fun getNextTest(): TestEntry? = testEntryDao.getNextTest(System.currentTimeMillis())
     suspend fun importTests(tests: List<TestEntry>) = testEntryDao.insertAll(tests)
@@ -301,21 +299,4 @@ class FocusRepository(
         pyqQuizAttemptDao.getAnswersForAttempt(attemptId)
     val allPyqAttempts: Flow<List<PyqQuizAttempt>> = pyqQuizAttemptDao.getAllCompletedAttempts()
     suspend fun getAllPyqAnswersEverRecorded(): List<PyqQuizAnswer> = pyqQuizAttemptDao.getAllAnswers()
-
-    // App Lock (PIN-gated apps) operations
-    suspend fun getLockedAppsList(): List<LockedApp> {
-        return lockedAppDao.getLockedAppsList()
-    }
-
-    suspend fun addLockedApp(app: LockedApp) {
-        lockedAppDao.insertApp(app)
-    }
-
-    suspend fun removeLockedApp(packageName: String) {
-        lockedAppDao.deleteApp(packageName)
-    }
-
-    suspend fun isAppLocked(packageName: String): Boolean {
-        return lockedAppDao.isAppLocked(packageName)
-    }
 }

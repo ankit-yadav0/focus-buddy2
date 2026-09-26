@@ -62,11 +62,6 @@ class FocusAccessibilityService : AccessibilityService() {
         // Safety-net cap on how long the instant-block overlay can stay up if
         // BlockActivity never calls dismissInstantOverlay() (e.g. it fails to launch).
         private const val OVERLAY_SAFETY_TIMEOUT_MS = 4_000L
-
-        // How long to stop re-classifying Settings screens after a bounce-back fires.
-        // Long enough to cover both GLOBAL_ACTION_BACK transitions and their animations,
-        // short enough that a genuine re-attempt right after is still caught promptly.
-        private const val SETTINGS_BOUNCE_DEBOUNCE_MS = 1_200L
     }
 
     private val serviceJob = SupervisorJob()
@@ -81,13 +76,6 @@ class FocusAccessibilityService : AccessibilityService() {
     private var activeWebsitesList = listOf<WebsiteBlock>()
     private var lastContentChangedProcessTime = 0L
 
-    // App Lock (PIN-gated apps): packages the user chose to lock, and which one (if
-    // any) has already had its PIN entered for the current foreground visit. The
-    // grant is cleared the moment the foreground package changes to anything else,
-    // so re-opening a locked app always asks for the PIN again.
-    private var lockedPackages = setOf<String>()
-    private var unlockedPackage: String? = null
-
     // Daily time-quota tracking: while a quota-mode long-term-blocked app is in the
     // foreground, we track how long it's been open and periodically add that to its
     // persisted usedSecondsToday, so quota enforcement works both across app
@@ -96,6 +84,7 @@ class FocusAccessibilityService : AccessibilityService() {
     private var quotaTrackingPackage: String? = null
     private var quotaTrackingStartMs: Long = 0L
     private var quotaTickerJob: kotlinx.coroutines.Job? = null
+    private var quotaHeartbeatJob: kotlinx.coroutines.Job? = null
 
     /**
      * Guards the read-modify-write in persistQuotaProgress() below. Without this, the
@@ -112,22 +101,33 @@ class FocusAccessibilityService : AccessibilityService() {
      * works from a fresh, consistent value.
      */
     private val quotaPersistMutex = Mutex()
-    private var quotaHeartbeatJob: kotlinx.coroutines.Job? = null
 
     private var overlayView: View? = null
     private val windowManager: WindowManager by lazy { getSystemService(android.content.Context.WINDOW_SERVICE) as WindowManager }
     private var currentBlockedPackage: String? = null
     private var lastPermissionRequestTime = 0L
 
-    // Debounce window after a Settings bounce-back. The two GLOBAL_ACTION_BACK calls in
-    // bounceBackFromSettingsBypass() take a moment to actually land, and Settings keeps
-    // emitting TYPE_WINDOW_CONTENT_CHANGED for every intermediate transition frame in the
-    // meantime. Without suppressing classification during that window, a single bounce
-    // could be re-triggered several times over (or, worse, mis-classify a half-rendered
-    // transition frame) before the user actually reaches a safe screen. This is also what
-    // resets the navigation state after a bounce: once the debounce elapses, the next
-    // screen is classified completely fresh, with no memory of what came before.
-    private var settingsBounceSuppressUntil = 0L
+    // Debounce state for the Strict-Mode Settings instant gate. On a 2GB Go
+    // device the very first node-tree read after the gate fires can catch the
+    // destination screen (e.g. the accessibility-service toggle) mid-render,
+    // before its title/description text has painted - that used to read as
+    // "no bypass keyword found" and release the overlay while the real toggle
+    // was still a frame or two from being fully there, which is exactly the
+    // window a fast, repeated tap could land in. We now require two
+    // consecutive harmless reads AND a minimum elapsed time since the gate
+    // fired before trusting a "harmless" verdict enough to release it.
+    private var settingsHarmlessStreak = 0
+    private var settingsGateShownAtMs = 0L
+    private val SETTINGS_RELEASE_MIN_ELAPSED_MS = 200L
+    private val SETTINGS_RELEASE_MIN_STREAK = 2
+
+    // GLOBAL_ACTION_BACK from bounceBackFromSettingsBypass() itself generates new
+    // accessibility events as the screen transitions - without this debounce those
+    // events could re-enter the same classification logic before the back navigation
+    // has actually settled, and re-trigger another bounce (a loop). 1.2s is comfortably
+    // longer than any real back-navigation transition on this device class.
+    private var lastSettingsBounceAtMs = 0L
+    private val SETTINGS_BOUNCE_DEBOUNCE_MS = 1200L
 
     override fun onCreate() {
         super.onCreate()
@@ -159,14 +159,6 @@ class FocusAccessibilityService : AccessibilityService() {
                 repository.allBlockedApps.collectLatest { apps ->
                     blockedPackages = apps.map { it.packageName }.toSet()
                     Log.d("FocusService", "Blocked apps updated: count=${blockedPackages.size}")
-                }
-            }
-
-            // Observe PIN-locked apps
-            serviceScope.launch {
-                repository.allLockedApps.collectLatest { apps ->
-                    lockedPackages = apps.map { it.packageName }.toSet()
-                    Log.d("FocusService", "Locked apps updated: count=${lockedPackages.size}")
                 }
             }
 
@@ -273,43 +265,31 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * True for windows that pop over the current app without the user actually
-     * switching away from it - soft keyboard, runtime permission dialogs, the
-     * notification shade / quick settings, share sheets. Used to keep App Lock's
-     * unlock grant alive through normal in-app activity (typing, calls, etc.)
-     * instead of revoking it on every transient system window.
-     */
-    private fun isTransientSystemPackage(packageName: String): Boolean {
-        if (packageName == "com.android.systemui") return true
-        if (packageName == "android") return true
-        if (packageName == "com.android.permissioncontroller" ||
-            packageName == "com.google.android.permissioncontroller"
-        ) return true
-        // In-call / telecom UI: OEMs each ship this under a different package
-        // (com.android.dialer, com.android.incallui, com.coloros.dialer,
-        // com.realme.dialer, com.android.server.telecom, and more). A voice/video
-        // call started from a locked app (WhatsApp, Messenger, etc.) can briefly
-        // foreground whichever one this device uses, without the user having
-        // actually left the locked app - so match generically instead of trying
-        // to enumerate every OEM's exact package name.
-        val lower = packageName.lowercase()
-        if (lower.contains("dialer") || lower.contains("telecom") || lower.contains("incallui")) return true
-        val currentImePackage = try {
-            Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-                ?.substringBefore("/")
-        } catch (e: Exception) {
-            null
-        }
-        return packageName == currentImePackage
-    }
-
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val eventType = event.eventType
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && 
             eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
 
         val packageName = event.packageName?.toString() ?: return
+
+        // Instant Strict-Mode Settings gate: cover the screen the moment a Settings
+        // window appears, BEFORE the node-tree walk + keyword check further below
+        // runs. That walk is real work (allocations, IPC, tree traversal) and on a
+        // 2GB Go device it can occasionally take long enough under GC pressure for
+        // the destination screen (already showing the accessibility/device-admin
+        // toggle) to stay touchable and tappable during the delay - an exploitable
+        // race window. We self-correct within this same event further down if the
+        // screen turns out to be a harmless one (WiFi, Bluetooth, Display, etc.).
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            packageName == "com.android.settings" &&
+            overlayView == null &&
+            isSessionActive && System.currentTimeMillis() < sessionEndTime && isSessionStrict &&
+            Settings.canDrawOverlays(this)
+        ) {
+            showOverlay(packageName)
+            settingsHarmlessStreak = 0
+            settingsGateShownAtMs = System.currentTimeMillis()
+        }
 
         // Only tear the overlay down once OUR OWN app (BlockActivity, or MainActivity
         // for the uninstall-friction redirect) is actually the foreground package -
@@ -345,26 +325,6 @@ class FocusAccessibilityService : AccessibilityService() {
             quotaTrackingPackage != null && quotaTrackingPackage != packageName
         ) {
             stopQuotaTrackingAndPersist()
-        }
-
-        // A previously PIN-unlocked app is only "unlocked" for as long as it stays in
-        // the foreground. The moment focus moves to any other REAL app, drop the grant
-        // so re-entering it later asks for the PIN again.
-        //
-        // IMPORTANT: don't drop the grant just because SOME other package briefly
-        // reported a window-state-changed event. Transient system windows constantly
-        // pop over a locked app without the user ever actually leaving it - the soft
-        // keyboard when typing in a chat, a runtime permission dialog (mic/camera for
-        // a call), the notification shade, share sheets, the in-call UI overlay. Each
-        // of those has its own packageName, and treating them as "the user switched
-        // apps" was wiping the unlock on every keystroke/tab-switch/call inside the
-        // locked app itself, forcing the PIN again a moment later even though the user
-        // never left. Only a transition to a genuine other app should revoke it.
-        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            unlockedPackage != null && unlockedPackage != packageName &&
-            !isTransientSystemPackage(packageName)
-        ) {
-            unlockedPackage = null
         }
 
         val eventTypeStr = when (eventType) {
@@ -427,47 +387,62 @@ class FocusAccessibilityService : AccessibilityService() {
                     triggerBlockActivity(packageName, isLongTerm = false, reason = "App uninstallation is blocked in Strict Mode.", endDate = sessionEndTime)
                     return
                 }
-                // Selective Settings Rules - only active when the user has turned on the
-                // "Phone Settings" restriction in Focuss Buddy's own Strict Mode setup
-                // (restrictSettingsFullyEnabled / "strict_restrict_settings"). If that's off,
-                // Settings behaves completely normally in Strict Mode - no bounce, no block.
-                // When it's on, this never blocks Settings wholesale - WiFi/Bluetooth/mobile
-                // data/display/sound etc. always stay reachable - it only silently backs the
-                // user out (GLOBAL_ACTION_BACK, no overlay, no full "App Blocked" screen) the
-                // moment a screen that could defeat enforcement (uninstalling, disabling the
-                // accessibility service or device admin, revoking the overlay permission)
-                // shows up. Settings opens and stays visibly usable the whole time - the
-                // bounce only fires once a bypass-capable screen is actually identified.
-                if (packageName == "com.android.settings" && restrictSettingsFullyEnabled) {
-                    val nowMs = System.currentTimeMillis()
-                    if (nowMs >= settingsBounceSuppressUntil) {
-                        // Counted from the same node tree already fetched for this event
-                        // (nodeToUse) - no extra IPC round-trip, just a second lightweight
-                        // walk of it, and only for the rare Settings-package case.
-                        val checkableCount = countCheckableNodes(nodeToUse)
-                        val classification = SettingsScreenClassifier.classify(screenTexts, checkableCount)
+                // Selective Settings Rules - blocks/bounces screens that could be used to
+                // defeat enforcement (uninstalling, disabling the accessibility service or
+                // device admin, revoking the overlay permission), never a full Settings
+                // block, so WiFi/Bluetooth/mobile data/display/sound etc. always stay
+                // reachable. Uses SettingsScreenClassifier to tell an actual per-app detail
+                // screen apart from a LIST screen that merely mentions our app's name as
+                // one row among many (e.g. the Accessibility services list) - see that
+                // file for why a flat "does the text appear anywhere" check isn't enough.
+                if (packageName == "com.android.settings") {
+                    val extraDeviceWideKeywords = if (restrictSettingsFullyEnabled) {
+                        // Wizard's "Phone Settings" restriction adds a couple of broader
+                        // screens on top, without blocking Settings wholesale.
+                        listOf("Modify system settings", "Usage access", "Battery optimization")
+                    } else {
+                        emptyList()
+                    }
+                    val classification = SettingsScreenClassifier.classify(nodeToUse, appName, extraDeviceWideKeywords)
 
-                        Log.d(
-                            "FocusService",
-                            "Settings screen: kind=${classification.kind} reason=\"${classification.reason}\" " +
-                                "checkableNodes=$checkableCount textSample=${screenTexts.take(6)}"
-                        )
-
-                        val isProtected = classification.kind == SettingsScreenClassifier.ScreenKind.PROTECTED_APP_DETAIL ||
-                            classification.kind == SettingsScreenClassifier.ScreenKind.PROTECTED_DEVICE_WIDE
-
-                        if (isProtected) {
-                            Log.d("FocusService", "Strict Mode: Bouncing back - ${classification.reason}")
-                            settingsBounceSuppressUntil = nowMs + SETTINGS_BOUNCE_DEBOUNCE_MS
-                            bounceBackFromSettingsBypass(packageName)
+                    when (classification) {
+                        SettingsScreenClassifier.ScreenType.PROTECTED_APP_DETAIL -> {
+                            if (now - lastSettingsBounceAtMs >= SETTINGS_BOUNCE_DEBOUNCE_MS) {
+                                Log.d("FocusService", "Strict Mode: Bouncing back from our own app's Settings detail screen")
+                                lastSettingsBounceAtMs = now
+                                settingsHarmlessStreak = 0
+                                settingsGateShownAtMs = now
+                                bounceBackFromSettingsBypass(packageName)
+                            }
                             return
                         }
-                        // LIST or SAFE - Focuss Buddy may be visible as a row/mention here,
-                        // but nothing can be disabled/uninstalled/cleared from this screen
-                        // directly, so it stays open and usable.
+                        SettingsScreenClassifier.ScreenType.PROTECTED_DEVICE_WIDE -> {
+                            Log.d("FocusService", "Strict Mode: Blocking settings bypass action in $packageName")
+                            settingsHarmlessStreak = 0
+                            settingsGateShownAtMs = now
+                            triggerBlockActivity(packageName, isLongTerm = false, reason = "Settings bypass action is blocked in Strict Mode.", endDate = sessionEndTime)
+                            return
+                        }
+                        SettingsScreenClassifier.ScreenType.LIST, SettingsScreenClassifier.ScreenType.SAFE -> {
+                            // Nothing actionable yet (a list the user hasn't drilled into,
+                            // or a genuinely harmless screen like WiFi/Bluetooth/Display) -
+                            // release the instant gate shown above before this tree walk
+                            // finished, rather than leaving the user stuck behind it.
+                            // Debounced: require two consecutive harmless reads AND a
+                            // minimum elapsed time since the gate fired, so a screen that's
+                            // still mid-render on the first read can't pass as "harmless"
+                            // and release the overlay while it's still tappable.
+                            if (overlayView != null && currentBlockedPackage == packageName) {
+                                settingsHarmlessStreak++
+                                val elapsedMs = now - settingsGateShownAtMs
+                                if (settingsHarmlessStreak >= SETTINGS_RELEASE_MIN_STREAK &&
+                                    elapsedMs >= SETTINGS_RELEASE_MIN_ELAPSED_MS
+                                ) {
+                                    removeOverlay()
+                                }
+                            }
+                        }
                     }
-                    // Within the debounce window right after a bounce - let the back-stack
-                    // transition settle without re-classifying every intermediate frame.
                 }
             }
 
@@ -563,15 +538,6 @@ class FocusAccessibilityService : AccessibilityService() {
                             startQuotaTracking(activeLongTermAppBlock)
                         }
                     }
-                }
-
-                // Check for App Lock (PIN-gated apps) - only relevant for an app that
-                // wasn't already handled by a hard block above, and only if it hasn't
-                // already had its PIN entered for this foreground visit.
-                if (lockedPackages.contains(packageName) && unlockedPackage != packageName) {
-                    Log.d("FocusService", "Prompting for PIN - locked app opened: $packageName")
-                    triggerAppLockPrompt(packageName)
-                    return
                 }
             }
 
@@ -902,13 +868,22 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Silent, lightweight response used for every Strict-Mode Settings bypass detection
-     * (our own app's accessibility/app-info/device-admin toggle, or a generic bypass
-     * screen like Accessibility's list, Uninstall, Force stop, etc.). No overlay, no
-     * full-screen BlockActivity, no GLOBAL_ACTION_HOME - Settings stays open and visibly
-     * usable the whole session; this just dispatches GLOBAL_ACTION_BACK to pop the
-     * offending screen off Settings' own back stack; the user lands back on the previous
-     * screen and stays inside Settings.
+     * Silent, lightweight response used ONLY when the user has navigated straight to
+     * Focuss Buddy's own accessibility/app-info/device-admin toggle screen (i.e. is
+     * literally looking at the toggle that would disable enforcement). Unlike
+     * triggerBlockActivity(), this does NOT launch the full-screen BlockActivity and
+     * does NOT dispatch GLOBAL_ACTION_HOME - it just dispatches GLOBAL_ACTION_BACK to
+     * pop that one screen off Settings' back stack, so the user lands back on the
+     * previous screen (e.g. the Accessibility services list) and stays inside
+     * Settings, instead of being kicked out with a full "App Blocked" screen.
+     *
+     * The overlay drawn by the instant Settings gate is removed right away rather
+     * than left up: GLOBAL_ACTION_BACK is a single fast system call (no Activity
+     * launch, no WindowManager churn), so by the time this runs the offending screen
+     * is already being torn down - there's no meaningful window left for the overlay
+     * to protect. Generic bypass actions (Reset, Uninstall, Force stop, etc. - see
+     * bypassKeywords below) intentionally keep going through triggerBlockActivity()
+     * instead: those are more consequential and still get the full friction screen.
      *
      * Dispatches BACK twice, not once: a single back only pops the offending
      * toggle screen and lands on its immediate parent (e.g. the Accessibility
@@ -982,32 +957,6 @@ class FocusAccessibilityService : AccessibilityService() {
             putExtra("END_TIME", endDate)
         }
         startActivity(intent)
-    }
-
-    /**
-     * Shows the PIN-entry screen over a locked app. Unlike triggerBlockActivity(),
-     * this deliberately does NOT use FLAG_ACTIVITY_CLEAR_TASK: the locked app's own
-     * task is left completely intact underneath, so once the correct PIN is entered
-     * AppLockUnlockActivity just finishes and the locked app reappears exactly as the
-     * user left it, instead of being relaunched from scratch.
-     */
-    private fun triggerAppLockPrompt(packageName: String) {
-        if (Settings.canDrawOverlays(this)) {
-            showOverlay(packageName, message = "App Locked")
-        } else {
-            triggerOverlayPermissionRequest()
-        }
-
-        val intent = Intent(this, com.example.AppLockUnlockActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            putExtra("LOCKED_PACKAGE", packageName)
-        }
-        startActivity(intent)
-    }
-
-    /** Called by AppLockUnlockActivity once the correct PIN has been entered. */
-    fun grantAppUnlock(packageName: String) {
-        unlockedPackage = packageName
     }
 
     private fun extractHost(urlText: String): String {
@@ -1172,24 +1121,6 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Counts checkable (Switch/CheckBox-style) controls in the current node tree. Used
-     * only for the rare Settings-package classification path in
-     * [SettingsScreenClassifier] - a single checkable control alongside our app's name is
-     * a strong signal for a single-app toggle/detail page, as opposed to a list of many
-     * apps/services.
-     */
-    private fun countCheckableNodes(node: AccessibilityNodeInfo?, depth: Int = 0): Int {
-        if (node == null || depth > 50) return 0
-        var count = if (node.isCheckable) 1 else 0
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            count += countCheckableNodes(child, depth + 1)
-            child.recycle()
-        }
-        return count
-    }
-
     /** Verbose indented tree dump used only for YouTube debug logging. */
     private fun buildNodeTreeDump(node: AccessibilityNodeInfo?, builder: StringBuilder, depth: Int) {
         if (node == null || depth > 50) return
@@ -1253,7 +1184,7 @@ class FocusAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun showOverlay(packageName: String, message: String = "App Blocked!") {
+    private fun showOverlay(packageName: String) {
         // Runs synchronously (no Handler.post) - we're already on the main thread
         // here (onAccessibilityEvent always dispatches on it), and posting only
         // pushed the overlay's actual appearance later in the message queue,
@@ -1261,7 +1192,7 @@ class FocusAccessibilityService : AccessibilityService() {
         try {
             if (overlayView == null) {
                 val textView = TextView(this).apply {
-                    text = message
+                    text = "App Blocked!"
                     textSize = 24f
                     setTextColor(Color.WHITE)
                     gravity = Gravity.CENTER
@@ -1301,7 +1232,6 @@ class FocusAccessibilityService : AccessibilityService() {
                 }, OVERLAY_SAFETY_TIMEOUT_MS)
             } else {
                 currentBlockedPackage = packageName
-                (overlayView as? TextView)?.text = message
             }
         } catch (e: Exception) {
             Log.e("FocusService", "Error adding overlay view", e)

@@ -61,7 +61,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewModelScope
 import com.example.data.Analytics
 import com.example.data.FocusSession
 import com.example.data.LongTermBlock
@@ -93,7 +92,6 @@ fun HomeScreen(
     viewModel: FocusViewModel,
     onNavigateToTimer: () -> Unit,
     onNavigateToAppSelection: () -> Unit,
-    onNavigateToAppLock: () -> Unit = {},
     onNavigateToBlockDetails: (Int, String) -> Unit,
     onNavigateToStudyChat: () -> Unit = {},
     onNavigateToDebug: () -> Unit = {},
@@ -424,41 +422,6 @@ fun HomeScreen(
                                 )
                                 Text(
                                     text = "View Blocked Apps",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-
-                        OutlinedButton(
-                            onClick = onNavigateToAppLock,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp)
-                                .testTag("app_lock_button"),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.primary
-                            ),
-                            border = ButtonDefaults.outlinedButtonBorder.copy(
-                                brush = Brush.linearGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.primary,
-                                        MaterialTheme.colorScheme.secondary
-                                    )
-                                )
-                            )
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = "App Lock Icon"
-                                )
-                                Text(
-                                    text = "App Lock",
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -4208,8 +4171,7 @@ fun AppSelectionScreen(
 fun AppListItemRow(
     app: AppInfo,
     isReadOnly: Boolean,
-    onToggle: () -> Unit,
-    checked: Boolean = app.isBlocked
+    onToggle: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -4272,7 +4234,7 @@ fun AppListItemRow(
             }
 
             Switch(
-                checked = checked,
+                checked = app.isBlocked,
                 onCheckedChange = { if (!isReadOnly) onToggle() },
                 enabled = !isReadOnly,
                 colors = SwitchDefaults.colors(
@@ -6944,294 +6906,5 @@ fun SessionReflectionPrompt(
             }
         }
     )
-}
-
-/**
- * App Lock management screen. Gated behind the 6-digit PIN: on first visit it asks
- * the user to create one, on every later visit it must be re-entered before the
- * list of installed apps (and their locked toggles) is shown - so the lock list
- * itself can't just be opened and edited by anyone without the PIN.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun AppLockScreen(
-    viewModel: FocusViewModel,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var stage by remember { mutableStateOf("loading") } // loading, create, confirm, verify, list
-    var firstPin by remember { mutableStateOf("") }
-    var errorText by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(Unit) {
-        stage = if (viewModel.hasAppLockPin()) "verify" else "create"
-    }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("App Lock", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-            )
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-        modifier = modifier
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            when (stage) {
-                "create" -> PinSetupStep(
-                    title = "Create a PIN",
-                    subtitle = "This PIN will be needed to open any app you lock, and to change this list later.",
-                    errorText = errorText,
-                    onSubmit = { pin, onDone ->
-                        errorText = null
-                        firstPin = pin
-                        stage = "confirm"
-                        onDone(true)
-                    }
-                )
-                "confirm" -> PinSetupStep(
-                    title = "Confirm PIN",
-                    subtitle = "Enter the same PIN again.",
-                    errorText = errorText,
-                    onSubmit = { pin, onDone ->
-                        if (pin == firstPin) {
-                            viewModel.viewModelScope.launch {
-                                viewModel.setAppLockPin(pin)
-                                errorText = null
-                                stage = "list"
-                            }
-                            onDone(true)
-                        } else {
-                            errorText = "PINs didn't match - start over"
-                            firstPin = ""
-                            stage = "create"
-                            onDone(false)
-                        }
-                    }
-                )
-                "verify" -> PinSetupStep(
-                    title = "Enter PIN",
-                    subtitle = "Enter your App Lock PIN to continue.",
-                    errorText = errorText,
-                    onSubmit = { pin, onDone ->
-                        viewModel.viewModelScope.launch {
-                            val correct = viewModel.verifyAppLockPin(pin)
-                            if (correct) {
-                                errorText = null
-                                stage = "list"
-                            } else {
-                                errorText = "Wrong PIN, try again"
-                            }
-                            onDone(correct)
-                        }
-                    }
-                )
-                "list" -> AppLockListStep(viewModel = viewModel)
-                else -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PinSetupStep(
-    title: String,
-    subtitle: String,
-    errorText: String?,
-    onSubmit: (String, (Boolean) -> Unit) -> Unit
-) {
-    var pin by remember { mutableStateOf("") }
-
-    fun submit() {
-        if (pin.length == 6) {
-            onSubmit(pin) { success ->
-                if (!success) pin = ""
-            }
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.Lock,
-            contentDescription = "PIN",
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(44.dp)
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(title, fontSize = 20.sp, fontWeight = FontWeight.Black, color = Color.White)
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            subtitle,
-            fontSize = 13.sp,
-            color = Color.White.copy(alpha = 0.6f),
-            textAlign = TextAlign.Center
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            repeat(6) { index ->
-                Box(
-                    modifier = Modifier
-                        .size(16.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(
-                            if (index < pin.length) MaterialTheme.colorScheme.primary
-                            else Color.White.copy(alpha = 0.15f)
-                        )
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        if (errorText != null) {
-            Text(errorText, color = Color(0xFFFF5252), fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        } else {
-            Spacer(modifier = Modifier.height(18.dp))
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        val rows = listOf(
-            listOf("1", "2", "3"),
-            listOf("4", "5", "6"),
-            listOf("7", "8", "9"),
-            listOf("", "0", "back")
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            rows.forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                    row.forEach { key ->
-                        Box(modifier = Modifier.size(60.dp), contentAlignment = Alignment.Center) {
-                            when {
-                                key == "back" -> {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(60.dp)
-                                            .clip(RoundedCornerShape(50))
-                                            .clickable { if (pin.isNotEmpty()) pin = pin.dropLast(1) },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Backspace,
-                                            contentDescription = "Backspace",
-                                            tint = Color.White.copy(alpha = 0.8f)
-                                        )
-                                    }
-                                }
-                                key.isNotEmpty() -> {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(60.dp)
-                                            .clip(RoundedCornerShape(50))
-                                            .background(Color.White.copy(alpha = 0.06f))
-                                            .clickable {
-                                                if (pin.length < 6) {
-                                                    pin += key
-                                                    if (pin.length == 6) submit()
-                                                }
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(key, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AppLockListStep(viewModel: FocusViewModel) {
-    val appList by viewModel.appLockListState.collectAsStateWithLifecycle()
-    val isLoading by viewModel.isLoadingApps.collectAsStateWithLifecycle()
-    var searchQuery by remember { mutableStateOf("") }
-    val filteredList = remember(appList, searchQuery) {
-        if (searchQuery.isBlank()) appList
-        else appList.filter { it.appName.contains(searchQuery, ignoreCase = true) }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            placeholder = { Text("Search installed apps...", color = Color.White.copy(alpha = 0.5f)) },
-            leadingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = "Search icon") },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { searchQuery = "" }) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = "Clear search")
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            shape = RoundedCornerShape(16.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = Color.White.copy(alpha = 0.2f)
-            )
-        )
-
-        Text(
-            text = "Locked apps ask for your PIN every time they're opened.",
-            fontSize = 12.sp,
-            color = Color.White.copy(alpha = 0.5f)
-        )
-
-        if (isLoading) {
-            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                items(filteredList, key = { it.packageName }) { app ->
-                    AppListItemRow(
-                        app = app,
-                        isReadOnly = false,
-                        checked = app.isLocked,
-                        onToggle = { viewModel.toggleAppLocked(app) }
-                    )
-                }
-            }
-        }
-    }
 }
 

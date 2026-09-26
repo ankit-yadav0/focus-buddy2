@@ -237,7 +237,7 @@ fun StrictModeSetupWizardScreen(
                     )
                     WizardSwitchRow(
                         title = "Phone Settings",
-                        description = "Silently backs you out of screens that could disable enforcement (Accessibility, Device Admin, overlay permission, your app's own page, Uninstall, Reset, and a few others) - Settings itself opens and works normally, WiFi/Bluetooth/Display/etc. always stay accessible. Off by default; leave off if you don't want Settings touched at all during Strict Mode.",
+                        description = "Settings screens that could disable enforcement (Accessibility, Device Admin, overlay permission, your app's own page) are always blocked during Strict Mode. This adds a few broader screens on top. WiFi, Bluetooth, and other normal settings always stay accessible.",
                         checked = restrictSettings,
                         onCheckedChange = { restrictSettings = it }
                     )
