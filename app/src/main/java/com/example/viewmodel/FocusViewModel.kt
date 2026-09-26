@@ -6,7 +6,6 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
 import androidx.core.graphics.drawable.toBitmap
-import kotlin.math.roundToInt
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -39,23 +38,6 @@ data class AppInfo(
     val appName: String,
     val isBlocked: Boolean = false,
     val isLocked: Boolean = false
-)
-
-/** App entry for the launcher home/drawer screens - carries a real launcher icon,
- * unlike [AppInfo] which only backs the (icon-less) app-blocking selection list. */
-data class LauncherAppInfo(
-    val packageName: String,
-    val appName: String,
-    val icon: android.graphics.Bitmap?
-)
-
-/** One entry in the launcher's "Today" usage mini-list - real system-wide foreground
- * time via UsageStatsManager, not limited to apps with a Focuss Buddy quota set up. */
-data class AppUsageEntry(
-    val packageName: String,
-    val appName: String,
-    val icon: android.graphics.Bitmap?,
-    val timeMillis: Long
 )
 
 data class DailyAnalytics(
@@ -102,17 +84,6 @@ class FocusViewModel(
     private val context: Context
 ) : ViewModel() {
 
-    // Launcher icons are only ever displayed at 36dp (drawer/home grid) or 28dp
-    // (pinned row). Decoding every installed app's icon at its full intrinsic
-    // adaptive-icon resolution (often 300px+ per icon on modern densities) and
-    // keeping all of them resident as ARGB_8888 Bitmaps was the actual cause of
-    // the launcher lag on 2GB RAM devices - with 100-300 apps installed that's
-    // tens of MB of icon bitmaps alone, plus GC churn every time the list reloads.
-    // Decoding directly at display size cuts per-icon memory by roughly 10-20x.
-    private val launcherIconPx: Int by lazy {
-        (48f * context.resources.displayMetrics.density).roundToInt().coerceAtLeast(1)
-    }
-
     val youtubeBlockShorts = MutableStateFlow(false)
     val instagramBlockReels = MutableStateFlow(false)
     val snapchatBlockSpotlight = MutableStateFlow(false)
@@ -147,17 +118,6 @@ class FocusViewModel(
 
     private val _installedApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val installedApps = _installedApps.asStateFlow()
-
-    private val _launcherApps = MutableStateFlow<List<LauncherAppInfo>>(emptyList())
-    val launcherApps = _launcherApps.asStateFlow()
-
-    private val _isLoadingLauncherApps = MutableStateFlow(false)
-    val isLoadingLauncherApps = _isLoadingLauncherApps.asStateFlow()
-
-    /** Comma-separated package names pinned to the Launcher Mode study-apps grid. */
-    val studyAppPackages: StateFlow<Set<String>> = repository.getSettingFlow("launcher_study_apps")
-        .map { raw -> raw?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     private val _isLoadingApps = MutableStateFlow(false)
     val isLoadingApps = _isLoadingApps.asStateFlow()
@@ -211,49 +171,6 @@ class FocusViewModel(
 
     val activeLongTermBlocks: StateFlow<List<LongTermBlock>> = repository.activeLongTermBlocks
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    /**
-     * Package names that are locked right now - for the launcher's lock badges, not for
-     * enforcement (the accessibility service is the source of truth there). Combines
-     * plain blocked apps with quota-mode long-term blocks whose daily allowance is
-     * already used up for today (a quota block with time still left isn't locked yet).
-     */
-    val lockedAppPackages: StateFlow<Set<String>> = combine(blockedApps, activeLongTermBlocks) { blocked, longTerm ->
-        val today = System.currentTimeMillis() / (24 * 60 * 60 * 1000L)
-        val fromBlockedApps = blocked.filter { it.isBlocked }.map { it.packageName }
-        val fromLongTerm = longTerm.filter { block ->
-            block.type == "APP" && (
-                block.dailyLimitSeconds == null ||
-                (block.lastUsageResetEpochDay == today && block.usedSecondsToday >= block.dailyLimitSeconds)
-            )
-        }.map { it.target }
-        (fromBlockedApps + fromLongTerm).toSet()
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
-
-    /** packageName -> (usedSecondsToday, dailyLimitSeconds) for the launcher's per-app
-     * quota progress ring. Only covers apps with a quota-mode long-term block set up. */
-    val appQuotaInfo: StateFlow<Map<String, Pair<Long, Long>>> = activeLongTermBlocks
-        .map { blocks ->
-            blocks.filter { it.type == "APP" && it.dailyLimitSeconds != null }
-                .associate { it.target to (it.usedSecondsToday to (it.dailyLimitSeconds ?: 0L)) }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
-
-    /** Most-recently-launched-from-launcher packages, newest first, capped at 5. Local
-     * tracking (not system usage stats) so it works without the usage-access permission
-     * and only reflects apps actually opened through Launcher Mode. */
-    val recentAppPackages: StateFlow<List<String>> = repository.getSettingFlow("launcher_recent_apps")
-        .map { raw -> raw?.split(",")?.filter { it.isNotBlank() } ?: emptyList() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    fun recordRecentApp(packageName: String) {
-        viewModelScope.launch {
-            val current = recentAppPackages.value.toMutableList()
-            current.remove(packageName)
-            current.add(0, packageName)
-            repository.saveSetting("launcher_recent_apps", current.take(5).joinToString(","))
-        }
-    }
 
     val allWebsiteBlocks: StateFlow<List<WebsiteBlock>> = repository.allWebsiteBlocks
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -844,117 +761,6 @@ class FocusViewModel(
             }
             _installedApps.value = apps
             _isLoadingApps.value = false
-        }
-    }
-
-    /**
-     * Same launchable-app query as [loadInstalledApps], but also decodes each app's real
-     * icon to a Bitmap for the Launcher Mode home/drawer screens. Kept as a separate,
-     * on-demand load (rather than folded into [loadInstalledApps]) since icon decoding is
-     * heavier and the app-blocking selection list never needs real icons.
-     */
-    fun loadLauncherApps() {
-        viewModelScope.launch {
-            _isLoadingLauncherApps.value = true
-            val apps = withContext(Dispatchers.IO) {
-                try {
-                    val pm = context.packageManager
-                    val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-                        addCategory(Intent.CATEGORY_LAUNCHER)
-                    }
-                    val resolvedInfos = pm.queryIntentActivities(mainIntent, 0)
-                    resolvedInfos.map { info ->
-                        val packageName = info.activityInfo.packageName
-                        val appName = info.loadLabel(pm).toString()
-                        val icon = try {
-                            info.loadIcon(pm).toBitmap(width = launcherIconPx, height = launcherIconPx)
-                        } catch (e: Exception) {
-                            null
-                        }
-                        LauncherAppInfo(packageName, appName, icon)
-                    }.distinctBy { it.packageName }.sortedBy { it.appName }
-                } catch (e: Exception) {
-                    emptyList()
-                }
-            }
-            _launcherApps.value = apps
-            _isLoadingLauncherApps.value = false
-        }
-    }
-
-    /** Pins/unpins [packageName] on the Launcher Mode home screen's study-apps grid. */
-    fun toggleStudyApp(packageName: String) {
-        viewModelScope.launch {
-            val current = studyAppPackages.value
-            val updated = if (packageName in current) current - packageName else current + packageName
-            repository.saveSetting("launcher_study_apps", updated.joinToString(","))
-        }
-    }
-
-    private val _todayTopApps = MutableStateFlow<List<AppUsageEntry>>(emptyList())
-    val todayTopApps = _todayTopApps.asStateFlow()
-
-    private val _isLoadingTodayTopApps = MutableStateFlow(false)
-    val isLoadingTodayTopApps = _isLoadingTodayTopApps.asStateFlow()
-
-    /**
-     * Top-3 apps by real foreground time so far today, for the launcher's self-awareness
-     * mini-list. Uses UsageStatsManager (system-wide, every app) rather than Focuss
-     * Buddy's own quota tracking, which only covers apps someone has explicitly set a
-     * long-term block/quota on. Silently returns an empty list if usage-access hasn't
-     * been granted yet - callers show their own "grant access" prompt for that case via
-     * [isUsageStatsPermissionGranted].
-     */
-    fun loadTodayTopApps() {
-        if (!isUsageStatsPermissionGranted()) {
-            _todayTopApps.value = emptyList()
-            return
-        }
-        viewModelScope.launch {
-            _isLoadingTodayTopApps.value = true
-            val entries = withContext(Dispatchers.IO) {
-                try {
-                    val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
-                    val calendar = java.util.Calendar.getInstance().apply {
-                        set(java.util.Calendar.HOUR_OF_DAY, 0)
-                        set(java.util.Calendar.MINUTE, 0)
-                        set(java.util.Calendar.SECOND, 0)
-                        set(java.util.Calendar.MILLISECOND, 0)
-                    }
-                    val startOfDay = calendar.timeInMillis
-                    val now = System.currentTimeMillis()
-                    val stats = usm.queryUsageStats(
-                        android.app.usage.UsageStatsManager.INTERVAL_DAILY,
-                        startOfDay,
-                        now
-                    ) ?: emptyList()
-
-                    val pm = context.packageManager
-                    val ourPackage = context.packageName
-                    stats
-                        .filter { it.totalTimeInForeground > 0 && it.packageName != ourPackage }
-                        .sortedByDescending { it.totalTimeInForeground }
-                        .take(3)
-                        .mapNotNull { stat ->
-                            try {
-                                val appInfo = pm.getApplicationInfo(stat.packageName, 0)
-                                val appName = pm.getApplicationLabel(appInfo).toString()
-                                val icon = try {
-                                    pm.getApplicationIcon(stat.packageName).toBitmap(width = launcherIconPx, height = launcherIconPx)
-                                } catch (e: Exception) {
-                                    null
-                                }
-                                AppUsageEntry(stat.packageName, appName, icon, stat.totalTimeInForeground)
-                            } catch (e: Exception) {
-                                null
-                            }
-                        }
-                } catch (e: Exception) {
-                    emptyList()
-                }
-            }
-            _todayTopApps.value = entries
-            _isLoadingTodayTopApps.value = false
         }
     }
 

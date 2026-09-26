@@ -62,6 +62,11 @@ class FocusAccessibilityService : AccessibilityService() {
         // Safety-net cap on how long the instant-block overlay can stay up if
         // BlockActivity never calls dismissInstantOverlay() (e.g. it fails to launch).
         private const val OVERLAY_SAFETY_TIMEOUT_MS = 4_000L
+
+        // How long to stop re-classifying Settings screens after a bounce-back fires.
+        // Long enough to cover both GLOBAL_ACTION_BACK transitions and their animations,
+        // short enough that a genuine re-attempt right after is still caught promptly.
+        private const val SETTINGS_BOUNCE_DEBOUNCE_MS = 1_200L
     }
 
     private val serviceJob = SupervisorJob()
@@ -113,6 +118,16 @@ class FocusAccessibilityService : AccessibilityService() {
     private val windowManager: WindowManager by lazy { getSystemService(android.content.Context.WINDOW_SERVICE) as WindowManager }
     private var currentBlockedPackage: String? = null
     private var lastPermissionRequestTime = 0L
+
+    // Debounce window after a Settings bounce-back. The two GLOBAL_ACTION_BACK calls in
+    // bounceBackFromSettingsBypass() take a moment to actually land, and Settings keeps
+    // emitting TYPE_WINDOW_CONTENT_CHANGED for every intermediate transition frame in the
+    // meantime. Without suppressing classification during that window, a single bounce
+    // could be re-triggered several times over (or, worse, mis-classify a half-rendered
+    // transition frame) before the user actually reaches a safe screen. This is also what
+    // resets the navigation state after a bounce: once the debounce elapses, the next
+    // screen is classified completely fresh, with no memory of what came before.
+    private var settingsBounceSuppressUntil = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -424,52 +439,35 @@ class FocusAccessibilityService : AccessibilityService() {
                 // shows up. Settings opens and stays visibly usable the whole time - the
                 // bounce only fires once a bypass-capable screen is actually identified.
                 if (packageName == "com.android.settings" && restrictSettingsFullyEnabled) {
-                    // A screen that shows our own app's name is almost certainly App Info,
-                    // the accessibility-service toggle, the device-admin toggle, or battery
-                    // optimization for this app - all of which can be used to defeat
-                    // enforcement. This catches those screens even when reached via the
-                    // Settings search bar's direct-jump results, whose destination screens
-                    // often don't literally show the word "Accessibility" or "Device admin"
-                    // - just the app's own name and a toggle.
-                    if (screenTexts.any { it.contains(appName, ignoreCase = true) }) {
-                        Log.d("FocusService", "Strict Mode: Bouncing back from our own app's Settings screen")
-                        bounceBackFromSettingsBypass(packageName)
-                        return
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs >= settingsBounceSuppressUntil) {
+                        // Counted from the same node tree already fetched for this event
+                        // (nodeToUse) - no extra IPC round-trip, just a second lightweight
+                        // walk of it, and only for the rare Settings-package case.
+                        val checkableCount = countCheckableNodes(nodeToUse)
+                        val classification = SettingsScreenClassifier.classify(screenTexts, checkableCount)
+
+                        Log.d(
+                            "FocusService",
+                            "Settings screen: kind=${classification.kind} reason=\"${classification.reason}\" " +
+                                "checkableNodes=$checkableCount textSample=${screenTexts.take(6)}"
+                        )
+
+                        val isProtected = classification.kind == SettingsScreenClassifier.ScreenKind.PROTECTED_APP_DETAIL ||
+                            classification.kind == SettingsScreenClassifier.ScreenKind.PROTECTED_DEVICE_WIDE
+
+                        if (isProtected) {
+                            Log.d("FocusService", "Strict Mode: Bouncing back - ${classification.reason}")
+                            settingsBounceSuppressUntil = nowMs + SETTINGS_BOUNCE_DEBOUNCE_MS
+                            bounceBackFromSettingsBypass(packageName)
+                            return
+                        }
+                        // LIST or SAFE - Focuss Buddy may be visible as a row/mention here,
+                        // but nothing can be disabled/uninstalled/cleared from this screen
+                        // directly, so it stays open and usable.
                     }
-                    // These two lists exist because per-app screens (App Info: Uninstall,
-                    // Force stop, Clear storage/data/cache, Battery optimization) show the
-                    // same generic text for EVERY app, not just Focuss Buddy. The check above
-                    // already catches Focuss Buddy's own App Info via its app name; without
-                    // splitting these out, this keyword match fired on any app's App Info
-                    // screen and silently bounced the user out of it - "App info"/"Uninstall"
-                    // from the launcher's long-press menu appeared to do nothing for ANY app.
-                    // Only screens with no per-app identity (the Accessibility services list,
-                    // the Device admin apps list, Special app access, the system Reset screen,
-                    // etc.) are safe to bounce unconditionally.
-                    val globalBypassKeywords = listOf(
-                        "Reset", "Factory reset", "Erase all data",
-                        "Accessibility", "Device admin apps", "Deactivate this device admin app",
-                        "Special app access", "Display over other apps",
-                        "Modify system settings", "Usage access"
-                    )
-                    val perAppBypassKeywords = listOf(
-                        "Clear storage", "Clear data", "Clear cache", "Storage & cache",
-                        "Force stop", "Uninstall", "Battery optimization"
-                    )
-                    val isFocussBuddyScreen = screenTexts.any { it.contains(appName, ignoreCase = true) }
-                    val containsGlobalBypass = screenTexts.any { text ->
-                        globalBypassKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
-                    }
-                    val containsPerAppBypass = isFocussBuddyScreen && screenTexts.any { text ->
-                        perAppBypassKeywords.any { keyword -> text.contains(keyword, ignoreCase = true) }
-                    }
-                    if (containsGlobalBypass || containsPerAppBypass) {
-                        Log.d("FocusService", "Strict Mode: Bouncing back from settings bypass screen in $packageName")
-                        bounceBackFromSettingsBypass(packageName)
-                        return
-                    }
-                    // Anything else (WiFi, Bluetooth, Display, another app's App Info, etc.)
-                    // - no action, the screen just stays open and usable.
+                    // Within the debounce window right after a bounce - let the back-stack
+                    // transition settle without re-classifying every intermediate frame.
                 }
             }
 
@@ -1172,6 +1170,24 @@ class FocusAccessibilityService : AccessibilityService() {
             collectScreenText(child, list, depth + 1)
             child.recycle()
         }
+    }
+
+    /**
+     * Counts checkable (Switch/CheckBox-style) controls in the current node tree. Used
+     * only for the rare Settings-package classification path in
+     * [SettingsScreenClassifier] - a single checkable control alongside our app's name is
+     * a strong signal for a single-app toggle/detail page, as opposed to a list of many
+     * apps/services.
+     */
+    private fun countCheckableNodes(node: AccessibilityNodeInfo?, depth: Int = 0): Int {
+        if (node == null || depth > 50) return 0
+        var count = if (node.isCheckable) 1 else 0
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            count += countCheckableNodes(child, depth + 1)
+            child.recycle()
+        }
+        return count
     }
 
     /** Verbose indented tree dump used only for YouTube debug logging. */

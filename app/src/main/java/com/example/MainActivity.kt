@@ -57,9 +57,6 @@ import com.example.ui.screens.StrictScheduleManagerScreen
 import com.example.ui.screens.BlocksProgressScreen
 import com.example.ui.screens.InsightsScreen
 import com.example.ui.screens.ForestGalleryScreen
-import com.example.ui.screens.LauncherHomeScreen
-import com.example.ui.screens.AppDrawerScreen
-import com.example.ui.screens.LauncherModeSettingsScreen
 import com.example.ui.screens.PyqPracticeScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.FocusViewModel
@@ -336,23 +333,11 @@ class MainActivity : ComponentActivity() {
 
     private val pendingDeepLinkRoute = mutableStateOf<String?>(null)
 
-    /**
-     * Bumped whenever a new HOME-category intent arrives (i.e. the user pressed the
-     * device Home button while Focuss Buddy is already the running task, in
-     * Launcher Mode). A LaunchedEffect below observes this and pops the back stack
-     * to "launcher_home", matching how every other launcher returns to its home
-     * screen on a Home press instead of just re-showing whatever sub-screen was open.
-     */
-    private val homeSignal = mutableStateOf(0L)
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingDeepLinkRoute.value = intent.getStringExtra("deep_link_route")
         handleUpdateIntent(intent)
-        if (intent.hasCategory(Intent.CATEGORY_HOME)) {
-            homeSignal.value = System.currentTimeMillis()
-        }
     }
 
     /**
@@ -534,17 +519,6 @@ class MainActivity : ComponentActivity() {
                         }
 
                         val navController = rememberNavController()
-                        val initialStartDestination = remember {
-                            if (intent?.hasCategory(Intent.CATEGORY_HOME) == true) "launcher_home" else "home"
-                        }
-                        LaunchedEffect(homeSignal.value) {
-                            if (homeSignal.value != 0L) {
-                                try {
-                                    navController.popBackStack("launcher_home", inclusive = false)
-                                } catch (e: Exception) {
-                                }
-                            }
-                        }
                         LaunchedEffect(pendingDeepLinkRoute.value) {
                             val route = pendingDeepLinkRoute.value
                             if (route != null) {
@@ -627,23 +601,9 @@ class MainActivity : ComponentActivity() {
                                     Box(modifier = Modifier.fillMaxSize()) {
                                         NavHost(
                                             navController = navController,
-                                            startDestination = initialStartDestination,
+                                            startDestination = "home",
                                             modifier = Modifier.padding(innerPadding)
                                         ) {
-                                            composable("launcher_home") {
-                                                LauncherHomeScreen(
-                                                    viewModel = focusViewModel,
-                                                    onOpenAppDrawer = { navController.navigate("app_drawer") },
-                                                    onOpenDashboard = { navController.navigate("home") },
-                                                    onOpenShortcut = { route -> navController.navigate(route) }
-                                                )
-                                            }
-                                            composable("app_drawer") {
-                                                AppDrawerScreen(
-                                                    viewModel = focusViewModel,
-                                                    onBack = { navController.popBackStack() }
-                                                )
-                                            }
                                             composable("home") {
                                                 HomeScreen(
                                                     viewModel = focusViewModel,
@@ -659,14 +619,7 @@ class MainActivity : ComponentActivity() {
                                                         sharedPrefs.edit().putFloat("wallpaper_opacity", newOpacity).apply()
                                                     },
                                                     onNavigateToUninstall = { navController.navigate("uninstall_reflection") },
-                                                    onNavigateToStrictOverride = { navController.navigate("strict_override") },
-                                                    onNavigateToLauncherMode = { navController.navigate("launcher_mode_settings") }
-                                                )
-                                            }
-                                            composable("launcher_mode_settings") {
-                                                LauncherModeSettingsScreen(
-                                                    onBack = { navController.popBackStack() },
-                                                    onPreview = { navController.navigate("launcher_home") }
+                                                    onNavigateToStrictOverride = { navController.navigate("strict_override") }
                                                 )
                                             }
                                             composable("blocks_progress") {

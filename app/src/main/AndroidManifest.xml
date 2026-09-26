@@ -17,11 +17,6 @@
     <!-- Permission to check active application op status -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 
-    <!-- Lets Launcher Mode's Quick DND toggle flip Do Not Disturb on/off. The app still
-         needs the user to separately grant "Do Not Disturb access" via Settings before
-         this permission actually does anything - this just allows attempting it. -->
-    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
-
     <!-- Lets the Accessibility Service pin itself at foreground priority so
          Android (especially Go Edition's aggressive low-memory killer) is far
          less likely to kill the process while blocking is active. -->
@@ -59,13 +54,6 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <!-- Lets the user pick this app as their Home app under Settings >
-                 Apps > Default apps > Home app, powering Launcher Mode. -->
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.HOME" />
-                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 
