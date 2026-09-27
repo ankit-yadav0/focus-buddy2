@@ -17,6 +17,7 @@ import com.example.data.WebsiteBlock
 import com.example.data.ChatMessage
 import com.example.data.StrictSchedule
 import com.example.data.TestEntry
+import com.example.data.LockedApp
 import com.example.scheduler.AlarmScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -34,7 +35,8 @@ import kotlinx.coroutines.withContext
 data class AppInfo(
     val packageName: String,
     val appName: String,
-    val isBlocked: Boolean = false
+    val isBlocked: Boolean = false,
+    val isLocked: Boolean = false
 )
 
 data class DailyAnalytics(
@@ -149,6 +151,16 @@ class FocusViewModel(
         val blockedPackages = blocked.map { it.packageName }.toSet()
         installed.map { app ->
             app.copy(isBlocked = blockedPackages.contains(app.packageName))
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val lockedApps: StateFlow<List<LockedApp>> = repository.allLockedApps
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val appLockListState: StateFlow<List<AppInfo>> = combine(_installedApps, lockedApps) { installed, locked ->
+        val lockedPackages = locked.map { it.packageName }.toSet()
+        installed.map { app ->
+            app.copy(isLocked = lockedPackages.contains(app.packageName))
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -763,6 +775,31 @@ class FocusViewModel(
                 repository.removeBlockedApp(app.packageName)
             } else {
                 repository.addBlockedApp(BlockedApp(app.packageName, app.appName))
+            }
+        }
+    }
+
+    // --- App Lock (PIN-gated apps) ---
+
+    suspend fun hasAppLockPin(): Boolean {
+        return repository.getSetting("app_lock_pin_hash") != null
+    }
+
+    suspend fun setAppLockPin(pin: String) {
+        repository.saveSetting("app_lock_pin_hash", sha256(pin))
+    }
+
+    suspend fun verifyAppLockPin(pin: String): Boolean {
+        val stored = repository.getSetting("app_lock_pin_hash") ?: return false
+        return stored == sha256(pin)
+    }
+
+    fun toggleAppLocked(app: AppInfo) {
+        viewModelScope.launch {
+            if (app.isLocked) {
+                repository.removeLockedApp(app.packageName)
+            } else {
+                repository.addLockedApp(LockedApp(app.packageName, app.appName))
             }
         }
     }

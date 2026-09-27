@@ -56,6 +56,7 @@ import com.example.ui.screens.StrictScheduleManagerScreen
 import com.example.ui.screens.BlocksProgressScreen
 import com.example.ui.screens.InsightsScreen
 import com.example.ui.screens.ForestGalleryScreen
+import com.example.ui.screens.AppLockScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.FocusViewModel
 import com.example.viewmodel.FocusViewModelFactory
@@ -607,6 +608,7 @@ class MainActivity : ComponentActivity() {
                                                     viewModel = focusViewModel,
                                                     onNavigateToTimer = { navController.navigate("timer") },
                                                     onNavigateToAppSelection = { navController.navigate("app_selection") },
+                                                    onNavigateToAppLock = { navController.navigate("app_lock") },
                                                     onNavigateToBlockDetails = { id, type -> navController.navigate("block_details/$type/$id") },
                                                     onPickWallpaper = { launchWallpaperPicker() },
                                                     onClearWallpaper = { removeCustomWallpaper() },
@@ -661,6 +663,12 @@ class MainActivity : ComponentActivity() {
                                             }
                                             composable("app_selection") {
                                                 AppSelectionScreen(
+                                                    viewModel = focusViewModel,
+                                                    onBack = { navController.popBackStack() }
+                                                )
+                                            }
+                                            composable("app_lock") {
+                                                AppLockScreen(
                                                     viewModel = focusViewModel,
                                                     onBack = { navController.popBackStack() }
                                                 )
