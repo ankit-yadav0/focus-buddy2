@@ -85,7 +85,7 @@ object SettingsScreenClassifier {
         // never a veto over a signal that did.
         // A lone switch only counts as "our app's toggle" on a short screen; on a long
         // list of similar rows (Apps & notifications, etc.) it is just one row's switch.
-        val loneToggle = signals.checkableCount == 1 && signals.maxSiblingGroupSize < 5
+        val loneToggle = signals.checkableCount in 1..2 && signals.maxSiblingGroupSize < 5
         if (signals.hasDetailKeyword || loneToggle) {
             return ScreenType.PROTECTED_APP_DETAIL
         }
@@ -117,13 +117,17 @@ object SettingsScreenClassifier {
         var maxSiblingGroupSize = 0
         var hasDetailKeyword = false
         var hasDeviceWideKeyword = false
+        // Phrases only OUR app's own service/config page shows (e.g. the Accessibility
+        // service page: "Use <app>" toggle, "<app> shortcut", "Stop <app>?" dialog).
+        val appSpecificPhrases = listOf("Use $appName", "$appName shortcut", "Stop $appName")
 
         fun visit(node: AccessibilityNodeInfo?, depth: Int) {
             if (node == null || depth > 50) return
 
             listOfNotNull(node.text?.toString(), node.contentDescription?.toString()).forEach { t ->
                 if (t.contains(appName, ignoreCase = true)) hasAppIdentity = true
-                if (DETAIL_ONLY_KEYWORDS.any { t.contains(it, ignoreCase = true) }) hasDetailKeyword = true
+                if (DETAIL_ONLY_KEYWORDS.any { t.contains(it, ignoreCase = true) } ||
+                    appSpecificPhrases.any { t.contains(it, ignoreCase = true) }) hasDetailKeyword = true
                 if (deviceWideKeywords.any { containsWord(t, it) }) hasDeviceWideKeyword = true
             }
             if (node.isCheckable) checkableCount++

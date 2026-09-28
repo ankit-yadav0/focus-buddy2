@@ -9,6 +9,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import com.example.BuildConfig
@@ -50,8 +51,9 @@ object UpdateManager {
 
     private const val PREFS_NAME = "focuss_buddy_settings"
     private const val KEY_LAST_CHECK = "update_last_check_time"
+    private const val KEY_LAST_STATUS = "update_last_status"
     private const val KEY_PENDING_DOWNLOAD_ID = "update_pending_download_id"
-    private const val CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L // don't hit GitHub more than once every 6h
+    private const val CHECK_INTERVAL_MS = 15 * 60 * 1000L // at most one GitHub check per 15 min
 
     private const val NOTIFICATION_CHANNEL_ID = "focus_buddy_updates"
     private const val NOTIFICATION_ID = 4301
@@ -59,63 +61,101 @@ object UpdateManager {
     private val client = OkHttpClient()
 
     /**
-     * Looks up the latest GitHub Release and returns it if it's newer than the
-     * currently-installed build. Returns null on any failure, if not configured,
-     * if already up to date, or if called again before the cooldown elapses
-     * (pass force=true to bypass the cooldown, e.g. for a manual "Check now").
-     * Never throws - safe to call from a background coroutine on app start.
+     * Looks up the newest published GitHub Release (drafts skipped, pre-releases
+     * allowed) and returns it if it is newer than the installed build. Returns null on
+     * any failure, if already up to date, or during the cooldown (force=true bypasses
+     * it). The reason for a null is stored and readable via [lastStatus].
+     * Never throws - safe to call from a background coroutine.
      */
     suspend fun checkForUpdate(context: Context, force: Boolean = false): UpdateInfo? = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        fun status(msg: String): UpdateInfo? {
+            Log.d("UpdateManager", msg)
+            prefs.edit().putString(KEY_LAST_STATUS, msg).apply()
+            return null
+        }
         try {
-            if (GITHUB_REPO.startsWith("YOUR_")) return@withContext null
+            if (GITHUB_REPO.startsWith("YOUR_")) return@withContext status("repo not configured")
 
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val now = System.currentTimeMillis()
             if (!force) {
                 val lastCheck = prefs.getLong(KEY_LAST_CHECK, 0L)
                 if (now - lastCheck < CHECK_INTERVAL_MS) return@withContext null
             }
-            prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
 
             val request = Request.Builder()
-                .url("https://api.github.com/repos/$GITHUB_REPO/releases/latest")
+                .url("https://api.github.com/repos/$GITHUB_REPO/releases?per_page=5")
                 .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "FocussBuddy-Updater")
                 .build()
 
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val body = response.body?.string() ?: return@withContext null
-                val json = JSONObject(body)
-
-                // The release tag is expected to be "v<versionCode>" (the CI
-                // workflow tags releases this way using the run number), so
-                // comparison is a simple integer check - no messy string
-                // version-name parsing needed.
-                val tagName = json.optString("tag_name")
-                val remoteVersionCode = tagName.removePrefix("v").toIntOrNull() ?: return@withContext null
-                if (remoteVersionCode <= BuildConfig.VERSION_CODE) return@withContext null
-
-                val assets = json.optJSONArray("assets") ?: return@withContext null
-                var apkUrl: String? = null
-                for (i in 0 until assets.length()) {
-                    val asset = assets.getJSONObject(i)
-                    if (asset.optString("name").endsWith(".apk")) {
-                        apkUrl = asset.optString("browser_download_url")
-                        break
-                    }
+                if (!response.isSuccessful) {
+                    return@withContext status("GitHub HTTP ${response.code} (404 = repo private/wrong name, 403 = rate limit)")
                 }
-                val url = apkUrl ?: return@withContext null
+                // Only a real answer from GitHub uses up the cooldown; a failed
+                // request (offline, rate-limited) must not block the next try.
+                prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
 
-                UpdateInfo(
-                    versionCode = remoteVersionCode,
-                    versionName = json.optString("name").ifBlank { tagName },
-                    downloadUrl = url,
-                    releaseNotes = json.optString("body")
-                )
+                val body = response.body?.string() ?: return@withContext status("empty response")
+                val releases = org.json.JSONArray(body)
+                if (releases.length() == 0) return@withContext status("no releases published")
+
+                var sawNewerWithoutApk = false
+                for (r in 0 until releases.length()) {
+                    val json = releases.getJSONObject(r)
+                    if (json.optBoolean("draft")) continue
+                    val tagName = json.optString("tag_name")
+                    if (!isNewerThanInstalled(tagName)) continue
+
+                    val assets = json.optJSONArray("assets")
+                    var apkUrl: String? = null
+                    if (assets != null) {
+                        for (i in 0 until assets.length()) {
+                            val asset = assets.getJSONObject(i)
+                            if (asset.optString("name").endsWith(".apk", ignoreCase = true)) {
+                                apkUrl = asset.optString("browser_download_url")
+                                break
+                            }
+                        }
+                    }
+                    if (apkUrl == null) { sawNewerWithoutApk = true; continue }
+
+                    prefs.edit().putString(KEY_LAST_STATUS, "update found: $tagName").apply()
+                    return@withContext UpdateInfo(
+                        versionCode = tagName.removePrefix("v").removePrefix("V").toIntOrNull() ?: 0,
+                        versionName = json.optString("name").ifBlank { tagName },
+                        downloadUrl = apkUrl,
+                        releaseNotes = json.optString("body")
+                    )
+                }
+                if (sawNewerWithoutApk) status("newer release found but it has no .apk file attached")
+                else status("up to date (installed ${BuildConfig.VERSION_NAME} / code ${BuildConfig.VERSION_CODE})")
             }
         } catch (e: Exception) {
-            null
+            status("check failed: ${e.javaClass.simpleName} ${e.message}")
         }
+    }
+
+    /** Last result of an update check, for debugging ("why no prompt?"). */
+    fun lastStatus(context: Context): String =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_LAST_STATUS, "never checked") ?: "never checked"
+
+    /**
+     * Tag "v57" (or "57") -> compared with the installed versionCode.
+     * Tag "v1.2.3" -> compared, part by part, with the installed versionName.
+     */
+    private fun isNewerThanInstalled(tag: String): Boolean {
+        val t = tag.trim().removePrefix("v").removePrefix("V")
+        t.toIntOrNull()?.let { return it > BuildConfig.VERSION_CODE }
+        val remote = t.split(".", "-").map { it.toIntOrNull() ?: return false }
+        val local = BuildConfig.VERSION_NAME.removePrefix("v").split(".", "-").map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(remote.size, local.size)) {
+            val r = remote.getOrElse(i) { 0 }
+            val l = local.getOrElse(i) { 0 }
+            if (r != l) return r > l
+        }
+        return false
     }
 
     /** Checks for an update and posts the notification if one is found. */

@@ -331,6 +331,18 @@ fun PermissionRow(
 class MainActivity : ComponentActivity() {
 
     private val pendingDeepLinkRoute = mutableStateOf<String?>(null)
+    private val availableUpdate = mutableStateOf<com.example.update.UpdateInfo?>(null)
+
+    override fun onStart() {
+        super.onStart()
+        lifecycleScope.launch(Dispatchers.IO) {
+            val info = com.example.update.UpdateManager.checkForUpdate(applicationContext)
+            if (info != null) {
+                com.example.update.UpdateManager.showUpdateNotification(applicationContext, info)
+                availableUpdate.value = info
+            }
+        }
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -393,9 +405,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         pendingDeepLinkRoute.value = intent.getStringExtra("deep_link_route")
         handleUpdateIntent(intent)
-        lifecycleScope.launch(Dispatchers.IO) {
-            com.example.update.UpdateManager.checkAndNotify(applicationContext)
-        }
         lifecycleScope.launch(Dispatchers.Default) {
             try {
                 val label = getString(R.string.app_name)
@@ -417,6 +426,30 @@ class MainActivity : ComponentActivity() {
             val focusViewModel: FocusViewModel = viewModel(factory = factory)
             val accentTheme by focusViewModel.accentTheme.collectAsStateWithLifecycle()
             val isInitialized by focusViewModel.isInitialized.collectAsStateWithLifecycle()
+
+            val pendingUpdate = availableUpdate.value
+            if (pendingUpdate != null) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { availableUpdate.value = null },
+                    title = { androidx.compose.material3.Text("Update available: ${pendingUpdate.versionName}") },
+                    text = {
+                        androidx.compose.material3.Text(
+                            if (pendingUpdate.releaseNotes.isBlank()) "Tap Update to download and install. Your data stays exactly as it is."
+                            else pendingUpdate.releaseNotes.take(400)
+                        )
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = {
+                            com.example.update.UpdateManager.startDownload(this@MainActivity, pendingUpdate.downloadUrl, pendingUpdate.versionName)
+                            android.widget.Toast.makeText(this@MainActivity, "Downloading update...", android.widget.Toast.LENGTH_LONG).show()
+                            availableUpdate.value = null
+                        }) { androidx.compose.material3.Text("Update") }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = { availableUpdate.value = null }) { androidx.compose.material3.Text("Later") }
+                    }
+                )
+            }
 
             if (!isInitialized) {
                 Box(

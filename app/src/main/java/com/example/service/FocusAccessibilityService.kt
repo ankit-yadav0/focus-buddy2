@@ -20,6 +20,7 @@ import com.example.R
 import com.example.data.LongTermBlock
 import com.example.data.WebsiteBlock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -158,7 +159,17 @@ class FocusAccessibilityService : AccessibilityService() {
     // has actually settled, and re-trigger another bounce (a loop). 1.2s is comfortably
     // longer than any real back-navigation transition on this device class.
     private var lastSettingsBounceAtMs = 0L
-    private val SETTINGS_BOUNCE_DEBOUNCE_MS = 1200L
+    private val SETTINGS_BOUNCE_DEBOUNCE_MS = 450L
+    private var lastDeviceWideBlockAtMs = 0L
+    private val DEVICE_WIDE_BLOCK_DEBOUNCE_MS = 1500L
+    // Event-independent watcher: after every Settings screen change we poll the
+    // screen every SETTINGS_WATCH_INTERVAL_MS for SETTINGS_WATCH_WINDOW_MS, so a
+    // protected page is caught the moment it is readable instead of whenever the
+    // next accessibility event happens to arrive.
+    private var settingsWatchJob: Job? = null
+    private var settingsWatchUntilMs = 0L
+    private val SETTINGS_WATCH_INTERVAL_MS = 120L
+    private val SETTINGS_WATCH_WINDOW_MS = 2500L
 
     override fun onCreate() {
         super.onCreate()
@@ -493,53 +504,8 @@ class FocusAccessibilityService : AccessibilityService() {
                 // one row among many (e.g. the Accessibility services list) - see that
                 // file for why a flat "does the text appear anywhere" check isn't enough.
                 if (packageName == "com.android.settings") {
-                    val extraDeviceWideKeywords = if (restrictSettingsFullyEnabled) {
-                        // Wizard's "Phone Settings" restriction adds a couple of broader
-                        // screens on top, without blocking Settings wholesale.
-                        listOf("Modify system settings", "Usage access", "Battery optimization")
-                    } else {
-                        emptyList()
-                    }
-                    val classification = SettingsScreenClassifier.classify(nodeToUse, appName, extraDeviceWideKeywords)
-
-                    when (classification) {
-                        SettingsScreenClassifier.ScreenType.PROTECTED_APP_DETAIL -> {
-                            if (now - lastSettingsBounceAtMs >= SETTINGS_BOUNCE_DEBOUNCE_MS) {
-                                Log.d("FocusService", "Strict Mode: Bouncing back from our own app's Settings detail screen")
-                                lastSettingsBounceAtMs = now
-                                settingsHarmlessStreak = 0
-                                settingsGateShownAtMs = now
-                                bounceBackFromSettingsBypass(packageName)
-                            }
-                            return
-                        }
-                        SettingsScreenClassifier.ScreenType.PROTECTED_DEVICE_WIDE -> {
-                            Log.d("FocusService", "Strict Mode: Blocking settings bypass action in $packageName")
-                            settingsHarmlessStreak = 0
-                            settingsGateShownAtMs = now
-                            triggerBlockActivity(packageName, isLongTerm = false, reason = "Settings bypass action is blocked in Strict Mode.", endDate = sessionEndTime)
-                            return
-                        }
-                        SettingsScreenClassifier.ScreenType.LIST, SettingsScreenClassifier.ScreenType.SAFE -> {
-                            // Nothing actionable yet (a list the user hasn't drilled into,
-                            // or a genuinely harmless screen like WiFi/Bluetooth/Display) -
-                            // release the instant gate shown above before this tree walk
-                            // finished, rather than leaving the user stuck behind it.
-                            // Debounced: require two consecutive harmless reads AND a
-                            // minimum elapsed time since the gate fired, so a screen that's
-                            // still mid-render on the first read can't pass as "harmless"
-                            // and release the overlay while it's still tappable.
-                            if (overlayView != null && currentBlockedPackage == packageName) {
-                                settingsHarmlessStreak++
-                                val elapsedMs = now - settingsGateShownAtMs
-                                if (settingsHarmlessStreak >= SETTINGS_RELEASE_MIN_STREAK &&
-                                    elapsedMs >= SETTINGS_RELEASE_MIN_ELAPSED_MS
-                                ) {
-                                    removeOverlay()
-                                }
-                            }
-                        }
-                    }
+                    if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) startSettingsWatch()
+                    if (handleSettingsScreen(nodeToUse, packageName, appName, now)) return
                 }
             }
 
@@ -954,6 +920,73 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Classifies the current Settings screen and acts on it. Returns true when a
+     * bounce/block was fired (caller should stop processing this event).
+     */
+    private fun handleSettingsScreen(
+        root: AccessibilityNodeInfo?,
+        packageName: String,
+        appName: String,
+        now: Long
+    ): Boolean {
+        val extraDeviceWideKeywords = if (restrictSettingsFullyEnabled) {
+            listOf("Modify system settings", "Usage access", "Battery optimization")
+        } else {
+            emptyList()
+        }
+        when (SettingsScreenClassifier.classify(root, appName, extraDeviceWideKeywords)) {
+            SettingsScreenClassifier.ScreenType.PROTECTED_APP_DETAIL -> {
+                if (now - lastSettingsBounceAtMs >= SETTINGS_BOUNCE_DEBOUNCE_MS) {
+                    Log.d("FocusService", "Strict Mode: Bouncing back from our own app's Settings detail screen")
+                    lastSettingsBounceAtMs = now
+                    settingsHarmlessStreak = 0
+                    settingsGateShownAtMs = now
+                    bounceBackFromSettingsBypass(packageName)
+                }
+                return true
+            }
+            SettingsScreenClassifier.ScreenType.PROTECTED_DEVICE_WIDE -> {
+                if (now - lastDeviceWideBlockAtMs >= DEVICE_WIDE_BLOCK_DEBOUNCE_MS) {
+                    Log.d("FocusService", "Strict Mode: Blocking settings bypass action in $packageName")
+                    lastDeviceWideBlockAtMs = now
+                    settingsHarmlessStreak = 0
+                    settingsGateShownAtMs = now
+                    triggerBlockActivity(packageName, isLongTerm = false, reason = "Settings bypass action is blocked in Strict Mode.", endDate = sessionEndTime)
+                }
+                return true
+            }
+            SettingsScreenClassifier.ScreenType.LIST, SettingsScreenClassifier.ScreenType.SAFE -> {
+                if (overlayView != null && currentBlockedPackage == packageName) {
+                    settingsHarmlessStreak++
+                    val elapsedMs = now - settingsGateShownAtMs
+                    if (settingsHarmlessStreak >= SETTINGS_RELEASE_MIN_STREAK &&
+                        elapsedMs >= SETTINGS_RELEASE_MIN_ELAPSED_MS
+                    ) {
+                        removeOverlay()
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    private fun startSettingsWatch() {
+        settingsWatchUntilMs = System.currentTimeMillis() + SETTINGS_WATCH_WINDOW_MS
+        if (settingsWatchJob?.isActive == true) return
+        settingsWatchJob = serviceScope.launch {
+            val appName = applicationContext.getString(R.string.app_name)
+            while (System.currentTimeMillis() < settingsWatchUntilMs) {
+                delay(SETTINGS_WATCH_INTERVAL_MS)
+                val strict = isSessionActive && System.currentTimeMillis() < sessionEndTime && isSessionStrict
+                if (!strict) break
+                val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: continue
+                if (root.packageName?.toString() != "com.android.settings") break
+                handleSettingsScreen(root, "com.android.settings", appName, System.currentTimeMillis())
+            }
+        }
+    }
+
+    /**
      * Silent, lightweight response used ONLY when the user has navigated straight to
      * Focuss Buddy's own accessibility/app-info/device-admin toggle screen (i.e. is
      * literally looking at the toggle that would disable enforcement). Unlike
@@ -1004,7 +1037,7 @@ class FocusAccessibilityService : AccessibilityService() {
         // actually navigated - firing both in the same instant can race the
         // first transition and get silently dropped by the system.
         serviceScope.launch {
-            delay(60)
+            delay(220)
             try {
                 performGlobalAction(GLOBAL_ACTION_BACK)
             } catch (e: Exception) {
