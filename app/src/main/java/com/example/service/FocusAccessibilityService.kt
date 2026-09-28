@@ -62,6 +62,30 @@ class FocusAccessibilityService : AccessibilityService() {
         // Safety-net cap on how long the instant-block overlay can stay up if
         // BlockActivity never calls dismissInstantOverlay() (e.g. it fails to launch).
         private const val OVERLAY_SAFETY_TIMEOUT_MS = 4_000L
+
+        // Colour of the text-less backdrop shown while BlockActivity / the PIN screen
+        // loads (same as BlockActivity's top gradient colour). It exists only to hide
+        // the blocked app's content for those few frames. Set to false to disable.
+        private const val USE_APP_BACKDROP = true
+        private const val BACKDROP_COLOR = 0xFF0F0C20.toInt()
+
+        private const val SETTINGS_CONTENT_THROTTLE_MS = 50L
+
+        private val BROWSER_PACKAGES = setOf(
+            "com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary",
+            "org.mozilla.firefox", "org.mozilla.firefox_beta", "org.mozilla.fenix",
+            "com.opera.browser", "com.opera.mini.native", "com.opera.gx",
+            "com.sec.android.app.sbrowser", "com.microsoft.emmx",
+            "com.duckduckgo.mobile.android", "com.brave.browser",
+            "com.heytap.browser", "com.coloros.browser", "com.android.browser",
+            "com.vivaldi.browser", "com.kiwibrowser.browser", "com.UCMobile.intl"
+        )
+
+        // Packages whose node tree we must read even when no browser/Settings is involved.
+        private val TREE_PACKAGES = setOf(
+            "com.google.android.youtube", "com.instagram.android", "com.snapchat.android",
+            "com.android.settings", "com.android.packageinstaller", "com.google.android.packageinstaller"
+        )
     }
 
     private val serviceJob = SupervisorJob()
@@ -244,7 +268,7 @@ class FocusAccessibilityService : AccessibilityService() {
                 if (notificationManager?.getNotificationChannel(NOTIFICATION_CHANNEL_ID) == null) {
                     val channel = NotificationChannel(
                         NOTIFICATION_CHANNEL_ID,
-                        "Focus Buddy Protection",
+                        "Focuss Buddy Protection",
                         NotificationManager.IMPORTANCE_MIN
                     ).apply {
                         description = "Keeps app and website blocking running in the background"
@@ -255,8 +279,8 @@ class FocusAccessibilityService : AccessibilityService() {
             }
 
             val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                .setContentTitle("Focus Buddy is protecting your focus")
-                .setContentText("App and website blocking is active")
+                .setContentTitle("Focuss Buddy is protecting your focus")
+                .setContentText("Protection service is running")
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setPriority(NotificationCompat.PRIORITY_MIN)
                 .setOngoing(true)
@@ -311,6 +335,13 @@ class FocusAccessibilityService : AccessibilityService() {
         return packageName == currentImePackage
     }
 
+    private fun isHomeLauncherPackage(packageName: String): Boolean {
+        return try {
+            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            packageManager.queryIntentActivities(i, 0).any { it.activityInfo.packageName == packageName }
+        } catch (e: Exception) { false }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val eventType = event.eventType
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && 
@@ -318,21 +349,17 @@ class FocusAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
 
-        // Instant Strict-Mode Settings gate: cover the screen the moment a Settings
-        // window appears, BEFORE the node-tree walk + keyword check further below
-        // runs. That walk is real work (allocations, IPC, tree traversal) and on a
-        // 2GB Go device it can occasionally take long enough under GC pressure for
-        // the destination screen (already showing the accessibility/device-admin
-        // toggle) to stay touchable and tappable during the delay - an exploitable
-        // race window. We self-correct within this same event further down if the
-        // screen turns out to be a harmless one (WiFi, Bluetooth, Display, etc.).
+        // Strict-Mode Settings gate: an invisible, text-less touch guard goes up the
+        // moment a Settings window opens, so the accessibility/device-admin toggle can't
+        // be tapped during the node-tree read below. Released once the screen is
+        // classified harmless (see the LIST/SAFE branch further down).
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             packageName == "com.android.settings" &&
             overlayView == null &&
             isSessionActive && System.currentTimeMillis() < sessionEndTime && isSessionStrict &&
             Settings.canDrawOverlays(this)
         ) {
-            showOverlay(packageName)
+            showOverlay(packageName, opaque = false)
             settingsHarmlessStreak = 0
             settingsGateShownAtMs = System.currentTimeMillis()
         }
@@ -355,11 +382,10 @@ class FocusAccessibilityService : AccessibilityService() {
         // low-RAM Go devices, so we throttle it. WINDOW_STATE_CHANGED (app/tab
         // switches) is never throttled, so app/website blocking still reacts instantly.
         if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            if (packageName != "com.android.settings") {
-                val nowMs = System.currentTimeMillis()
-                if (nowMs - lastContentChangedProcessTime < CONTENT_CHANGED_THROTTLE_MS) return
-                lastContentChangedProcessTime = nowMs
-            }
+            val nowMs = System.currentTimeMillis()
+            val minGap = if (packageName == "com.android.settings") SETTINGS_CONTENT_THROTTLE_MS else CONTENT_CHANGED_THROTTLE_MS
+            if (nowMs - lastContentChangedProcessTime < minGap) return
+            lastContentChangedProcessTime = nowMs
         }
 
         // Update live diagnostics variables
@@ -388,7 +414,9 @@ class FocusAccessibilityService : AccessibilityService() {
         // never left. Only a transition to a genuine other app should revoke it.
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             unlockedPackage != null && unlockedPackage != packageName &&
-            !isTransientSystemPackage(packageName)
+            packageName != applicationContext.packageName &&
+            !isTransientSystemPackage(packageName) &&
+            (isHomeLauncherPackage(packageName) || lockedPackages.contains(packageName) || blockedPackages.contains(packageName))
         ) {
             unlockedPackage = null
         }
@@ -411,9 +439,12 @@ class FocusAccessibilityService : AccessibilityService() {
         // check below (diagnostics, website blocking, Shorts/Reels/Spotlight detection).
         // The previous implementation queried rootInActiveWindow a second time for the
         // website-blocking check, doubling the IPC + tree-walk cost of every event.
-        val rootNode = rootInActiveWindow
-        val usingFallbackSource = rootNode == null
-        val nodeToUse = rootNode ?: event.source
+        val needsTree = TREE_PACKAGES.contains(packageName) ||
+            BROWSER_PACKAGES.contains(packageName) ||
+            visibleText.subscriptionCount.value > 0
+        val rootNode = if (needsTree) rootInActiveWindow else null
+        val usingFallbackSource = needsTree && rootNode == null
+        val nodeToUse = if (needsTree) (rootNode ?: event.source) else null
 
         try {
             val screenTexts = mutableListOf<String>()
@@ -421,7 +452,7 @@ class FocusAccessibilityService : AccessibilityService() {
                 collectScreenText(nodeToUse, screenTexts, 0)
             }
             val textString = screenTexts.joinToString(", ")
-            visibleText.value = if (textString.length > 1000) textString.take(1000) + "..." else textString
+            if (nodeToUse != null) visibleText.value = if (textString.length > 1000) textString.take(1000) + "..." else textString
 
             // The indented full-tree dump is a debug convenience only used for YouTube
             // logging - build it lazily, only for that package, instead of on every
@@ -512,9 +543,9 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Always-on Uninstall Friction Guard for Focus Buddy (independent of Strict Mode
+            // Always-on Uninstall Friction Guard for Focuss Buddy (independent of Strict Mode
             // session). Redirects into the app's real 600-word uninstall flow instead of a
-            // dead-end block screen, the moment Settings shows Focus Buddy's own App Info
+            // dead-end block screen, the moment Settings shows Focuss Buddy's own App Info
             // screen with an "Uninstall" action visible, or the system package installer's
             // uninstall confirmation appears directly.
             if (!isStrictModeActive) {
@@ -525,11 +556,6 @@ class FocusAccessibilityService : AccessibilityService() {
 
                 if (isUninstallerScreen || isOwnAppInfoWithUninstall) {
                     Log.d("FocusService", "Detected external uninstall attempt - redirecting to in-app flow")
-                    if (Settings.canDrawOverlays(this)) {
-                        showOverlay(packageName)
-                    } else {
-                        triggerOverlayPermissionRequest()
-                    }
                     val redirectIntent = Intent(this, MainActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         putExtra("deep_link_route", "uninstall_reflection")
@@ -617,15 +643,7 @@ class FocusAccessibilityService : AccessibilityService() {
             }
 
             // 3. Check for active Long-Term Website Blocks (Inspect browser URL/node contents)
-            val browserPackages = setOf(
-                "com.android.chrome",
-                "org.mozilla.firefox",
-                "com.opera.browser",
-                "com.sec.android.app.sbrowser",
-                "com.microsoft.emmx",
-                "com.duckduckgo.mobile.android",
-                "com.brave.browser"
-            )
+            val browserPackages = BROWSER_PACKAGES
             if (browserPackages.contains(packageName)) {
                 val activeWebBlocks = activeWebsitesList.filter {
                     now >= it.startDate && now <= it.endDate && it.isActive
@@ -817,6 +835,7 @@ class FocusAccessibilityService : AccessibilityService() {
         quotaHeartbeatJob = serviceScope.launch {
             while (true) {
                 kotlinx.coroutines.delay(3_000L)
+                if (longTermBlocks.none { it.type == "APP" && it.dailyLimitSeconds != null }) continue
                 try {
                     val fgPackage = rootInActiveWindow?.packageName?.toString() ?: continue
                     if (quotaTrackingPackage == fgPackage) continue
@@ -926,19 +945,11 @@ class FocusAccessibilityService : AccessibilityService() {
      * overlay/BlockActivity as before instead of silently doing nothing.
      */
     private fun closeBlockedAppThenBlock(packageName: String) {
+        // No forced HOME. A text-less backdrop hides the app until BlockActivity is up.
         if (Settings.canDrawOverlays(this)) {
             showOverlay(packageName)
         } else {
             triggerOverlayPermissionRequest()
-        }
-
-        try {
-            val sentHome = performGlobalAction(GLOBAL_ACTION_HOME)
-            if (!sentHome) {
-                Log.d("FocusService", "GLOBAL_ACTION_HOME returned false for $packageName")
-            }
-        } catch (e: Exception) {
-            Log.e("FocusService", "Error dispatching GLOBAL_ACTION_HOME", e)
         }
     }
 
@@ -1043,11 +1054,10 @@ class FocusAccessibilityService : AccessibilityService() {
      */
     private fun triggerAppLockPrompt(packageName: String) {
         if (Settings.canDrawOverlays(this)) {
-            showOverlay(packageName, message = "App Locked")
+            showOverlay(packageName)
         } else {
             triggerOverlayPermissionRequest()
         }
-
         val intent = Intent(this, com.example.AppLockUnlockActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             putExtra("LOCKED_PACKAGE", packageName)
@@ -1285,24 +1295,17 @@ class FocusAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun showOverlay(packageName: String, message: String = "App Blocked!") {
-        // Runs synchronously (no Handler.post) - we're already on the main thread
-        // here (onAccessibilityEvent always dispatches on it), and posting only
-        // pushed the overlay's actual appearance later in the message queue,
-        // behind whatever else was pending - which is what made it show up late.
+    /**
+     * Text-less cover window. opaque=true: solid backdrop (hides the blocked app while
+     * BlockActivity / the PIN screen loads). opaque=false: fully transparent but still
+     * touch-consuming (Settings gate). Removed by BlockActivity/AppLockUnlockActivity
+     * onResume, by the Settings classifier, or by the safety timeout.
+     */
+    private fun showOverlay(packageName: String, opaque: Boolean = true) {
         try {
+            val color = if (opaque && USE_APP_BACKDROP) BACKDROP_COLOR else Color.TRANSPARENT
             if (overlayView == null) {
-                val textView = TextView(this).apply {
-                    text = message
-                    textSize = 24f
-                    setTextColor(Color.WHITE)
-                    gravity = Gravity.CENTER
-                    setBackgroundColor(Color.parseColor("#121212")) // Premium dark background
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                }
+                val cover = View(this).apply { setBackgroundColor(color) }
                 val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -1315,25 +1318,15 @@ class FocusAccessibilityService : AccessibilityService() {
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                     PixelFormat.TRANSLUCENT
                 )
-                windowManager.addView(textView, params)
-                overlayView = textView
+                windowManager.addView(cover, params)
+                overlayView = cover
                 currentBlockedPackage = packageName
-                Log.d("FocusService", "Overlay added successfully for $packageName")
-
-                // Safety net: normally BlockActivity.onResume() calls
-                // dismissInstantOverlay() within a fraction of a second. If that
-                // never happens (e.g. BlockActivity failed to launch), force-remove
-                // the overlay after a short delay instead of leaving it stuck over
-                // whatever the user is doing.
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    if (overlayView == textView) {
-                        Log.d("FocusService", "Overlay safety-net timeout fired for $packageName")
-                        removeOverlay()
-                    }
+                    if (overlayView == cover) removeOverlay()
                 }, OVERLAY_SAFETY_TIMEOUT_MS)
             } else {
                 currentBlockedPackage = packageName
-                (overlayView as? TextView)?.text = message
+                if (opaque) overlayView?.setBackgroundColor(color)
             }
         } catch (e: Exception) {
             Log.e("FocusService", "Error adding overlay view", e)

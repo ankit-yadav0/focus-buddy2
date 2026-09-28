@@ -134,7 +134,7 @@ fun StrictPasswordGate(
                     color = Color.White
                 )
                 Text(
-                    text = "Enter your password to open Focus Buddy while this Strict Mode session is active.",
+                    text = "Enter your password to open Focuss Buddy while this Strict Mode session is active.",
                     color = Color.White.copy(alpha = 0.6f),
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
@@ -173,7 +173,7 @@ fun StrictPasswordGate(
                     Text("Unlock", fontWeight = FontWeight.Bold)
                 }
                 TextButton(onClick = onExit) {
-                    Text("Close Focus Buddy", color = Color.White.copy(alpha = 0.6f))
+                    Text("Close Focuss Buddy", color = Color.White.copy(alpha = 0.6f))
                 }
             }
         }
@@ -228,7 +228,7 @@ fun LaunchEnforcementGate(
                 )
 
                 Text(
-                    text = "Focus Buddy requires Overlay & Device Administrator permissions active to prevent unauthorized bypass and guarantee focus-locking consistency.",
+                    text = "Focuss Buddy requires Overlay & Device Administrator permissions active to prevent unauthorized bypass and guarantee focus-locking consistency.",
                     color = Color.White.copy(alpha = 0.6f),
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
@@ -249,7 +249,7 @@ fun LaunchEnforcementGate(
 
                 PermissionRow(
                     title = "Device Admin Activation",
-                    description = "Required to lock deinstallation of Focus Buddy.",
+                    description = "Required to lock deinstallation of Focuss Buddy.",
                     isGranted = hasAdmin,
                     onGrant = onActivateAdmin,
                     grantButtonText = "Activate Admin"
@@ -269,7 +269,7 @@ fun LaunchEnforcementGate(
                     ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Close Focus Buddy", fontWeight = FontWeight.Bold)
+                    Text("Close Focuss Buddy", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -475,7 +475,7 @@ class MainActivity : ComponentActivity() {
                                     putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComp)
                                     putExtra(
                                         DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                                        "Enabling Device Admin blocks uninstallation of Focus Buddy."
+                                        "Enabling Device Admin blocks uninstallation of Focuss Buddy."
                                     )
                                 }
                                 try {

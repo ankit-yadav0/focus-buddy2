@@ -133,7 +133,7 @@ object UpdateManager {
                     "App Updates",
                     NotificationManager.IMPORTANCE_DEFAULT
                 ).apply {
-                    description = "Notifies you when a new Focus Buddy update is available"
+                    description = "Notifies you when a new Focuss Buddy update is available"
                 }
                 manager.createNotificationChannel(channel)
             }
@@ -185,7 +185,7 @@ object UpdateManager {
         if (destFile.exists()) destFile.delete()
 
         val request = DownloadManager.Request(Uri.parse(downloadUrl))
-            .setTitle("Focus Buddy update")
+            .setTitle("Focuss Buddy update")
             .setDescription("Downloading version $versionName")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationUri(Uri.fromFile(destFile))

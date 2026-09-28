@@ -41,9 +41,9 @@ object SettingsScreenClassifier {
     // Only ever appear on a genuine per-app detail/config page, never on a screen that
     // lists several apps side by side.
     private val DETAIL_ONLY_KEYWORDS = listOf(
-        "Uninstall", "Force stop", "Storage & cache", "App info", "Open by default",
+        "Uninstall", "Force stop", "Storage & cache", "Open by default",
         "Deactivate this device admin app", "Activate this device admin app",
-        "Battery", "Notifications", "Permissions", "Advanced"
+        "Clear cache"
     )
 
     // Dangerous regardless of which app's screen they appear on - checked before we
@@ -83,7 +83,10 @@ object SettingsScreenClassifier {
         // can itself contain several rows and would otherwise get misread as a "list"
         // and vetoed. List-shape is a fallback for when NEITHER decisive signal fired,
         // never a veto over a signal that did.
-        if (signals.hasDetailKeyword || signals.checkableCount == 1) {
+        // A lone switch only counts as "our app's toggle" on a short screen; on a long
+        // list of similar rows (Apps & notifications, etc.) it is just one row's switch.
+        val loneToggle = signals.checkableCount == 1 && signals.maxSiblingGroupSize < 5
+        if (signals.hasDetailKeyword || loneToggle) {
             return ScreenType.PROTECTED_APP_DETAIL
         }
 
@@ -99,6 +102,10 @@ object SettingsScreenClassifier {
         // bouncing - an unrecognized shape should fail open, not trigger a false bounce.
         return ScreenType.SAFE
     }
+
+    /** Whole-word, case-insensitive match so "Reset" no longer fires on "Preset". */
+    private fun containsWord(text: String, word: String): Boolean =
+        Regex("(?<![A-Za-z])" + Regex.escape(word) + "(?![A-Za-z])", RegexOption.IGNORE_CASE).containsMatchIn(text)
 
     private fun collectSignals(
         root: AccessibilityNodeInfo,
@@ -117,7 +124,7 @@ object SettingsScreenClassifier {
             listOfNotNull(node.text?.toString(), node.contentDescription?.toString()).forEach { t ->
                 if (t.contains(appName, ignoreCase = true)) hasAppIdentity = true
                 if (DETAIL_ONLY_KEYWORDS.any { t.contains(it, ignoreCase = true) }) hasDetailKeyword = true
-                if (deviceWideKeywords.any { t.contains(it, ignoreCase = true) }) hasDeviceWideKeyword = true
+                if (deviceWideKeywords.any { containsWord(t, it) }) hasDeviceWideKeyword = true
             }
             if (node.isCheckable) checkableCount++
 

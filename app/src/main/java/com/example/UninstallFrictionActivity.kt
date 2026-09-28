@@ -183,7 +183,7 @@ fun UninstallFrictionScreen(
             )
 
             Text(
-                text = "Write at least 400 words about why you're uninstalling Focus Buddy and what you were hoping to achieve with it. Use this space for a mindful reflection on your productivity journey.",
+                text = "Write at least 400 words about why you're uninstalling Focuss Buddy and what you were hoping to achieve with it. Use this space for a mindful reflection on your productivity journey.",
                 color = Color.White.copy(alpha = 0.85f),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
@@ -305,7 +305,7 @@ fun UninstallFrictionScreen(
                     .height(56.dp)
             ) {
                 Text(
-                    text = "Cancel & Keep Focus Buddy",
+                    text = "Cancel & Keep Focuss Buddy",
                     color = Color.White.copy(alpha = 0.6f),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold

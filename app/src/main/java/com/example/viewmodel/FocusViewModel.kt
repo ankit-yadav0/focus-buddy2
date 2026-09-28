@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.PinSecurity
 import com.example.data.BlockedApp
 import com.example.data.FocusRepository
 import com.example.data.FocusSession
@@ -257,17 +258,12 @@ class FocusViewModel(
         repository.saveSetting("strict_deactivation_method", config.deactivationMethod)
     }
 
-    private fun sha256(input: String): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
-        return digest.joinToString("") { "%02x".format(it) }
-    }
-
     suspend fun hasStrictModePassword(): Boolean {
         return !repository.getSetting("strict_password_hash").isNullOrBlank()
     }
 
     suspend fun setStrictModePassword(password: String) {
-        repository.saveSetting("strict_password_hash", sha256(password))
+        repository.saveSetting("strict_password_hash", PinSecurity.hash(password))
     }
 
     suspend fun clearStrictModePassword() {
@@ -277,7 +273,11 @@ class FocusViewModel(
     suspend fun verifyStrictModePassword(password: String): Boolean {
         val stored = repository.getSetting("strict_password_hash") ?: return false
         if (stored.isBlank()) return false
-        return stored == sha256(password)
+        val ok = PinSecurity.verify(password, stored)
+        if (ok && PinSecurity.isLegacy(stored)) {
+            repository.saveSetting("strict_password_hash", PinSecurity.hash(password))
+        }
+        return ok
     }
 
     /** True right now if a strict session is active AND the password gate is configured. */
@@ -786,12 +786,24 @@ class FocusViewModel(
     }
 
     suspend fun setAppLockPin(pin: String) {
-        repository.saveSetting("app_lock_pin_hash", sha256(pin))
+        repository.saveSetting("app_lock_pin_hash", PinSecurity.hash(pin))
+        PinSecurity.recordSuccess(context)
     }
 
+    /** Seconds left on the App Lock PIN lockout (0 = not locked out). */
+    fun appLockLockoutSeconds(): Long = (PinSecurity.remainingLockMs(context) + 999) / 1000
+
     suspend fun verifyAppLockPin(pin: String): Boolean {
+        if (PinSecurity.remainingLockMs(context) > 0) return false
         val stored = repository.getSetting("app_lock_pin_hash") ?: return false
-        return stored == sha256(pin)
+        val ok = PinSecurity.verify(pin, stored)
+        if (ok) {
+            if (PinSecurity.isLegacy(stored)) repository.saveSetting("app_lock_pin_hash", PinSecurity.hash(pin))
+            PinSecurity.recordSuccess(context)
+        } else {
+            PinSecurity.recordFailure(context)
+        }
+        return ok
     }
 
     fun toggleAppLocked(app: AppInfo) {

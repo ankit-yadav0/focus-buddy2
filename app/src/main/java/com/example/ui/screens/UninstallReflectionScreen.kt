@@ -129,7 +129,7 @@ fun UninstallReflectionScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Please write a 600-word reflection explaining your decision to uninstall Focus Buddy. Hasty deinstallation often ruins focus routines. Typing must be done manually — copy-paste is disabled.",
+                            text = "Please write a 600-word reflection explaining your decision to uninstall Focuss Buddy. Hasty deinstallation often ruins focus routines. Typing must be done manually — copy-paste is disabled.",
                             fontSize = 12.sp,
                             lineHeight = 16.sp,
                             color = Color.White.copy(alpha = 0.7f)
@@ -199,7 +199,7 @@ fun UninstallReflectionScreen(
                                         putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComp)
                                         putExtra(
                                             DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                                            "Enabling Device Admin blocks uninstallation of Focus Buddy."
+                                            "Enabling Device Admin blocks uninstallation of Focuss Buddy."
                                         )
                                     }
                                     context.startActivity(intent)

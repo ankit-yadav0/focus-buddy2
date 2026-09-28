@@ -3874,7 +3874,7 @@ fun FocusTimerScreen(
                                         putExtra(android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
                                         putExtra(
                                             android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                                            "Enabling Device Admin blocks uninstallation of Focus Buddy."
+                                            "Enabling Device Admin blocks uninstallation of Focuss Buddy."
                                         )
                                     }
                                     context.startActivity(intent)
@@ -4371,7 +4371,8 @@ fun AppLockScreen(
                                 errorText = null
                                 stage = "list"
                             } else {
-                                errorText = "Wrong PIN, try again"
+                                val lockSecs = viewModel.appLockLockoutSeconds()
+                                errorText = if (lockSecs > 0) "Too many attempts. Try again in ${lockSecs}s" else "Wrong PIN, try again"
                             }
                             onDone(correct)
                         }
@@ -6510,7 +6511,7 @@ fun StrictScheduleManagerScreen(
                             fontSize = 16.sp
                         )
                         Text(
-                            text = "To start scheduled strict sessions precisely on time, Focus Buddy needs the Exact Alarm permission.",
+                            text = "To start scheduled strict sessions precisely on time, Focuss Buddy needs the Exact Alarm permission.",
                             fontSize = 14.sp
                         )
                         Button(
@@ -6990,7 +6991,7 @@ fun UninstallDrawerCard(onUninstallClick: () -> Unit) {
                     modifier = Modifier.size(24.dp)
                 )
                 Text(
-                    text = "Uninstall Focus Buddy",
+                    text = "Uninstall Focuss Buddy",
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp,
                     color = Color.White
@@ -6998,7 +6999,7 @@ fun UninstallDrawerCard(onUninstallClick: () -> Unit) {
             }
 
             Text(
-                text = "To completely remove Focus Buddy, you must first write a personal reflection via our security gate.",
+                text = "To completely remove Focuss Buddy, you must first write a personal reflection via our security gate.",
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 12.sp,
                 lineHeight = 16.sp

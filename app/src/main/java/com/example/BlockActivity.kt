@@ -3,6 +3,7 @@ package com.example
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.BorderStroke
@@ -48,6 +49,8 @@ class BlockActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
+        // Back/gesture is absorbed: screen leaves only via its own button.
+        onBackPressedDispatcher.addCallback(this) { }
 
         val blockedPackage = intent.getStringExtra("BLOCKED_PACKAGE") ?: "Unknown App"
         val fallbackEndTime = intent.getLongExtra("END_TIME", 0L)
@@ -243,6 +246,14 @@ fun BlockScreenContent(
                 contentDescription = "Shield Icon",
                 tint = if (isLongTerm) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(72.dp)
+            )
+
+            Text(
+                text = if (isLongTerm && longTermType == "WEBSITE") "Website Blocked" else "App Blocked",
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 2.sp
             )
 
             Text(
@@ -489,7 +500,7 @@ fun BlockScreenContent(
                 .padding(bottom = 16.dp)
         ) {
             Text(
-                text = "Return to Home Screen",
+                text = "Return Back",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )

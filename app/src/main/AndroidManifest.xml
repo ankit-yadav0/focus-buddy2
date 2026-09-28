@@ -22,7 +22,6 @@
          less likely to kill the process while blocking is active. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Lets us prompt the user to exempt the app from battery optimizations,
@@ -34,7 +33,7 @@
 
     <application
         android:name=".FocusApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -117,7 +116,7 @@
         <!-- Device Administrator Receiver for Zero-Leak Uninstall Block -->
         <receiver
             android:name=".receiver.MyDeviceAdminReceiver"
-            android:label="Focus Buddy Device Admin"
+            android:label="Focuss Buddy Device Admin"
             android:description="@string/device_admin_description"
             android:permission="android.permission.BIND_DEVICE_ADMIN"
             android:exported="true">

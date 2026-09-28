@@ -41,6 +41,7 @@ class AppLockUnlockActivity : ComponentActivity() {
     // actually just opened.
     private var lockedPackageState by mutableStateOf("")
     private var appLabelState by mutableStateOf("")
+    private var lockoutMessageState by mutableStateOf<String?>(null)
 
     override fun onResume() {
         super.onResume()
@@ -104,16 +105,30 @@ class AppLockUnlockActivity : ComponentActivity() {
                     PinUnlockScreen(
                         appName = appLabelState,
                         onCancel = { goHomeAndFinish() },
+                        lockoutMessage = lockoutMessageState,
                         onVerifyPin = { pin, onResult ->
                             scope.launch {
-                                val correct = app.repository.let { repo ->
-                                    val stored = repo.getSetting("app_lock_pin_hash")
-                                    stored != null && stored == sha256(pin)
+                                val ctx = this@AppLockUnlockActivity
+                                val lockMs = PinSecurity.remainingLockMs(ctx)
+                                if (lockMs > 0) {
+                                    lockoutMessageState = PinSecurity.lockMessage(lockMs)
+                                    onResult(false)
+                                    return@launch
                                 }
+                                val stored = app.repository.getSetting("app_lock_pin_hash")
+                                val correct = PinSecurity.verify(pin, stored)
                                 if (correct) {
+                                    if (PinSecurity.isLegacy(stored)) {
+                                        app.repository.saveSetting("app_lock_pin_hash", PinSecurity.hash(pin))
+                                    }
+                                    PinSecurity.recordSuccess(ctx)
+                                    lockoutMessageState = null
                                     FocusAccessibilityService.instance?.grantAppUnlock(lockedPackageState)
                                     finish()
                                 } else {
+                                    PinSecurity.recordFailure(ctx)
+                                    val left = PinSecurity.remainingLockMs(ctx)
+                                    lockoutMessageState = if (left > 0) PinSecurity.lockMessage(left) else null
                                     onResult(false)
                                 }
                             }
@@ -125,14 +140,10 @@ class AppLockUnlockActivity : ComponentActivity() {
     }
 }
 
-private fun sha256(input: String): String {
-    val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
-    return bytes.joinToString("") { "%02x".format(it) }
-}
-
 @Composable
 fun PinUnlockScreen(
     appName: String,
+    lockoutMessage: String? = null,
     onCancel: () -> Unit,
     onVerifyPin: (pin: String, onResult: (Boolean) -> Unit) -> Unit
 ) {
@@ -177,6 +188,13 @@ fun PinUnlockScreen(
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
+            text = "App Locked",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = Color(0xFFFF5252)
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
             text = "Enter PIN",
             fontSize = 22.sp,
             fontWeight = FontWeight.Black,
@@ -209,7 +227,7 @@ fun PinUnlockScreen(
 
         if (showError) {
             Text(
-                text = "Wrong PIN, try again",
+                text = lockoutMessage ?: "Wrong PIN, try again",
                 color = Color(0xFFFF5252),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold

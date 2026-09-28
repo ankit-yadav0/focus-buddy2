@@ -52,6 +52,8 @@ abstract class AppDatabase : RoomDatabase() {
                     "focus_buddy_database"
                 )
                 .addMigrations(MIGRATION_15_16)
+                // Only builds older than v15 (no migration path exists for them) - never v15+.
+                .fallbackToDestructiveMigrationFrom(*IntArray(14) { it + 1 })
                 .build()
                 INSTANCE = instance
                 instance

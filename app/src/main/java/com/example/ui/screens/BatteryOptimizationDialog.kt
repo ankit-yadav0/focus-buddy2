@@ -48,7 +48,7 @@ fun BatteryOptimizationDialog(
         },
         text = {
             Text(
-                text = "To ensure that your scheduled Strict Mode starts and stops exactly on time, we need background execution permissions.\n\nOn devices like Realme (and other ColorOS / Oppo systems), aggressive battery saver restrictions can kill background schedulers.\n\nPlease select 'Open Battery Settings', find Focus Buddy, and configure it to 'Allow background activity' or disable energy-saving optimization.",
+                text = "To ensure that your scheduled Strict Mode starts and stops exactly on time, we need background execution permissions.\n\nOn devices like Realme (and other ColorOS / Oppo systems), aggressive battery saver restrictions can kill background schedulers.\n\nPlease select 'Open Battery Settings', find Focuss Buddy, and configure it to 'Allow background activity' or disable energy-saving optimization.",
                 fontSize = 14.sp,
                 color = Color.White.copy(alpha = 0.8f)
             )

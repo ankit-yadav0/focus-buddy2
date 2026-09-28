@@ -70,7 +70,7 @@ class BootReceiver : BroadcastReceiver() {
 
                             val builder = NotificationCompat.Builder(context, channelId)
                                 .setContentTitle("Accessibility Permission Needed")
-                                .setContentText("Focus Buddy needs accessibility access re-granted to enforce your active strict focus session.")
+                                .setContentText("Focuss Buddy needs accessibility access re-granted to enforce your active strict focus session.")
                                 .setSmallIcon(R.mipmap.ic_launcher)
                                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                                 .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
