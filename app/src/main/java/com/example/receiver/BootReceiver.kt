@@ -18,18 +18,30 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import com.example.TrustedClock
 
 class BootReceiver : BroadcastReceiver() {
 
     private val receiverScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    private companion object {
+        const val BOOT_WORK_TIMEOUT_MS = 8_000L
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         Log.d("BootReceiver", "Received broadcast: $action")
         if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            // Re-anchor the tamper-resistant clock as early as possible after boot.
+            TrustedClock.now(context)
             val pendingResult = goAsync()
             receiverScope.launch {
                 try {
+                  // goAsync() gives roughly 10 seconds before the system ANRs the process. On a slow
+                  // 2GB device a cold database open can eat into that, so cap the work well under it
+                  // (the finally block below always releases the broadcast).
+                  withTimeout(BOOT_WORK_TIMEOUT_MS) {
                     val db = AppDatabase.getDatabase(context)
                     val activeSession = db.focusSessionDao().getActiveSessionSync()
                     if (activeSession != null && activeSession.isActive && activeSession.isStrict) {
@@ -94,6 +106,7 @@ class BootReceiver : BroadcastReceiver() {
                     } catch (e: Exception) {
                         Log.e("BootReceiver", "Error rescheduling schedules on boot", e)
                     }
+                  }
                 } catch (e: Exception) {
                     Log.e("BootReceiver", "Error while handling broadcast $action", e)
                 } finally {

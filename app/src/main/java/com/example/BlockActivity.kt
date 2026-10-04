@@ -149,13 +149,13 @@ fun BlockScreenContent(
     val startTime = activeSession?.startTime ?: (actualEndTime - 15 * 60 * 1000L) // fallback to 15 min session
     val durationMinutes = activeSession?.durationMinutes ?: 15
 
-    var timeRemaining by remember(actualEndTime) { mutableStateOf(max(0L, actualEndTime - System.currentTimeMillis())) }
+    var timeRemaining by remember(actualEndTime) { mutableStateOf(max(0L, actualEndTime - TrustedClock.now())) }
 
     // Tick the countdown every second for active block/session
     LaunchedEffect(actualEndTime) {
         while (timeRemaining > 0) {
             kotlinx.coroutines.delay(1000L)
-            timeRemaining = max(0L, actualEndTime - System.currentTimeMillis())
+            timeRemaining = max(0L, actualEndTime - TrustedClock.now())
         }
     }
 
@@ -516,13 +516,13 @@ fun ContentBlockedScreen(
     onGoBack: () -> Unit
 ) {
     val endTime = activeSession?.endTime ?: fallbackEndTime
-    var timeRemaining by remember(endTime) { mutableStateOf(max(0L, endTime - System.currentTimeMillis())) }
+    var timeRemaining by remember(endTime) { mutableStateOf(max(0L, endTime - TrustedClock.now())) }
 
     // Tick the countdown every second for active focus session
     LaunchedEffect(endTime) {
         while (timeRemaining > 0) {
             kotlinx.coroutines.delay(1000L)
-            timeRemaining = max(0L, endTime - System.currentTimeMillis())
+            timeRemaining = max(0L, endTime - TrustedClock.now())
         }
     }
 

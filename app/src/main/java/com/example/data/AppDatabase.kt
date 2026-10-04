@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [BlockedApp::class, FocusSession::class, LongTermBlock::class, Analytics::class, WebsiteBlock::class, AppSetting::class, ChatMessage::class, StrictSchedule::class, ReflectionNote::class, TestEntry::class, PyqQuestion::class, PyqQuizAttempt::class, PyqQuizAnswer::class, LockedApp::class], version = 16, exportSchema = false)
+@Database(entities = [BlockedApp::class, FocusSession::class, LongTermBlock::class, Analytics::class, WebsiteBlock::class, AppSetting::class, StrictSchedule::class, ReflectionNote::class, LockedApp::class], version = 17, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun blockedAppDao(): BlockedAppDao
     abstract fun focusSessionDao(): FocusSessionDao
@@ -15,12 +15,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun analyticsDao(): AnalyticsDao
     abstract fun websiteBlockDao(): WebsiteBlockDao
     abstract fun appSettingDao(): AppSettingDao
-    abstract fun chatMessageDao(): ChatMessageDao
     abstract fun strictScheduleDao(): StrictScheduleDao
     abstract fun reflectionNoteDao(): ReflectionNoteDao
-    abstract fun testEntryDao(): TestEntryDao
-    abstract fun pyqQuestionDao(): PyqQuestionDao
-    abstract fun pyqQuizAttemptDao(): PyqQuizAttemptDao
     abstract fun lockedAppDao(): LockedAppDao
 
     companion object {
@@ -44,6 +40,19 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Drops the tables of features that were removed from the app (JEE test calendar,
+        // PYQ practice, study chat). A real Migration - never the destructive fallback, which
+        // would wipe every table (blocks, sessions, settings) on a version bump.
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS `chat_messages`")
+                db.execSQL("DROP TABLE IF EXISTS `test_entries`")
+                db.execSQL("DROP TABLE IF EXISTS `pyq_questions`")
+                db.execSQL("DROP TABLE IF EXISTS `pyq_quiz_attempts`")
+                db.execSQL("DROP TABLE IF EXISTS `pyq_quiz_answers`")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -51,7 +60,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "focus_buddy_database"
                 )
-                .addMigrations(MIGRATION_15_16)
+                .addMigrations(MIGRATION_15_16, MIGRATION_16_17)
                 // Only builds older than v15 (no migration path exists for them) - never v15+.
                 .fallbackToDestructiveMigrationFrom(*IntArray(14) { it + 1 })
                 .build()

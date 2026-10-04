@@ -100,6 +100,7 @@ fun StrictPasswordGate(
 
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf("Incorrect password.") }
     val scope = rememberCoroutineScope()
 
     Column(
@@ -154,7 +155,7 @@ fun StrictPasswordGate(
                     )
                 )
                 if (error) {
-                    Text("Incorrect password.", color = Color(0xFFFF5252), fontSize = 12.sp)
+                    Text(errorMessage, color = Color(0xFFFF5252), fontSize = 12.sp)
                 }
                 Button(
                     onClick = {
@@ -162,6 +163,8 @@ fun StrictPasswordGate(
                             if (viewModel.verifyStrictModePassword(password)) {
                                 onUnlocked()
                             } else {
+                                val lockSeconds = viewModel.strictPasswordLockoutSeconds()
+                                errorMessage = if (lockSeconds > 0) "Too many attempts. Try again in ${lockSeconds}s" else "Incorrect password."
                                 error = true
                             }
                         }
@@ -369,6 +372,24 @@ class MainActivity : ComponentActivity() {
         intent.putExtra("start_update_download", false)
     }
 
+    // Android 13+ keeps every notification (update prompts, the re-enable-accessibility reminder) hidden
+    // until POST_NOTIFICATIONS is granted at runtime - it was declared but never requested.
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* nothing to do either way; the user can still change it in system settings */ }
+
+    private fun requestNotificationPermissionOnce() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return
+        val prefs = getSharedPreferences("focuss_buddy_settings", MODE_PRIVATE)
+        if (prefs.getBoolean("notif_permission_asked", false)) return
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.POST_NOTIFICATIONS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) return
+        prefs.edit().putBoolean("notif_permission_asked", true).apply()
+        notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     private val pickWallpaperLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -419,6 +440,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         enableEdgeToEdge()
+        requestNotificationPermissionOnce()
 
         setContent {
             val app = application as FocusApplication
@@ -561,14 +583,6 @@ class MainActivity : ComponentActivity() {
                                 } catch (e: Exception) {
                                 }
                                 pendingDeepLinkRoute.value = null
-                            }
-                        }
-                        LaunchedEffect(Unit) {
-                            focusViewModel.seedTestScheduleIfNeeded()
-                            try {
-                                com.example.scheduler.TestCountdownScheduler.clearNotification(applicationContext)
-                                com.example.scheduler.TestCountdownScheduler.cancelUpdates(applicationContext)
-                            } catch (e: Exception) {
                             }
                         }
                         val navBackStackEntry by navController.currentBackStackEntryAsState()

@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import com.example.TimeUtils
+import com.example.TrustedClock
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import com.example.data.StrictSchedule
@@ -95,8 +97,6 @@ fun HomeScreen(
     onNavigateToAppSelection: () -> Unit,
     onNavigateToAppLock: () -> Unit = {},
     onNavigateToBlockDetails: (Int, String) -> Unit,
-    onNavigateToStudyChat: () -> Unit = {},
-    onNavigateToDebug: () -> Unit = {},
     onPickWallpaper: () -> Unit = {},
     onClearWallpaper: () -> Unit = {},
     wallpaperOpacity: Float = 0.5f,
@@ -127,28 +127,6 @@ fun HomeScreen(
     var isAccessibilityEnabled by remember { mutableStateOf(viewModel.isAccessibilityServiceEnabled()) }
     var isUsageEnabled by remember { mutableStateOf(viewModel.isUsageStatsPermissionGranted()) }
 
-    var isResumedTrigger by remember { mutableStateOf(0) }
-    var studyPlanCompletionPercentage by remember { mutableStateOf<Float?>(null) }
-    var isCelebratedAlready by remember { mutableStateOf(false) }
-    var celebrateTrigger by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isResumedTrigger) {
-        val pct = viewModel.getStudyPlanCompletionPercentage()
-        studyPlanCompletionPercentage = pct
-        val celebrated = viewModel.getSetting("syllabus_100_celebrated") == "true"
-        isCelebratedAlready = celebrated
-        
-        if (pct != null && pct >= 100f) {
-            if (!celebrated) {
-                celebrateTrigger = true
-                viewModel.saveSetting("syllabus_100_celebrated", "true")
-                isCelebratedAlready = true
-            }
-        } else {
-            celebrateTrigger = false
-        }
-    }
-
     // Refresh permission states when app resumes
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -156,7 +134,6 @@ fun HomeScreen(
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 isAccessibilityEnabled = viewModel.isAccessibilityServiceEnabled()
                 isUsageEnabled = viewModel.isUsageStatsPermissionGranted()
-                isResumedTrigger++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -271,15 +248,6 @@ fun HomeScreen(
                             )
                         }
                     },
-                    actions = {
-                        IconButton(onClick = onNavigateToDebug) {
-                            Icon(
-                                imageVector = Icons.Default.BugReport,
-                                contentDescription = "Debug Screen",
-                                tint = Color.White
-                            )
-                        }
-                    },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                         containerColor = Color.Transparent
                     )
@@ -337,8 +305,6 @@ fun HomeScreen(
                             ActiveSessionWidget(
                                 session = session,
                                 onStopSession = { viewModel.stopActiveSession() },
-                                completionPercentage = studyPlanCompletionPercentage,
-                                celebrateTrigger = celebrateTrigger,
                                 showOverrideOption = session.isStrict && deactivationMethod == "EXTREME_OVERRIDE",
                                 onOverrideClick = onNavigateToStrictOverride
                             )
@@ -1055,45 +1021,25 @@ fun AnimatedPlantBox(
 fun ActiveSessionWidget(
     session: FocusSession,
     onStopSession: () -> Unit,
-    completionPercentage: Float? = null,
-    celebrateTrigger: Boolean = false,
     showOverrideOption: Boolean = false,
     onOverrideClick: () -> Unit = {}
 ) {
-    var targetScale by remember { mutableStateOf(1f) }
-    val scaleFactor by animateFloatAsState(
-        targetValue = targetScale,
-        animationSpec = androidx.compose.animation.core.tween(durationMillis = 300),
-        finishedListener = {
-            if (targetScale == 1.15f) {
-                targetScale = 1f
-            }
-        },
-        label = "plantScaleAnimation"
-    )
-
-    LaunchedEffect(celebrateTrigger) {
-        if (celebrateTrigger) {
-            targetScale = 1.15f
-        }
-    }
-
     val endTime = session.endTime
     val startTime = session.startTime
     val durationMinutes = session.durationMinutes
 
     val totalDurationMs = remember(startTime, endTime) { (endTime - startTime).coerceAtLeast(1L) }
-    var timeRemaining by remember(endTime) { mutableStateOf(max(0L, endTime - System.currentTimeMillis())) }
+    var timeRemaining by remember(endTime) { mutableStateOf(max(0L, endTime - TrustedClock.now())) }
     var progressFraction by remember(startTime, endTime) {
-        val elapsed = (System.currentTimeMillis() - startTime).coerceIn(0L, totalDurationMs)
+        val elapsed = (TrustedClock.now() - startTime).coerceIn(0L, totalDurationMs)
         mutableStateOf(elapsed.toFloat() / totalDurationMs.toFloat())
     }
 
     LaunchedEffect(endTime) {
         while (timeRemaining > 0) {
             kotlinx.coroutines.delay(1000L)
-            timeRemaining = max(0L, endTime - System.currentTimeMillis())
-            val elapsed = (System.currentTimeMillis() - startTime).coerceIn(0L, totalDurationMs)
+            timeRemaining = max(0L, endTime - TrustedClock.now())
+            val elapsed = (TrustedClock.now() - startTime).coerceIn(0L, totalDurationMs)
             progressFraction = elapsed.toFloat() / totalDurationMs.toFloat()
         }
     }
@@ -1224,24 +1170,15 @@ fun ActiveSessionWidget(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 val isTimerFinished = timeRemaining <= 0L
-                val currentStage = if (completionPercentage != null) {
-                    when {
-                        completionPercentage >= 67f -> GrowthStage.MATURED
-                        completionPercentage >= 34f -> GrowthStage.SAPLING
-                        else -> GrowthStage.SEED
-                    }
-                } else {
-                    when {
-                        isTimerFinished -> GrowthStage.MATURED
-                        progressFraction >= 0.50f -> GrowthStage.SAPLING
-                        else -> GrowthStage.SEED
-                    }
+                val currentStage = when {
+                    isTimerFinished -> GrowthStage.MATURED
+                    progressFraction >= 0.50f -> GrowthStage.SAPLING
+                    else -> GrowthStage.SEED
                 }
 
                 AnimatedPlantBox(
                     currentStage = currentStage,
-                    waveProgress = progressFraction,
-                    modifier = Modifier.scale(scaleFactor)
+                    waveProgress = progressFraction
                 )
 
                 AnimatedContent(
@@ -1452,7 +1389,7 @@ fun LongTermBlockSection(
     onBlockClick: (Int, String) -> Unit,
     onBatteryGuidanceClick: () -> Unit
 ) {
-    val now = System.currentTimeMillis()
+    val now = TrustedClock.now()
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -1625,7 +1562,7 @@ fun LongTermBlockSection(
                                   }
 
                                   block.dailyLimitSeconds?.let { limitSeconds ->
-                                      val todayEpochDay = System.currentTimeMillis() / (24 * 60 * 60 * 1000L)
+                                      val todayEpochDay = TimeUtils.localEpochDay()
                                       val usedSeconds = if (block.lastUsageResetEpochDay != todayEpochDay) 0L else block.usedSecondsToday
                                       val fraction = (usedSeconds.toFloat() / limitSeconds.toFloat()).coerceIn(0f, 1f)
                                       fun fmt(s: Long): String {
@@ -2719,11 +2656,12 @@ fun AnalyticsCard(
                                                     val statusColor = when (session.sessionStatus) {
                                                         "Completed" -> Color(0xFF4CAF50)
                                                         "Expired" -> Color(0xFF4CAF50)
+                                                        "Active" -> MaterialTheme.colorScheme.primary
                                                         else -> MaterialTheme.colorScheme.error
                                                     }
 
                                                     Text(
-                                                        text = session.sessionStatus,
+                                                        text = if (session.sessionStatus == "Active") "In progress" else session.sessionStatus,
                                                         color = statusColor,
                                                         fontWeight = FontWeight.Black,
                                                         fontSize = 11.sp,
@@ -3012,8 +2950,8 @@ fun AddLongTermBlockDialog(
     var quotaMinutes by remember { mutableStateOf(30) }
     var quotaSeconds by remember { mutableStateOf(0) }
 
-    var startDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
-    var endDateMillis by remember { mutableStateOf(System.currentTimeMillis() + 7 * 24 * 60 * 60 * 1000L) } // default 1 week
+    var startDateMillis by remember { mutableStateOf(TrustedClock.now()) }
+    var endDateMillis by remember { mutableStateOf(TrustedClock.now() + 7 * 24 * 60 * 60 * 1000L) } // default 1 week
 
     var appSearchQuery by remember { mutableStateOf("") }
     var isAppDropdownExpanded by remember { mutableStateOf(false) }
@@ -3403,6 +3341,17 @@ fun FocusTimerScreen(
     var isCustomSelected by remember { mutableStateOf(false) }
     var isStrict by remember { mutableStateOf(false) }
     var showStrictWizard by remember { mutableStateOf(false) }
+
+    // A running Strict Mode session can't be replaced from here: starting another session over it
+    // would wipe the strict lock (and the override challenge / cooldown with it).
+    val runningSession by viewModel.activeSession.collectAsStateWithLifecycle()
+    var strictRunning by remember { mutableStateOf(false) }
+    LaunchedEffect(runningSession) {
+        while (true) {
+            strictRunning = runningSession?.let { it.isActive && it.isStrict && TrustedClock.now() < it.endTime } ?: false
+            kotlinx.coroutines.delay(1000L)
+        }
+    }
 
     if (showStrictWizard) {
         StrictModeSetupWizardScreen(
@@ -4012,7 +3961,7 @@ fun FocusTimerScreen(
                     }
                     onStartSession(minutes, isStrict, totalMs)
                 },
-                enabled = !isCustomSelected || isInputValid,
+                enabled = !strictRunning && (!isCustomSelected || isInputValid),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
@@ -4024,7 +3973,7 @@ fun FocusTimerScreen(
                 )
             ) {
                 Text(
-                    text = "Start Session Now",
+                    text = if (strictRunning) "Strict session in progress" else "Start Session Now",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -4048,7 +3997,7 @@ fun AppSelectionScreen(
     LaunchedEffect(activeSession) {
         while (true) {
             val session = activeSession
-            isStrictSessionActive = session?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+            isStrictSessionActive = session?.let { it.isActive && it.isStrict && TrustedClock.now() < it.endTime } ?: false
             kotlinx.coroutines.delay(1000L)
         }
     }
@@ -4583,7 +4532,7 @@ fun BlockDetailsScreen(
     blockType: String, // "APP" or "WEBSITE"
     onNavigateBack: () -> Unit
 ) {
-    val now = System.currentTimeMillis()
+    val now = TrustedClock.now()
 
     // Retrieve the block based on ID and Type
     val appBlocks by viewModel.allLongTermBlocks.collectAsStateWithLifecycle()
@@ -4892,22 +4841,6 @@ fun DailyDashboardCard(
                         fontWeight = FontWeight.Bold,
                         fontSize = 18.sp,
                         color = Color.White
-                    )
-                }
-
-                // Reset Action
-                IconButton(
-                    onClick = { viewModel.resetDailyCounters() },
-                    colors = IconButtonDefaults.iconButtonColors(
-                        containerColor = Color.White.copy(alpha = 0.05f)
-                    ),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Reset offsets",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
@@ -5308,148 +5241,6 @@ fun AccentThemeCard(viewModel: FocusViewModel) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DebugScreen(
-    viewModel: FocusViewModel,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val currentPkg by com.example.service.FocusAccessibilityService.currentPackage.collectAsStateWithLifecycle()
-    val currentAct by com.example.service.FocusAccessibilityService.currentActivity.collectAsStateWithLifecycle()
-    val textOnScreen by com.example.service.FocusAccessibilityService.visibleText.collectAsStateWithLifecycle()
-    val lastEvt by com.example.service.FocusAccessibilityService.lastEvent.collectAsStateWithLifecycle()
-    val shortsStatus by com.example.service.FocusAccessibilityService.shortsDetectionStatus.collectAsStateWithLifecycle()
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Accessibility Debugger", fontWeight = FontWeight.Bold, color = Color.White) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
-                )
-            )
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-        modifier = modifier
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 24.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(
-                text = "Live Accessibility Diagnostics",
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            )
-
-            // Status Card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    DebugRow(label = "Current Package", value = currentPkg)
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
-                    DebugRow(label = "Current Activity", value = currentAct)
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
-                    DebugRow(label = "Shorts Status", value = shortsStatus, isError = shortsStatus.contains("Detected"))
-                }
-            }
-
-            // Last Event Card
-            Text(
-                text = "Last Accessibility Event",
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            )
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
-                )
-            ) {
-                Text(
-                    text = lastEvt,
-                    color = Color.White.copy(alpha = 0.8f),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-
-            // Visible Text Card
-            Text(
-                text = "Visible Screen Text Detected",
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            )
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 150.dp, max = 300.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
-                    Text(
-                        text = textOnScreen.ifEmpty { "No visible text detected on screen." },
-                        color = Color.White.copy(alpha = 0.7f),
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp
-                    )
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-        }
-    }
-}
-
-@Composable
-fun DebugRow(label: String, value: String, isError: Boolean = false) {
-    Column {
-        Text(
-            text = label,
-            fontSize = 12.sp,
-            color = Color.White.copy(alpha = 0.5f),
-            fontWeight = FontWeight.Medium
-        )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = value,
-            fontSize = 14.sp,
-            color = if (isError) MaterialTheme.colorScheme.error else Color.White,
-            fontWeight = FontWeight.Bold
-        )
-    }
-}
-
 @Composable
 fun WallpaperSettingsDrawerCard(
     onPickWallpaper: () -> Unit,
@@ -5567,153 +5358,6 @@ fun WallpaperSettingsDrawerCard(
                     )
                 ) {
                     Text("Choose Wallpaper", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun WallpaperSettingsCard(
-    onPickWallpaper: () -> Unit,
-    onClearWallpaper: () -> Unit,
-    opacityValue: Float,
-    onOpacityChange: (Float) -> Unit
-) {
-    val context = LocalContext.current
-    val sharedPrefs = remember {
-        context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
-    }
-    val hasWallpaper = remember {
-        !sharedPrefs.getString("custom_wallpaper_uri", null).isNullOrEmpty()
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("wallpaper_settings_card"),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Image,
-                    contentDescription = "Wallpaper Icon",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Text(
-                    text = "Wallpaper Settings",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = Color.White
-                )
-            }
-
-            Text(
-                text = "Set a custom image as your focus workspace background to personalize your deep focus environment. A subtle dark overlay is applied automatically to maintain Material 3 contrast and high readability.",
-                color = Color.White.copy(alpha = 0.6f),
-                fontSize = 13.sp,
-                lineHeight = 18.sp
-            )
-
-            HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-
-            if (hasWallpaper) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Wallpaper Brightness",
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "${(opacityValue * 100).toInt()}%",
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Slider(
-                        value = opacityValue,
-                        onValueChange = onOpacityChange,
-                        valueRange = 0.0f..1.0f,
-                        colors = SliderDefaults.colors(
-                            activeTrackColor = MaterialTheme.colorScheme.primary,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.2f),
-                            thumbColor = MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("wallpaper_opacity_slider")
-                    )
-                }
-
-                HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Button(
-                        onClick = onPickWallpaper,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("set_wallpaper_button"),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Text("Change Wallpaper", fontWeight = FontWeight.Bold)
-                    }
-
-                    Button(
-                        onClick = onClearWallpaper,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("remove_wallpaper_button"),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Text("Remove Wallpaper", fontWeight = FontWeight.Bold)
-                    }
-                }
-            } else {
-                Button(
-                    onClick = onPickWallpaper,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("set_wallpaper_button"),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Text("Choose Wallpaper", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -7019,133 +6663,6 @@ fun UninstallDrawerCard(onUninstallClick: () -> Unit) {
             ) {
                 Text(
                     text = "Begin Uninstall Process",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun SectionLinkCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    iconTint: Color,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-    testTag: String
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .testTag(testTag),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White.copy(alpha = 0.05f)
-        ),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = title,
-                tint = iconTint,
-                modifier = Modifier.size(22.dp)
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    color = Color.White
-                )
-                Text(
-                    text = subtitle,
-                    fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.5f)
-                )
-            }
-            Icon(
-                imageVector = Icons.Default.ChevronRight,
-                contentDescription = "Open",
-                tint = Color.White.copy(alpha = 0.4f),
-                modifier = Modifier.size(18.dp)
-            )
-        }
-    }
-}
-
-@Composable
-fun FeatureDrawerCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    iconTint: Color,
-    title: String,
-    description: String,
-    buttonText: String,
-    onClick: () -> Unit,
-    testTag: String
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag(testTag),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White.copy(alpha = 0.05f)
-        ),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = title,
-                    tint = iconTint,
-                    modifier = Modifier.size(24.dp)
-                )
-                Text(
-                    text = title,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    color = Color.White
-                )
-            }
-
-            Text(
-                text = description,
-                color = Color.White.copy(alpha = 0.6f),
-                fontSize = 12.sp,
-                lineHeight = 16.sp
-            )
-
-            Button(
-                onClick = onClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp)
-                    .testTag("${testTag}_button"),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = iconTint,
-                    contentColor = Color.Black
-                )
-            ) {
-                Text(
-                    text = buttonText,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )

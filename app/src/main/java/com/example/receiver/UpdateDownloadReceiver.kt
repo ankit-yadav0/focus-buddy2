@@ -21,6 +21,10 @@ class UpdateDownloadReceiver : BroadcastReceiver() {
             return
         }
 
+        val succeeded = UpdateManager.isDownloadSuccessful(context, downloadId)
+        UpdateManager.clearPendingDownload(context)
+        if (!succeeded) return
+
         val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return
         val apkFile = downloadsDir.listFiles { f ->
             f.name.startsWith("focus-buddy-update-") && f.name.endsWith(".apk")

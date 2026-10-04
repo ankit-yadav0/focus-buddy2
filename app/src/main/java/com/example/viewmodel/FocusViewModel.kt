@@ -1,5 +1,6 @@
 package com.example.viewmodel
 
+import com.example.TrustedClock
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
@@ -15,9 +16,7 @@ import com.example.data.FocusSession
 import com.example.data.LongTermBlock
 import com.example.data.Analytics
 import com.example.data.WebsiteBlock
-import com.example.data.ChatMessage
 import com.example.data.StrictSchedule
-import com.example.data.TestEntry
 import com.example.data.LockedApp
 import com.example.scheduler.AlarmScheduler
 import kotlinx.coroutines.Dispatchers
@@ -141,7 +140,7 @@ class FocusViewModel(
 
     val isStrictModeActive: StateFlow<Boolean> = activeSession
         .map { session ->
-            session?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+            session?.let { it.isActive && it.isStrict && TrustedClock.now() < it.endTime } ?: false
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
@@ -184,29 +183,9 @@ class FocusViewModel(
     val allSchedules: StateFlow<List<StrictSchedule>> = repository.allSchedules
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // --- Strict Mode setup wizard: Restriction Editing lock ---
-    // "Restrict All" locks every editable category below while a strict session is
-    // running. "Restrict Specific" locks only the categories the user opted into at
-    // activation time. The blocked-apps list itself is always locked during any
-    // strict session regardless of this setting (see toggleAppBlocked) - that
-    // predates the wizard and was never configurable.
-    data class StrictEditLock(val rulesLocked: Boolean, val schedulesLocked: Boolean)
-
-    val strictEditLock: StateFlow<StrictEditLock> = combine(
-        isStrictModeActive,
-        repository.getSettingFlow("strict_restriction_editing_mode").map { it ?: "ALL" },
-        repository.getSettingFlow("strict_restrict_rules_specific").map { it?.toBoolean() ?: true },
-        repository.getSettingFlow("strict_restrict_schedules_specific").map { it?.toBoolean() ?: true }
-    ) { strictActive, mode, restrictRules, restrictSchedules ->
-        StrictEditLock(
-            rulesLocked = strictActive && (mode == "ALL" || restrictRules),
-            schedulesLocked = strictActive && (mode == "ALL" || restrictSchedules)
-        )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StrictEditLock(false, false))
-
     private suspend fun isRulesEditingLocked(): Boolean {
         val active = repository.getActiveSessionSync()
-        val strictActive = active?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+        val strictActive = active?.let { it.isActive && it.isStrict && TrustedClock.now() < it.endTime } ?: false
         if (!strictActive) return false
         val mode = repository.getSetting("strict_restriction_editing_mode") ?: "ALL"
         if (mode == "ALL") return true
@@ -215,7 +194,7 @@ class FocusViewModel(
 
     private suspend fun isSchedulesEditingLocked(): Boolean {
         val active = repository.getActiveSessionSync()
-        val strictActive = active?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+        val strictActive = active?.let { it.isActive && it.isStrict && TrustedClock.now() < it.endTime } ?: false
         if (!strictActive) return false
         val mode = repository.getSetting("strict_restriction_editing_mode") ?: "ALL"
         if (mode == "ALL") return true
@@ -233,21 +212,9 @@ class FocusViewModel(
         val deactivationMethod: String = "TIME_ONLY"    // "TIME_ONLY" | "EXTREME_OVERRIDE"
     )
 
-    suspend fun getStrictModeWizardConfig(): StrictModeWizardConfig {
-        return StrictModeWizardConfig(
-            restrictionEditingMode = repository.getSetting("strict_restriction_editing_mode") ?: "ALL",
-            restrictRulesSpecific = repository.getSetting("strict_restrict_rules_specific")?.toBoolean() ?: true,
-            restrictSchedulesSpecific = repository.getSetting("strict_restrict_schedules_specific")?.toBoolean() ?: true,
-            restrictUninstall = repository.getSetting("strict_restrict_uninstall")?.toBoolean() ?: false,
-            restrictSettings = repository.getSetting("strict_restrict_settings")?.toBoolean() ?: false,
-            requirePassword = repository.getSetting("strict_require_password")?.toBoolean() ?: false,
-            deactivationMethod = repository.getSetting("strict_deactivation_method") ?: "TIME_ONLY"
-        )
-    }
-
     suspend fun saveStrictModeWizardConfig(config: StrictModeWizardConfig) {
         val active = repository.getActiveSessionSync()
-        val strictActive = active?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+        val strictActive = active?.let { it.isActive && it.isStrict && TrustedClock.now() < it.endTime } ?: false
         if (strictActive) return
         repository.saveSetting("strict_restriction_editing_mode", config.restrictionEditingMode)
         repository.saveSetting("strict_restrict_rules_specific", config.restrictRulesSpecific.toString())
@@ -264,18 +231,26 @@ class FocusViewModel(
 
     suspend fun setStrictModePassword(password: String) {
         repository.saveSetting("strict_password_hash", PinSecurity.hash(password))
+        PinSecurity.recordSuccess(context, PinSecurity.SCOPE_STRICT_PASSWORD)
     }
 
-    suspend fun clearStrictModePassword() {
-        repository.saveSetting("strict_password_hash", "")
-    }
+    /** Seconds left on the Strict Mode password lockout (0 = not locked out). */
+    fun strictPasswordLockoutSeconds(): Long =
+        (PinSecurity.remainingLockMs(context, PinSecurity.SCOPE_STRICT_PASSWORD) + 999) / 1000
 
     suspend fun verifyStrictModePassword(password: String): Boolean {
+        // Same escalating lockout as the App Lock PIN - the password gate used to allow unlimited guesses.
+        if (PinSecurity.remainingLockMs(context, PinSecurity.SCOPE_STRICT_PASSWORD) > 0) return false
         val stored = repository.getSetting("strict_password_hash") ?: return false
         if (stored.isBlank()) return false
         val ok = PinSecurity.verify(password, stored)
-        if (ok && PinSecurity.isLegacy(stored)) {
-            repository.saveSetting("strict_password_hash", PinSecurity.hash(password))
+        if (ok) {
+            if (PinSecurity.isLegacy(stored)) {
+                repository.saveSetting("strict_password_hash", PinSecurity.hash(password))
+            }
+            PinSecurity.recordSuccess(context, PinSecurity.SCOPE_STRICT_PASSWORD)
+        } else {
+            PinSecurity.recordFailure(context, PinSecurity.SCOPE_STRICT_PASSWORD)
         }
         return ok
     }
@@ -283,7 +258,7 @@ class FocusViewModel(
     /** True right now if a strict session is active AND the password gate is configured. */
     suspend fun isPasswordGateActive(): Boolean {
         val active = repository.getActiveSessionSync()
-        val strictActive = active?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+        val strictActive = active?.let { it.isActive && it.isStrict && TrustedClock.now() < it.endTime } ?: false
         if (!strictActive) return false
         val requirePassword = repository.getSetting("strict_require_password")?.toBoolean() ?: false
         return requirePassword && hasStrictModePassword()
@@ -341,10 +316,6 @@ class FocusViewModel(
         return cal1.get(java.util.Calendar.YEAR) == cal2.get(java.util.Calendar.YEAR) &&
                cal1.get(java.util.Calendar.DAY_OF_YEAR) == cal2.get(java.util.Calendar.DAY_OF_YEAR)
     }
-
-    val manualFocusTimeOffset = MutableStateFlow(0L)
-    val manualCompletedOffset = MutableStateFlow(0)
-    val manualEarlyExitsOffset = MutableStateFlow(0)
 
     fun setAccentTheme(themeName: String) {
         accentTheme.value = themeName
@@ -404,67 +375,7 @@ class FocusViewModel(
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DailyAnalytics())
 
-    val dailyAnalytics: StateFlow<DailyAnalytics> = combine(
-        dbDailyAnalytics,
-        manualFocusTimeOffset,
-        manualCompletedOffset,
-        manualEarlyExitsOffset
-    ) { db, focusOffset, completedOffset, earlyOffset ->
-        val finalCompleted = (db.completedSessions + completedOffset).coerceAtLeast(0)
-        val finalEarlyExits = (db.endedEarlySessions + earlyOffset).coerceAtLeast(0)
-        val finalFocusTime = (db.totalActualFocusTimeSeconds + focusOffset).coerceAtLeast(0)
-        val total = finalCompleted + finalEarlyExits + db.expiredSessions
-        val successRate = if (total == 0) 0 else ((finalCompleted + db.expiredSessions) * 100 / total)
-        DailyAnalytics(
-            totalActualFocusTimeSeconds = finalFocusTime,
-            completedSessions = finalCompleted,
-            endedEarlySessions = finalEarlyExits,
-            expiredSessions = db.expiredSessions,
-            successRate = successRate
-        )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DailyAnalytics())
-
-    fun incrementFocusTime(minutes: Int) {
-        manualFocusTimeOffset.value += minutes * 60L
-    }
-
-    fun decrementFocusTime(minutes: Int) {
-        val current = manualFocusTimeOffset.value
-        val dbTime = dbDailyAnalytics.value.totalActualFocusTimeSeconds
-        if (dbTime + current - (minutes * 60L) >= 0) {
-            manualFocusTimeOffset.value -= minutes * 60L
-        }
-    }
-
-    fun incrementCompletedSessions() {
-        manualCompletedOffset.value += 1
-    }
-
-    fun decrementCompletedSessions() {
-        val current = manualCompletedOffset.value
-        val dbCompleted = dbDailyAnalytics.value.completedSessions
-        if (dbCompleted + current - 1 >= 0) {
-            manualCompletedOffset.value -= 1
-        }
-    }
-
-    fun incrementEarlyExits() {
-        manualEarlyExitsOffset.value += 1
-    }
-
-    fun decrementEarlyExits() {
-        val current = manualEarlyExitsOffset.value
-        val dbEarly = dbDailyAnalytics.value.endedEarlySessions
-        if (dbEarly + current - 1 >= 0) {
-            manualEarlyExitsOffset.value -= 1
-        }
-    }
-
-    fun resetDailyCounters() {
-        manualFocusTimeOffset.value = 0L
-        manualCompletedOffset.value = 0
-        manualEarlyExitsOffset.value = 0
-    }
+    val dailyAnalytics: StateFlow<DailyAnalytics> = dbDailyAnalytics
 
     val weeklyTrends: StateFlow<List<TrendPoint>> = repository.allSessions
         .map { sessions ->
@@ -551,14 +462,14 @@ class FocusViewModel(
             val todaySessionsCompleted = todaySessions.count { it.sessionStatus == "Completed" || it.sessionStatus == "Expired" }
             val todaySessionsEndedEarly = todaySessions.count { it.sessionStatus == "Ended Early" }
 
-            val weeklySessions = sessions.filter { it.startTime in weekStart..System.currentTimeMillis() }
+            val weeklySessions = sessions.filter { it.startTime in weekStart..TrustedClock.now() }
             val weeklyActualSeconds = weeklySessions.sumOf { it.actualDurationSeconds }
             val weeklyFocusHours = weeklyActualSeconds / 3600f
             val weeklySessionsCount = weeklySessions.size
             val weeklyCompleted = weeklySessions.count { it.sessionStatus == "Completed" || it.sessionStatus == "Expired" }
             val weeklySuccessRate = if (weeklySessionsCount == 0) 0 else (weeklyCompleted * 100 / weeklySessionsCount)
 
-            val monthlySessions = sessions.filter { it.startTime in monthStart..System.currentTimeMillis() }
+            val monthlySessions = sessions.filter { it.startTime in monthStart..TrustedClock.now() }
             val monthlyActualSeconds = monthlySessions.sumOf { it.actualDurationSeconds }
             val monthlyFocusHours = monthlyActualSeconds / 3600f
             val longestSessionSeconds = monthlySessions.maxOfOrNull { it.actualDurationSeconds } ?: 0L
@@ -695,7 +606,7 @@ class FocusViewModel(
         viewModelScope.launch {
             var wasStrictModeActive = false
             activeSession.collect { session ->
-                val now = System.currentTimeMillis()
+                val now = TrustedClock.now()
                 val isStrictActive = session?.let { it.isActive && it.isStrict && now < it.endTime } ?: false
                 
                 if (isStrictActive && !wasStrictModeActive) {
@@ -733,7 +644,7 @@ class FocusViewModel(
     private fun checkAndCleanupExpiredSession() {
         viewModelScope.launch {
             val active = repository.getActiveSessionSync()
-            if (active != null && active.isActive && System.currentTimeMillis() >= active.endTime) {
+            if (active != null && active.isActive && TrustedClock.now() >= active.endTime) {
                 repository.stopActiveSession("Expired")
             }
         }
@@ -767,7 +678,7 @@ class FocusViewModel(
         viewModelScope.launch {
             val active = repository.getActiveSessionSync()
             // If strict mode focus session is active, changes are completely blocked
-            val isStrictSessionActive = active?.let { it.isActive && it.isStrict && System.currentTimeMillis() < it.endTime } ?: false
+            val isStrictSessionActive = active?.let { it.isActive && it.isStrict && TrustedClock.now() < it.endTime } ?: false
             if (isStrictSessionActive) {
                 return@launch
             }
@@ -822,14 +733,6 @@ class FocusViewModel(
         }
     }
 
-    fun startFocusSessionWithDuration(days: Int, hours: Int, minutes: Int, seconds: Int, isStrict: Boolean) {
-        val totalMs = (days.toLong() * 24 * 3600 + hours.toLong() * 3600 + minutes.toLong() * 60 + seconds.toLong()) * 1000L
-        val computedMinutes = (totalMs / 60000L).toInt().coerceAtLeast(1)
-        viewModelScope.launch {
-            repository.startFocusSession(computedMinutes, isStrict, totalMs)
-        }
-    }
-
     fun stopActiveSession() {
         viewModelScope.launch {
             repository.stopActiveSession()
@@ -847,15 +750,13 @@ class FocusViewModel(
         .map { it?.toLongOrNull() ?: 0L }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
 
-    suspend fun getDeactivationMethod(): String = repository.getSetting("strict_deactivation_method") ?: "TIME_ONLY"
-
     val deactivationMethod: StateFlow<String> = repository.getSettingFlow("strict_deactivation_method")
         .map { it ?: "TIME_ONLY" }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "TIME_ONLY")
 
     fun requestStrictModeOverride() {
         viewModelScope.launch {
-            repository.saveSetting("strict_bypass_requested_at", System.currentTimeMillis().toString())
+            repository.saveSetting("strict_bypass_requested_at", TrustedClock.now().toString())
         }
     }
 
@@ -878,7 +779,7 @@ class FocusViewModel(
         viewModelScope.launch {
             while (true) {
                 try {
-                    repository.deactivateExpiredBlocks(System.currentTimeMillis())
+                    repository.deactivateExpiredBlocks(TrustedClock.now())
                 } catch (e: Exception) {
                     Log.e("FocusViewModel", "Error deactivating expired blocks", e)
                 }
@@ -944,7 +845,7 @@ class FocusViewModel(
                 return@launch
             }
             val block = repository.getLongTermBlockById(id)
-            val now = System.currentTimeMillis()
+            val now = TrustedClock.now()
             if (block != null && now >= block.startDate && now <= block.endDate && block.isActive) {
                 Log.w("FocusViewModel", "Cannot delete active long-term app block!")
                 actionBlockedMessage.tryEmit("This block is currently active and can't be deleted until it ends.")
@@ -979,7 +880,7 @@ class FocusViewModel(
                 return@launch
             }
             val block = repository.getWebsiteBlockById(id)
-            val now = System.currentTimeMillis()
+            val now = TrustedClock.now()
             if (block != null && now >= block.startDate && now <= block.endDate && block.isActive) {
                 Log.w("FocusViewModel", "Cannot delete active website block!")
                 actionBlockedMessage.tryEmit("This block is currently active and can't be deleted until it ends.")
@@ -1083,98 +984,6 @@ class FocusViewModel(
     suspend fun getSetting(key: String): String? {
         return repository.getSetting(key)
     }
-
-    suspend fun getStudyPlanCompletionPercentage(): Float? {
-        val plan = getSetting("saved_study_plan")
-        if (plan.isNullOrBlank()) return null
-        
-        val checkedLinesStr = getSetting("study_plan_checked_lines") ?: ""
-        val checkedLines = checkedLinesStr.split(",")
-            .mapNotNull { it.trim().toIntOrNull() }
-            .toSet()
-
-        var totalTasks = 0
-        var checkedTasks = 0
-        plan.lines().forEachIndexed { index, rawLine ->
-            val trimmed = rawLine.trim()
-            if (trimmed.startsWith("- ")) {
-                totalTasks++
-                if (checkedLines.contains(index)) {
-                    checkedTasks++
-                }
-            }
-        }
-        
-        if (totalTasks == 0) return 0f
-        return (checkedTasks.toFloat() / totalTasks) * 100f
-    }
-
-    fun seedTestScheduleIfNeeded() {
-        viewModelScope.launch {
-            val alreadySeeded = repository.getSetting("test_schedule_seeded_v1")
-            if (alreadySeeded == "true") return@launch
-            val result = com.example.planner.TestScheduleParser.parse(
-                com.example.data.TestScheduleSeedData.rawScheduleText
-            )
-            if (result.imported.isNotEmpty()) {
-                repository.importTests(result.imported)
-            }
-            repository.saveSetting("test_schedule_seeded_v1", "true")
-        }
-    }
-
-    val allTests: StateFlow<List<TestEntry>> = repository.allTests
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    fun deleteTest(id: Int) {
-        viewModelScope.launch {
-            repository.deleteTest(id)
-        }
-    }
-
-    fun deleteAllTests() {
-        viewModelScope.launch {
-            repository.deleteAllTests()
-        }
-    }
-
-    /**
-     * Parses pipe-separated test schedule text (see BulkImportTestsScreen for the
-     * expected format), saves any successfully-parsed rows, and reports back via
-     * [onResult] with a summary of what was imported vs. skipped.
-     */
-    fun importTestSchedule(
-        rawText: String,
-        onResult: (com.example.planner.TestImportResult) -> Unit
-    ) {
-        viewModelScope.launch {
-            val result = com.example.planner.TestScheduleParser.parse(rawText)
-            if (result.imported.isNotEmpty()) {
-                repository.importTests(result.imported)
-            }
-            onResult(result)
-        }
-    }
-
-    val savedStudyPlan: kotlinx.coroutines.flow.Flow<String?> = repository.getSettingFlow("saved_study_plan")
-
-    // --- PYQ question bank + quiz ---
-    suspend fun importPyqQuestions(questions: List<com.example.data.PyqQuestion>) =
-        repository.importPyqQuestions(questions)
-    suspend fun getPyqQuestionCount(): Int = repository.getPyqQuestionCount()
-    suspend fun getAvailablePyqYears(): List<Int> = repository.getAvailablePyqYears()
-    suspend fun getMatchingPyqCount(subject: String?, difficulty: String?): Int =
-        repository.getMatchingPyqCount(subject, difficulty)
-    suspend fun getRandomPyqQuestions(subject: String?, difficulty: String?, limit: Int): List<com.example.data.PyqQuestion> =
-        repository.getRandomPyqQuestions(subject, difficulty, limit)
-    suspend fun startPyqQuizAttempt(subjectFilter: String, difficultyFilter: String, requestedCount: Int): Int =
-        repository.startPyqQuizAttempt(subjectFilter, difficultyFilter, requestedCount)
-    suspend fun completePyqQuizAttempt(attemptId: Int, answers: List<com.example.data.PyqQuizAnswer>, totalTimeSeconds: Long) =
-        repository.completePyqQuizAttempt(attemptId, answers, totalTimeSeconds)
-    suspend fun getPyqAttemptById(id: Int): com.example.data.PyqQuizAttempt? = repository.getPyqAttemptById(id)
-    suspend fun getPyqAnswersForAttempt(attemptId: Int): List<com.example.data.PyqQuizAnswer> =
-        repository.getPyqAnswersForAttempt(attemptId)
-    val allPyqAttempts: kotlinx.coroutines.flow.Flow<List<com.example.data.PyqQuizAttempt>> = repository.allPyqAttempts
 
     override fun onCleared() {
         super.onCleared()

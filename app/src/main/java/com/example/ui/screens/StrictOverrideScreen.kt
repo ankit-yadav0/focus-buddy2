@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.TrustedClock
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -92,10 +93,10 @@ fun StrictOverrideScreen(
         }
     }
 
-    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    var now by remember { mutableStateOf(TrustedClock.now()) }
     LaunchedEffect(Unit) {
         while (true) {
-            now = System.currentTimeMillis()
+            now = TrustedClock.now()
             kotlinx.coroutines.delay(1000L)
         }
     }
@@ -106,8 +107,6 @@ fun StrictOverrideScreen(
 
     val elapsedMs = if (requestedAt > 0L) (now - requestedAt).coerceAtLeast(0L) else 0L
     val remainingMs = (STRICT_OVERRIDE_COOLDOWN_MS - elapsedMs).coerceAtLeast(0L)
-    val cooldownElapsed = requestedAt > 0L && remainingMs <= 0L
-    val canCompleteOverride = cooldownElapsed && !isBlackout
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),

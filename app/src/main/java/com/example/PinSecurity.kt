@@ -14,9 +14,13 @@ import javax.crypto.spec.PBEKeySpec
 object PinSecurity {
     private const val ITERATIONS = 20_000
     private const val PREFS = "focuss_buddy_settings"
-    private const val KEY_FAILS = "pin_fail_count"
-    private const val KEY_LOCK_UNTIL = "pin_lock_until"
     private const val FREE_ATTEMPTS = 5
+
+    /** Lockout counters live under "<scope>_fail_count" / "<scope>_lock_until". "pin" = App Lock. */
+    const val SCOPE_APP_LOCK = "pin"
+    const val SCOPE_STRICT_PASSWORD = "strict_pw"
+    private fun failsKey(scope: String) = "${scope}_fail_count"
+    private fun lockKey(scope: String) = "${scope}_lock_until"
 
     fun hash(pin: String): String {
         val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
@@ -39,25 +43,25 @@ object PinSecurity {
     fun isLegacy(stored: String?): Boolean = !stored.isNullOrEmpty() && !stored.startsWith("pbkdf2$")
 
     /** Milliseconds left on the current lockout, or 0 if attempts are allowed. */
-    fun remainingLockMs(context: Context): Long {
-        val until = prefs(context).getLong(KEY_LOCK_UNTIL, 0L)
-        return (until - System.currentTimeMillis()).coerceAtLeast(0L)
+    fun remainingLockMs(context: Context, scope: String = SCOPE_APP_LOCK): Long {
+        val until = prefs(context).getLong(lockKey(scope), 0L)
+        return (until - TrustedClock.now()).coerceAtLeast(0L)
     }
 
-    fun recordFailure(context: Context) {
+    fun recordFailure(context: Context, scope: String = SCOPE_APP_LOCK) {
         val p = prefs(context)
-        val fails = p.getInt(KEY_FAILS, 0) + 1
-        val editor = p.edit().putInt(KEY_FAILS, fails)
+        val fails = p.getInt(failsKey(scope), 0) + 1
+        val editor = p.edit().putInt(failsKey(scope), fails)
         if (fails >= FREE_ATTEMPTS) {
             val step = (fails - FREE_ATTEMPTS).coerceAtMost(5)
             val lockMs = (30_000L shl step).coerceAtMost(15 * 60_000L)
-            editor.putLong(KEY_LOCK_UNTIL, System.currentTimeMillis() + lockMs)
+            editor.putLong(lockKey(scope), TrustedClock.now() + lockMs)
         }
         editor.apply()
     }
 
-    fun recordSuccess(context: Context) {
-        prefs(context).edit().putInt(KEY_FAILS, 0).putLong(KEY_LOCK_UNTIL, 0L).apply()
+    fun recordSuccess(context: Context, scope: String = SCOPE_APP_LOCK) {
+        prefs(context).edit().putInt(failsKey(scope), 0).putLong(lockKey(scope), 0L).apply()
     }
 
     fun lockMessage(ms: Long): String = "Too many attempts. Try again in ${(ms + 999) / 1000}s"

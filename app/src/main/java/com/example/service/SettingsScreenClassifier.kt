@@ -50,8 +50,19 @@ object SettingsScreenClassifier {
     // even look for our app's name, since these don't need it.
     private val DEFAULT_DEVICE_WIDE_KEYWORDS = listOf(
         "Reset", "Factory reset", "Erase all data",
-        "Clear storage", "Clear data", "Clear cache"
+        "Clear storage", "Clear data", "Clear cache",
+        // Changing the clock would let a Strict Mode session / block "expire" early.
+        "Set date", "Set time", "Automatic date & time", "Automatic time zone",
+        "Use network-provided time", "Set time automatically"
     )
+
+    /** Whole-word, case-insensitive pattern so "Reset" no longer fires on "Preset". */
+    private fun wordRegex(word: String): Regex =
+        Regex("(?<![A-Za-z])" + Regex.escape(word) + "(?![A-Za-z])", RegexOption.IGNORE_CASE)
+
+    // Compiled once. Building a Regex per text node per keyword on every Settings event
+    // (up to ~20 tree reads per second in Strict Mode) was a needless CPU cost.
+    private val DEFAULT_DEVICE_WIDE_PATTERNS = DEFAULT_DEVICE_WIDE_KEYWORDS.map { wordRegex(it) }
 
     private data class ScreenSignals(
         val hasAppIdentity: Boolean,
@@ -72,7 +83,7 @@ object SettingsScreenClassifier {
         extraDeviceWideKeywords: List<String> = emptyList()
     ): ScreenType {
         if (root == null) return ScreenType.SAFE
-        val signals = collectSignals(root, appName, DEFAULT_DEVICE_WIDE_KEYWORDS + extraDeviceWideKeywords)
+        val signals = collectSignals(root, appName, DEFAULT_DEVICE_WIDE_PATTERNS + extraDeviceWideKeywords.map { wordRegex(it) })
 
         if (signals.hasDeviceWideKeyword) return ScreenType.PROTECTED_DEVICE_WIDE
         if (!signals.hasAppIdentity) return ScreenType.SAFE
@@ -103,14 +114,10 @@ object SettingsScreenClassifier {
         return ScreenType.SAFE
     }
 
-    /** Whole-word, case-insensitive match so "Reset" no longer fires on "Preset". */
-    private fun containsWord(text: String, word: String): Boolean =
-        Regex("(?<![A-Za-z])" + Regex.escape(word) + "(?![A-Za-z])", RegexOption.IGNORE_CASE).containsMatchIn(text)
-
     private fun collectSignals(
         root: AccessibilityNodeInfo,
         appName: String,
-        deviceWideKeywords: List<String>
+        deviceWidePatterns: List<Regex>
     ): ScreenSignals {
         var hasAppIdentity = false
         var checkableCount = 0
@@ -128,7 +135,7 @@ object SettingsScreenClassifier {
                 if (t.contains(appName, ignoreCase = true)) hasAppIdentity = true
                 if (DETAIL_ONLY_KEYWORDS.any { t.contains(it, ignoreCase = true) } ||
                     appSpecificPhrases.any { t.contains(it, ignoreCase = true) }) hasDetailKeyword = true
-                if (deviceWideKeywords.any { containsWord(t, it) }) hasDeviceWideKeyword = true
+                if (deviceWidePatterns.any { it.containsMatchIn(t) }) hasDeviceWideKeyword = true
             }
             if (node.isCheckable) checkableCount++
 

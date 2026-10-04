@@ -4,8 +4,6 @@ import androidx.room.Dao
 import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.PrimaryKey
-import androidx.room.Query
-import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "reflection_notes")
 data class ReflectionNote(
@@ -18,7 +16,4 @@ data class ReflectionNote(
 interface ReflectionNoteDao {
     @Insert
     suspend fun insertNote(note: ReflectionNote)
-
-    @Query("SELECT * FROM reflection_notes ORDER BY timestamp DESC")
-    fun getAllNotes(): Flow<List<ReflectionNote>>
 }

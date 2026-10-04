@@ -26,32 +26,6 @@ val JetBrainsMonoFamily = FontFamily(Font(R.font.jetbrains_mono))
 // Inter - neutral, highly readable humanist sans. Used for body copy.
 val InterFamily = FontFamily(Font(R.font.inter))
 
-/**
- * Dedicated style for numeral-heavy displays (timer digits, dial readouts,
- * countdown flaps, stat values). Not part of Material's Typography scale -
- * reference this directly wherever a "gauge readout" look is wanted.
- */
-val MonoNumeralLarge = TextStyle(
-    fontFamily = JetBrainsMonoFamily,
-    fontWeight = FontWeight.Bold,
-    fontSize = 44.sp,
-    letterSpacing = 1.sp
-)
-
-val MonoNumeralMedium = TextStyle(
-    fontFamily = JetBrainsMonoFamily,
-    fontWeight = FontWeight.Bold,
-    fontSize = 20.sp,
-    letterSpacing = 0.sp
-)
-
-val MonoLabel = TextStyle(
-    fontFamily = JetBrainsMonoFamily,
-    fontWeight = FontWeight.Medium,
-    fontSize = 11.sp,
-    letterSpacing = 2.sp
-)
-
 val Typography = Typography(
     displayLarge = TextStyle(
         fontFamily = SpaceGroteskFamily,

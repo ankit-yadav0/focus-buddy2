@@ -1,6 +1,11 @@
 package com.example.data
 
+import com.example.TrustedClock
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+private const val SCHEDULE_STOP_SLACK_MS = 90_000L
 
 class FocusRepository(
     private val blockedAppDao: BlockedAppDao,
@@ -9,24 +14,19 @@ class FocusRepository(
     private val analyticsDao: AnalyticsDao,
     private val websiteBlockDao: WebsiteBlockDao,
     private val appSettingDao: AppSettingDao,
-    private val chatMessageDao: ChatMessageDao,
     private val strictScheduleDao: StrictScheduleDao,
     private val reflectionNoteDao: ReflectionNoteDao,
-    private val testEntryDao: TestEntryDao,
-    private val pyqQuestionDao: PyqQuestionDao,
-    private val pyqQuizAttemptDao: PyqQuizAttemptDao,
     private val lockedAppDao: LockedAppDao
 ) {
     val allLockedApps: Flow<List<LockedApp>> = lockedAppDao.getAllLockedApps()
 
-    val allTests: Flow<List<TestEntry>> = testEntryDao.getAllTests()
-    suspend fun getNextTest(): TestEntry? = testEntryDao.getNextTest(System.currentTimeMillis())
-    suspend fun importTests(tests: List<TestEntry>) = testEntryDao.insertAll(tests)
-    suspend fun deleteTest(id: Int) = testEntryDao.deleteTest(id)
-    suspend fun deleteAllTests() = testEntryDao.deleteAll()
-
-    val allReflectionNotes: Flow<List<ReflectionNote>> = reflectionNoteDao.getAllNotes()
     val sessionCompletedNaturally = kotlinx.coroutines.flow.MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
+
+    // start/stop are read-then-write on the single active-session row. Three callers (service event path,
+    // service heartbeat, ViewModel) can close an expired session at the same instant; without this lock both
+    // would finalize it and the analytics totals would be added twice.
+    private val sessionMutex = Mutex()
+
     suspend fun addReflectionNote(text: String) {
         reflectionNoteDao.insertNote(ReflectionNote(timestamp = System.currentTimeMillis(), noteText = text))
     }
@@ -41,21 +41,22 @@ class FocusRepository(
     val allWebsiteBlocks: Flow<List<WebsiteBlock>> = websiteBlockDao.getAllWebsiteBlocks()
     val activeWebsiteBlocks: Flow<List<WebsiteBlock>> = websiteBlockDao.getActiveWebsiteBlocks()
     val analytics: Flow<Analytics?> = analyticsDao.getAnalytics()
-    val allChatMessages: Flow<List<ChatMessage>> = chatMessageDao.getAllMessages()
     val allSchedules: Flow<List<StrictSchedule>> = strictScheduleDao.getAllSchedules()
 
     suspend fun addSchedule(schedule: StrictSchedule): Long = strictScheduleDao.insertSchedule(schedule)
     suspend fun updateSchedule(schedule: StrictSchedule) = strictScheduleDao.updateSchedule(schedule)
     suspend fun deleteSchedule(id: Int) = strictScheduleDao.deleteSchedule(id)
-    suspend fun getEnabledSchedulesList(): List<StrictSchedule> = strictScheduleDao.getEnabledSchedulesSync()
     suspend fun getScheduleById(id: Int): StrictSchedule? = strictScheduleDao.getScheduleById(id)
 
     suspend fun startScheduledStrictSession(scheduleId: Int, durationMinutes: Int) {
         val active = focusSessionDao.getActiveSessionSync()
-        if (active != null) return
+        // A running Strict Mode session is never replaced. A normal session, on the other hand, gives way
+        // to the scheduled strict window - previously the window was silently skipped whenever ANY session
+        // happened to be running, leaving the whole window unprotected.
+        if (active != null && active.isStrict && TrustedClock.now() < active.endTime) return
         startFocusSession(durationMinutes, isStrict = true)
         val inserted = focusSessionDao.getActiveSessionSync()
-        if (inserted != null) {
+        if (inserted != null && inserted.isStrict) {
             focusSessionDao.updateSession(inserted.copy(origin = "SCHEDULE:$scheduleId"))
         }
     }
@@ -63,16 +64,11 @@ class FocusRepository(
     suspend fun stopScheduledStrictSession(scheduleId: Int) {
         val active = focusSessionDao.getActiveSessionSync()
         if (active != null && active.origin == "SCHEDULE:$scheduleId") {
-            stopActiveSession()
+            // The window-end alarm is a wall-clock alarm, so moving the clock forward makes it fire early.
+            // The session itself expires on the trusted clock: only honour the alarm once it is (nearly) over.
+            if (active.isStrict && active.endTime - TrustedClock.now() > SCHEDULE_STOP_SLACK_MS) return
+            stopActiveSession(force = true)
         }
-    }
-
-    suspend fun addChatMessage(message: ChatMessage) {
-        chatMessageDao.insertMessage(message)
-    }
-
-    suspend fun clearChatHistory() {
-        chatMessageDao.clearHistory()
     }
 
     suspend fun getBlockedAppsList(): List<BlockedApp> = blockedAppDao.getBlockedAppsList()
@@ -87,10 +83,6 @@ class FocusRepository(
         blockedAppDao.insertApp(app)
     }
 
-    suspend fun addBlockedApps(apps: List<BlockedApp>) {
-        blockedAppDao.insertApps(apps)
-    }
-
     suspend fun removeBlockedApp(packageName: String) {
         blockedAppDao.deleteApp(packageName)
     }
@@ -99,26 +91,16 @@ class FocusRepository(
         return blockedAppDao.isAppBlocked(packageName)
     }
 
-    suspend fun startFocusSession(durationMinutes: Int, isStrict: Boolean, totalMs: Long? = null) {
+    suspend fun startFocusSession(durationMinutes: Int, isStrict: Boolean, totalMs: Long? = null): Unit = sessionMutex.withLock {
+        val now = TrustedClock.now()
         val active = focusSessionDao.getActiveSessionSync()
         if (active != null) {
-            val now = System.currentTimeMillis()
-            val finalStatus = if (now >= active.endTime) "Expired" else "Ended Early"
-            val maxSeconds = ((active.endTime - active.startTime) / 1000L).coerceAtLeast(0L)
-            val actualDurationSeconds = ((now - active.startTime) / 1000L).coerceAtLeast(0L).coerceAtMost(maxSeconds)
-            val plantStatus = if (now >= active.endTime) "MATURED" else "WITHERED"
-            val assetPath = if (now >= active.endTime) "img_plant_matured" else "img_plant_withered"
-            focusSessionDao.updateSession(active.copy(
-                isActive = false,
-                actualEndTime = now,
-                actualDurationSeconds = actualDurationSeconds,
-                sessionStatus = finalStatus,
-                plantStatus = plantStatus,
-                assetPath = assetPath
-            ))
+            // A running Strict Mode session can never be replaced: starting a fresh (non-strict) session
+            // over it would skip the override challenge, the cooldown and the password gate entirely.
+            if (active.isStrict && now < active.endTime) return@withLock
+            finalizeSession(active, if (now >= active.endTime) "Expired" else "Ended Early", now)
         }
 
-        val now = System.currentTimeMillis()
         val actualTotalMs = totalMs ?: (durationMinutes * 60 * 1000L)
         val endTime = now + actualTotalMs
         val computedMinutes = (actualTotalMs / 60000L).toInt().coerceAtLeast(1)
@@ -129,7 +111,9 @@ class FocusRepository(
             actualEndTime = 0L,
             plannedDurationMinutes = computedMinutes,
             actualDurationSeconds = 0L,
-            sessionStatus = "Completed",
+            // "Active" until it is finalized. It used to be inserted as "Completed", so every session
+            // counted as a completed one (and bumped the streak) the moment it started.
+            sessionStatus = "Active",
             isActive = true,
             isStrict = isStrict,
             plantStatus = "SEED",
@@ -138,42 +122,49 @@ class FocusRepository(
         focusSessionDao.insertSession(session)
     }
 
-    suspend fun stopActiveSession(status: String? = null) {
-        val active = focusSessionDao.getActiveSessionSync()
-        if (active != null) {
-            val now = System.currentTimeMillis()
-            val isCompleted = now >= active.endTime
-            val finalStatus = status ?: if (isCompleted) "Completed" else "Ended Early"
-            
-            // Calculate actual duration in seconds
-            val maxSeconds = ((active.endTime - active.startTime) / 1000L).coerceAtLeast(0L)
-            val actualDurationSeconds = ((now - active.startTime) / 1000L).coerceAtLeast(0L).coerceAtMost(maxSeconds)
-            
-            val plantStatus = if (finalStatus == "Completed" || finalStatus == "Expired") "MATURED" else "WITHERED"
-            val assetPath = if (finalStatus == "Completed" || finalStatus == "Expired") "img_plant_matured" else "img_plant_withered"
+    /**
+     * Ends the active session. A running Strict Mode session cannot be ended early through this call
+     * (the UI hides the button, but the rule has to hold here too): it only ends when its timer runs
+     * out, or via the Extreme Override flow, which clears isStrict first. [force] is for the
+     * schedule-driven window end.
+     */
+    suspend fun stopActiveSession(status: String? = null, force: Boolean = false): Unit = sessionMutex.withLock {
+        val active = focusSessionDao.getActiveSessionSync() ?: return@withLock
+        val now = TrustedClock.now()
+        if (!force && status == null && active.isStrict && now < active.endTime) return@withLock
+        finalizeSession(active, status, now)
+    }
 
-            val updated = active.copy(
+    private suspend fun finalizeSession(active: FocusSession, status: String?, now: Long) {
+        val isCompleted = now >= active.endTime
+        val finalStatus = status ?: if (isCompleted) "Completed" else "Ended Early"
+
+        // Actual duration in seconds, never more than what was planned
+        val maxSeconds = ((active.endTime - active.startTime) / 1000L).coerceAtLeast(0L)
+        val actualDurationSeconds = ((now - active.startTime) / 1000L).coerceAtLeast(0L).coerceAtMost(maxSeconds)
+
+        val matured = finalStatus == "Completed" || finalStatus == "Expired"
+        focusSessionDao.updateSession(
+            active.copy(
                 isActive = false,
                 actualEndTime = now,
                 actualDurationSeconds = actualDurationSeconds,
                 sessionStatus = finalStatus,
-                plantStatus = plantStatus,
-                assetPath = assetPath
+                plantStatus = if (matured) "MATURED" else "WITHERED",
+                assetPath = if (matured) "img_plant_matured" else "img_plant_withered"
             )
-            focusSessionDao.updateSession(updated)
-            if (finalStatus == "Completed") {
-                sessionCompletedNaturally.tryEmit(true)
-            }
-            
-            // Update static analytics table for compatibility using ACTUAL duration only
-            val current = analyticsDao.getAnalyticsSync() ?: Analytics()
-            val actualDurationMinutes = actualDurationSeconds / 60L
-            val completedIncrement = if (finalStatus == "Completed") 1 else 0
-            analyticsDao.insertAnalytics(current.copy(
-                focusSessionsCompleted = current.focusSessionsCompleted + completedIncrement,
-                totalFocusTimeMinutes = current.totalFocusTimeMinutes + actualDurationMinutes
-            ))
+        )
+        if (finalStatus == "Completed") {
+            sessionCompletedNaturally.tryEmit(true)
         }
+
+        // Static analytics totals, using ACTUAL duration only. Atomic SQL increments - the old
+        // read-modify-write could lose an update when two writers overlapped.
+        analyticsDao.insertIfAbsent(Analytics())
+        analyticsDao.addSessionResult(
+            completed = if (finalStatus == "Completed") 1 else 0,
+            minutes = actualDurationSeconds / 60L
+        )
     }
 
     // Long Term Block operations
@@ -224,8 +215,8 @@ class FocusRepository(
 
     // Analytics operations
     suspend fun incrementBlockedLaunches() {
-        val current = analyticsDao.getAnalyticsSync() ?: Analytics()
-        analyticsDao.insertAnalytics(current.copy(blockedAppLaunches = current.blockedAppLaunches + 1))
+        analyticsDao.insertIfAbsent(Analytics())
+        analyticsDao.incrementBlockedLaunches()
     }
 
     // Only ever called from the "Extreme Override" deactivation flow, which itself
@@ -253,55 +244,6 @@ class FocusRepository(
     suspend fun saveSetting(key: String, value: String) {
         appSettingDao.insertSetting(AppSetting(key, value))
     }
-
-    // --- PYQ question bank ---
-    suspend fun importPyqQuestions(questions: List<PyqQuestion>) = pyqQuestionDao.insertAll(questions)
-    suspend fun getPyqQuestionCount(): Int = pyqQuestionDao.getQuestionCount()
-    suspend fun getAvailablePyqYears(): List<Int> = pyqQuestionDao.getAvailableYears()
-    suspend fun getMatchingPyqCount(subject: String?, difficulty: String?): Int =
-        pyqQuestionDao.getMatchingCount(subject, difficulty)
-    suspend fun getRandomPyqQuestions(subject: String?, difficulty: String?, limit: Int): List<PyqQuestion> =
-        pyqQuestionDao.getRandomQuestions(subject, difficulty, limit)
-    suspend fun deletePyqYear(year: Int) = pyqQuestionDao.deleteByYear(year)
-    suspend fun deleteAllPyqQuestions() = pyqQuestionDao.deleteAll()
-
-    // --- PYQ quiz attempts ---
-    suspend fun startPyqQuizAttempt(subjectFilter: String, difficultyFilter: String, requestedCount: Int): Int {
-        val id = pyqQuizAttemptDao.insertAttempt(
-            PyqQuizAttempt(
-                subjectFilter = subjectFilter,
-                difficultyFilter = difficultyFilter,
-                requestedQuestionCount = requestedCount
-            )
-        )
-        return id.toInt()
-    }
-
-    suspend fun completePyqQuizAttempt(
-        attemptId: Int,
-        answers: List<PyqQuizAnswer>,
-        totalTimeSeconds: Long
-    ) {
-        pyqQuizAttemptDao.insertAnswers(answers)
-        val correct = answers.count { it.isCorrect }
-        val skipped = answers.count { it.selectedAnswer.isBlank() }
-        val wrong = answers.size - correct - skipped
-        pyqQuizAttemptDao.completeAttempt(
-            id = attemptId,
-            completedAt = System.currentTimeMillis(),
-            totalQuestions = answers.size,
-            correctCount = correct,
-            wrongCount = wrong,
-            skippedCount = skipped,
-            totalTimeSeconds = totalTimeSeconds
-        )
-    }
-
-    suspend fun getPyqAttemptById(id: Int): PyqQuizAttempt? = pyqQuizAttemptDao.getAttemptById(id)
-    suspend fun getPyqAnswersForAttempt(attemptId: Int): List<PyqQuizAnswer> =
-        pyqQuizAttemptDao.getAnswersForAttempt(attemptId)
-    val allPyqAttempts: Flow<List<PyqQuizAttempt>> = pyqQuizAttemptDao.getAllCompletedAttempts()
-    suspend fun getAllPyqAnswersEverRecorded(): List<PyqQuizAnswer> = pyqQuizAttemptDao.getAllAnswers()
 
     // App Lock (PIN-gated apps) operations
     suspend fun getLockedAppsList(): List<LockedApp> {

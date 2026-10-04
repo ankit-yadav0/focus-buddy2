@@ -36,8 +36,13 @@ class StrictScheduleReceiver : BroadcastReceiver() {
                         } else if (action == AlarmScheduler.ACTION_STOP_SCHEDULE) {
                             repository.stopScheduledStrictSession(schedule.id)
                         }
-                        // Re-arm the next occurrence
-                        AlarmScheduler.scheduleWindow(context, schedule)
+                        // Re-arm the next occurrence. After a START only the NEXT start is armed: the window's
+                        // own STOP alarm (same PendingIntent id) must not be replaced by tomorrow's.
+                        if (action == AlarmScheduler.ACTION_START_SCHEDULE) {
+                            AlarmScheduler.scheduleNextStart(context, schedule)
+                        } else {
+                            AlarmScheduler.scheduleWindow(context, schedule)
+                        }
                     }
                 }
             } catch (e: Throwable) {

@@ -158,12 +158,6 @@ object UpdateManager {
         return false
     }
 
-    /** Checks for an update and posts the notification if one is found. */
-    suspend fun checkAndNotify(context: Context, force: Boolean = false) {
-        val info = checkForUpdate(context, force) ?: return
-        showUpdateNotification(context, info)
-    }
-
     private fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = context.getSystemService(NotificationManager::class.java)
@@ -205,6 +199,7 @@ object UpdateManager {
             ))
             .setSmallIcon(R.mipmap.ic_launcher)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
@@ -221,8 +216,11 @@ object UpdateManager {
     fun startDownload(context: Context, downloadUrl: String, versionName: String) {
         val safeVersion = versionName.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val fileName = "focus-buddy-update-$safeVersion.apk"
-        val destFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
-        if (destFile.exists()) destFile.delete()
+        val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        // Each version downloads to its own file name, so old update APKs (~tens of MB each) used to pile up.
+        downloadsDir?.listFiles { f -> f.name.startsWith("focus-buddy-update-") && f.name.endsWith(".apk") }
+            ?.forEach { it.delete() }
+        val destFile = File(downloadsDir, fileName)
 
         val request = DownloadManager.Request(Uri.parse(downloadUrl))
             .setTitle("Focuss Buddy update")
@@ -238,6 +236,28 @@ object UpdateManager {
             .edit()
             .putLong(KEY_PENDING_DOWNLOAD_ID, downloadId)
             .apply()
+    }
+
+    /**
+     * ACTION_DOWNLOAD_COMPLETE is broadcast for failed downloads too, so the receiver has to ask the
+     * DownloadManager whether this one actually succeeded before trying to install a (partial) file.
+     */
+    fun isDownloadSuccessful(context: Context, downloadId: Long): Boolean {
+        return try {
+            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            dm.query(DownloadManager.Query().setFilterById(downloadId)).use { cursor ->
+                cursor != null && cursor.moveToFirst() &&
+                    cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) == DownloadManager.STATUS_SUCCESSFUL
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Called once a download has been handled (success or failure) so a stale id can't match later. */
+    fun clearPendingDownload(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().remove(KEY_PENDING_DOWNLOAD_ID).apply()
     }
 
     fun isPendingDownload(context: Context, downloadId: Long): Boolean {

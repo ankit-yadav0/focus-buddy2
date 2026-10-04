@@ -14,7 +14,7 @@ data class FocusSession(
     val actualEndTime: Long = 0L,
     val plannedDurationMinutes: Int = durationMinutes,
     val actualDurationSeconds: Long = 0L,
-    val sessionStatus: String = "Completed", // "Completed", "Ended Early", "Expired"
+    val sessionStatus: String = "Completed", // "Active" (running), "Completed", "Ended Early", "Expired"
     val plantStatus: String = "SEED", // "SEED", "GROWING", "MATURED", "WITHERED"
     val assetPath: String = "img_plant_seed",
     val origin: String = "MANUAL"

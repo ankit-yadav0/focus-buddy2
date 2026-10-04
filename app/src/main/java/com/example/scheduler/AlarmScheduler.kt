@@ -73,11 +73,7 @@ object AlarmScheduler {
                 startIntent,
                 flags
             )
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, startMillis, startPendingIntent)
-            } else {
-                alarmManager.setExact(AlarmManager.RTC_WAKEUP, startMillis, startPendingIntent)
-            }
+            setAlarmSafely(alarmManager, startMillis, startPendingIntent)
         }
 
         if (endMillis > 0L) {
@@ -91,12 +87,49 @@ object AlarmScheduler {
                 endIntent,
                 flags
             )
+            setAlarmSafely(alarmManager, endMillis, endPendingIntent)
+        }
+    }
+
+    /**
+     * Exact alarm when allowed. On Android 12+ the "Alarms & reminders" permission can be missing or
+     * revoked, and setExact*() then throws SecurityException - which used to crash whoever called
+     * scheduleWindow() (e.g. enabling a schedule from the UI). Fall back to an inexact alarm instead,
+     * so the window still fires, just possibly a little late.
+     */
+    private fun setAlarmSafely(alarmManager: AlarmManager, triggerAtMillis: Long, pendingIntent: PendingIntent) {
+        try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, endMillis, endPendingIntent)
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
             } else {
-                alarmManager.setExact(AlarmManager.RTC_WAKEUP, endMillis, endPendingIntent)
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+            }
+        } catch (e: SecurityException) {
+            android.util.Log.w("AlarmScheduler", "Exact alarms not permitted - falling back to an inexact alarm", e)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+            } else {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
             }
         }
+    }
+
+    /** Arms only the next START alarm, leaving any already-armed STOP alarm untouched. */
+    fun scheduleNextStart(context: Context, schedule: StrictSchedule) {
+        if (!schedule.isEnabled) return
+        val startMillis = getNextOccurrence(schedule.startHour, schedule.startMinute, schedule.daysOfWeek)
+        if (startMillis <= 0L) return
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val startIntent = Intent(context, StrictScheduleReceiver::class.java).apply {
+            action = ACTION_START_SCHEDULE
+            putExtra("extra_schedule_id", schedule.id)
+        }
+        setAlarmSafely(alarmManager, startMillis, PendingIntent.getBroadcast(context, schedule.id * 2, startIntent, flags))
     }
 
     fun cancelWindow(context: Context, scheduleId: Int) {

@@ -17,7 +17,9 @@ object SmartNightModeManager {
     }
 
     fun startMonitoring(scope: CoroutineScope) {
-        if (checkJob != null) return
+        // isActive, not just non-null: when the ViewModel that owned the previous scope is cleared the job
+        // is cancelled but the field stays set, which used to freeze the theme at its last value for good.
+        if (checkJob?.isActive == true) return
         checkJob = scope.launch(Dispatchers.Default) {
             while (isActive) {
                 val current = isNightTime()
@@ -29,8 +31,4 @@ object SmartNightModeManager {
         }
     }
 
-    fun stopMonitoring() {
-        checkJob?.cancel()
-        checkJob = null
-    }
 }

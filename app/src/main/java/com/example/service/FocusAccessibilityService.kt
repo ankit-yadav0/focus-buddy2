@@ -14,9 +14,10 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.example.BlockActivity
 import com.example.MainActivity
-import com.example.UninstallFrictionActivity
 import com.example.FocusApplication
 import com.example.R
+import com.example.TimeUtils
+import com.example.TrustedClock
 import com.example.data.LongTermBlock
 import com.example.data.WebsiteBlock
 import kotlinx.coroutines.CoroutineScope
@@ -44,13 +45,11 @@ class FocusAccessibilityService : AccessibilityService() {
         var instance: FocusAccessibilityService? = null
             private set
 
-        val currentPackage = kotlinx.coroutines.flow.MutableStateFlow("None")
-        val currentActivity = kotlinx.coroutines.flow.MutableStateFlow("None")
-        val visibleText = kotlinx.coroutines.flow.MutableStateFlow("No text detected")
-        val lastEvent = kotlinx.coroutines.flow.MutableStateFlow("No event yet")
-        val shortsDetectionStatus = kotlinx.coroutines.flow.MutableStateFlow("Shorts Not Detected")
-
         private const val NOTIFICATION_CHANNEL_ID = "focus_buddy_protection"
+
+        // How long the user may be in another app and still come back to an unlocked App Lock app
+        // without re-entering the PIN (quick calculator / copy-paste detours).
+        private const val UNLOCK_GRACE_MS = 60_000L
         private const val FOREGROUND_NOTIFICATION_ID = 4201
 
         // Minimum spacing between processed TYPE_WINDOW_CONTENT_CHANGED events. These events
@@ -82,10 +81,18 @@ class FocusAccessibilityService : AccessibilityService() {
             "com.vivaldi.browser", "com.kiwibrowser.browser", "com.UCMobile.intl"
         )
 
-        // Packages whose node tree we must read even when no browser/Settings is involved.
-        private val TREE_PACKAGES = setOf(
-            "com.google.android.youtube", "com.instagram.android", "com.snapchat.android",
+        // Settings + the system package installer: read for the Strict Mode Settings gate and the
+        // Uninstall Friction Guard.
+        private val SYSTEM_GUARD_PACKAGES = setOf(
             "com.android.settings", "com.android.packageinstaller", "com.google.android.packageinstaller"
+        )
+
+        // Windows that pop over a locked app without the user actually leaving it (Play services
+        // dialogs, file / photo pickers, the share sheet).
+        private val EXTRA_TRANSIENT_PACKAGES = setOf(
+            "com.google.android.gms", "com.android.documentsui", "com.google.android.documentsui",
+            "com.android.intentresolver", "com.android.providers.media.module",
+            "com.google.android.providers.media.module"
         )
     }
 
@@ -97,6 +104,7 @@ class FocusAccessibilityService : AccessibilityService() {
     private var isSessionStrict = false
     private var blockedPackages = setOf<String>()
     private var restrictSettingsFullyEnabled = false
+    private var restrictUninstallEnabled = false
     private var longTermBlocks = listOf<LongTermBlock>()
     private var activeWebsitesList = listOf<WebsiteBlock>()
     private var lastContentChangedProcessTime = 0L
@@ -107,6 +115,8 @@ class FocusAccessibilityService : AccessibilityService() {
     // so re-opening a locked app always asks for the PIN again.
     private var lockedPackages = setOf<String>()
     private var unlockedPackage: String? = null
+    // When the user went to some OTHER app while a locked app was unlocked (0 = they are still in it).
+    private var unlockedLeftAtMs = 0L
 
     // Daily time-quota tracking: while a quota-mode long-term-blocked app is in the
     // foreground, we track how long it's been open and periodically add that to its
@@ -133,6 +143,26 @@ class FocusAccessibilityService : AccessibilityService() {
      * works from a fresh, consistent value.
      */
     private val quotaPersistMutex = Mutex()
+
+    // Per quota block: the moment up to which foreground time has already been counted. Only read /
+    // written while holding quotaPersistMutex, it guarantees a window shared by two overlapping persist
+    // calls (ticker vs. app switch) is added to the usage exactly once.
+    private val quotaAccountedUntil = HashMap<Int, Long>()
+
+    // Drops App Lock's unlock grant (and stops quota tracking) when the screen turns off.
+    private var screenOffReceiverRegistered = false
+    private val screenOffReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                unlockedPackage = null
+                unlockedLeftAtMs = 0L
+                stopQuotaTrackingAndPersist()
+            }
+        }
+    }
+
+    // Debounce so the foreground heartbeat doesn't re-fire a block while the previous one is still loading.
+    private var lastBlockTriggerAtMs = 0L
 
     private var overlayView: View? = null
     private val windowManager: WindowManager by lazy { getSystemService(android.content.Context.WINDOW_SERVICE) as WindowManager }
@@ -219,6 +249,13 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
+            // Observe the Strict Mode wizard's "App Uninstallation" restriction toggle
+            serviceScope.launch {
+                repository.getSettingFlow("strict_restrict_uninstall").collectLatest { value ->
+                    restrictUninstallEnabled = value?.toBoolean() ?: false
+                }
+            }
+
             // Observe active long-term blocks
             serviceScope.launch {
                 repository.activeLongTermBlocks.collectLatest { blocks ->
@@ -262,6 +299,16 @@ class FocusAccessibilityService : AccessibilityService() {
         }
 
         startQuotaHeartbeat()
+
+        if (!screenOffReceiverRegistered) {
+            try {
+                // ACTION_SCREEN_OFF is a protected system broadcast, so no exported/not-exported flag is needed.
+                registerReceiver(screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF))
+                screenOffReceiverRegistered = true
+            } catch (e: Exception) {
+                Log.e("FocusService", "Could not register screen-off receiver", e)
+            }
+        }
     }
 
     /**
@@ -328,6 +375,7 @@ class FocusAccessibilityService : AccessibilityService() {
         if (packageName == "com.android.permissioncontroller" ||
             packageName == "com.google.android.permissioncontroller"
         ) return true
+        if (EXTRA_TRANSIENT_PACKAGES.contains(packageName)) return true
         // In-call / telecom UI: OEMs each ship this under a different package
         // (com.android.dialer, com.android.incallui, com.coloros.dialer,
         // com.realme.dialer, com.android.server.telecom, and more). A voice/video
@@ -360,6 +408,9 @@ class FocusAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
 
+        val now = TrustedClock.now()
+        val isStrictModeActive = isSessionActive && now < sessionEndTime && isSessionStrict
+
         // Strict-Mode Settings gate: an invisible, text-less touch guard goes up the
         // moment a Settings window opens, so the accessibility/device-admin toggle can't
         // be tapped during the node-tree read below. Released once the screen is
@@ -367,12 +418,12 @@ class FocusAccessibilityService : AccessibilityService() {
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             packageName == "com.android.settings" &&
             overlayView == null &&
-            isSessionActive && System.currentTimeMillis() < sessionEndTime && isSessionStrict &&
+            isStrictModeActive &&
             Settings.canDrawOverlays(this)
         ) {
             showOverlay(packageName, opaque = false)
             settingsHarmlessStreak = 0
-            settingsGateShownAtMs = System.currentTimeMillis()
+            settingsGateShownAtMs = now
         }
 
         // Only tear the overlay down once OUR OWN app (BlockActivity, or MainActivity
@@ -393,14 +444,10 @@ class FocusAccessibilityService : AccessibilityService() {
         // low-RAM Go devices, so we throttle it. WINDOW_STATE_CHANGED (app/tab
         // switches) is never throttled, so app/website blocking still reacts instantly.
         if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            val nowMs = System.currentTimeMillis()
             val minGap = if (packageName == "com.android.settings") SETTINGS_CONTENT_THROTTLE_MS else CONTENT_CHANGED_THROTTLE_MS
-            if (nowMs - lastContentChangedProcessTime < minGap) return
-            lastContentChangedProcessTime = nowMs
+            if (now - lastContentChangedProcessTime < minGap) return
+            lastContentChangedProcessTime = now
         }
-
-        // Update live diagnostics variables
-        currentPackage.value = packageName
 
         // If a quota-tracked app is no longer in the foreground, stop the ticker and
         // persist however much time was actually spent in it this session.
@@ -432,50 +479,39 @@ class FocusAccessibilityService : AccessibilityService() {
             unlockedPackage = null
         }
 
-        val eventTypeStr = when (eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "TYPE_WINDOW_STATE_CHANGED"
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "TYPE_WINDOW_CONTENT_CHANGED"
-            else -> "EVENT_$eventType"
-        }
-        lastEvent.value = "$eventTypeStr - Class: ${event.className}, Text: ${event.text}"
-
-        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val classNameStr = event.className?.toString() ?: ""
-            if (classNameStr.contains(".") || classNameStr.endsWith("Activity")) {
-                currentActivity.value = classNameStr
+        // Grace window. Leaving an unlocked app through some OTHER app (gesture-switching via Recents,
+        // never touching the launcher) used to keep the unlock alive forever. Now the unlock only
+        // survives a short detour: come back within UNLOCK_GRACE_MS and it is still open, stay away
+        // longer and the PIN is asked again. (Screen-off revokes it too - see screenOffReceiver.)
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && unlockedPackage != null) {
+            if (unlockedPackage == packageName) {
+                if (unlockedLeftAtMs != 0L && now - unlockedLeftAtMs > UNLOCK_GRACE_MS) {
+                    unlockedPackage = null
+                }
+                unlockedLeftAtMs = 0L
+            } else if (packageName != applicationContext.packageName && !isTransientSystemPackage(packageName)) {
+                if (unlockedLeftAtMs == 0L) unlockedLeftAtMs = now
             }
         }
 
-        // Fetch the window's node tree exactly ONCE per event and reuse it for every
-        // check below (diagnostics, website blocking, Shorts/Reels/Spotlight detection).
-        // The previous implementation queried rootInActiveWindow a second time for the
-        // website-blocking check, doubling the IPC + tree-walk cost of every event.
-        val needsTree = TREE_PACKAGES.contains(packageName) ||
-            BROWSER_PACKAGES.contains(packageName) ||
-            visibleText.subscriptionCount.value > 0
+        // Fetch the window's node tree exactly ONCE per event and reuse it for every check below.
+        // Walking a tree is expensive on a 2GB device, so it is only done where the result is used:
+        //  - browsers: only the URL bar is needed (found by view id) - the page itself is never read
+        //  - Settings / package installer: Strict Mode Settings gate + Uninstall Friction Guard
+        //  - YouTube / Instagram / Snapchat: content-level blocking, which exists only in Strict Mode
+        //    and only when that app's toggle is on
+        val isBrowser = BROWSER_PACKAGES.contains(packageName)
+        val readsScreenText = SYSTEM_GUARD_PACKAGES.contains(packageName) ||
+            (isStrictModeActive && isContentBlockEnabled(packageName))
+        val needsTree = isBrowser || readsScreenText
         val rootNode = if (needsTree) rootInActiveWindow else null
         val usingFallbackSource = needsTree && rootNode == null
         val nodeToUse = if (needsTree) (rootNode ?: event.source) else null
 
         try {
             val screenTexts = mutableListOf<String>()
-            if (nodeToUse != null) {
+            if (readsScreenText && nodeToUse != null) {
                 collectScreenText(nodeToUse, screenTexts, 0)
-            }
-            val textString = screenTexts.joinToString(", ")
-            if (nodeToUse != null) visibleText.value = if (textString.length > 1000) textString.take(1000) + "..." else textString
-
-            // The indented full-tree dump is a debug convenience only used for YouTube
-            // logging - build it lazily, only for that package, instead of on every
-            // single event for every app (which was the largest per-event allocation).
-            if (packageName == "com.google.android.youtube") {
-                val nodeTreeDump = StringBuilder()
-                if (nodeToUse != null) {
-                    buildNodeTreeDump(nodeToUse, nodeTreeDump, 0)
-                }
-                Log.d("FocusService", "YouTube Event: $eventTypeStr")
-                Log.d("FocusService", "YouTube Screen Text: $textString")
-                Log.d("FocusService", "YouTube Node Tree:\n$nodeTreeDump")
             }
 
             // Don't block our own app or common system tasks
@@ -484,17 +520,33 @@ class FocusAccessibilityService : AccessibilityService() {
 
             val appName = applicationContext.getString(R.string.app_name)
 
-            val now = System.currentTimeMillis()
-
             // Strict-Mode Guard
-            val isStrictModeActive = isSessionActive && now < sessionEndTime && isSessionStrict
             if (isStrictModeActive) {
-                // Blocking Rules: block uninstallation
-                if (packageName == "com.android.packageinstaller" || packageName == "com.google.android.packageinstaller") {
-                    Log.d("FocusService", "Strict Mode: Blocking app uninstaller: $packageName")
-                    triggerBlockActivity(packageName, isLongTerm = false, reason = "App uninstallation is blocked in Strict Mode.", endDate = sessionEndTime)
+                // "App Uninstallation" restriction (Strict Mode wizard, step 2): while ON, the system
+                // uninstall confirmation for ANY app is blocked. Text-scoped on purpose - the installer
+                // package itself is not blocked, so installing an update still works.
+                if (restrictUninstallEnabled &&
+                    (packageName == "com.android.packageinstaller" || packageName == "com.google.android.packageinstaller") &&
+                    screenTexts.any { it.contains("uninstall", ignoreCase = true) }
+                ) {
+                    if (now - lastDeviceWideBlockAtMs >= DEVICE_WIDE_BLOCK_DEBOUNCE_MS) {
+                        lastDeviceWideBlockAtMs = now
+                        triggerBlockActivity(
+                            packageName,
+                            isLongTerm = false,
+                            reason = "Uninstalling apps is blocked in Strict Mode.",
+                            endDate = sessionEndTime
+                        )
+                    }
                     return
                 }
+
+                // NOTE: installing/uninstalling via com.android.packageinstaller used to be
+                // blocked outright here, which also blocked installing a brand new APK (e.g.
+                // this app's own update) any time Strict Mode was on. Uninstall protection for
+                // OUR app now lives entirely in the always-on Uninstall Friction Guard below,
+                // which checks screen text instead of blocking the installer package wholesale.
+
                 // Selective Settings Rules - blocks/bounces screens that could be used to
                 // defeat enforcement (uninstalling, disabling the accessibility service or
                 // device admin, revoking the overlay permission), never a full Settings
@@ -514,8 +566,13 @@ class FocusAccessibilityService : AccessibilityService() {
             // dead-end block screen, the moment Settings shows Focuss Buddy's own App Info
             // screen with an "Uninstall" action visible, or the system package installer's
             // uninstall confirmation appears directly.
-            if (!isStrictModeActive) {
-                val isUninstallerScreen = packageName == "com.android.packageinstaller" || packageName == "com.google.android.packageinstaller"
+            run {
+                // Must be OUR app's uninstall dialog: the app name AND "uninstall" both on screen.
+                // (An OR here also hijacked every other app's uninstall dialog and this app's own
+                // update-install screen, which shows the app name too.)
+                val isUninstallerScreen = (packageName == "com.android.packageinstaller" || packageName == "com.google.android.packageinstaller") &&
+                    screenTexts.any { it.contains(appName, ignoreCase = true) } &&
+                    screenTexts.any { it.contains("uninstall", ignoreCase = true) }
                 val isOwnAppInfoWithUninstall = packageName == "com.android.settings" &&
                     screenTexts.any { it.contains(appName, ignoreCase = true) } &&
                     screenTexts.any { it.contains("Uninstall", ignoreCase = true) }
@@ -661,25 +718,6 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
-            if (packageName == "com.google.android.youtube") {
-                val previousStatus = shortsDetectionStatus.value
-                if (isShortsDetected) {
-                    shortsDetectionStatus.value = "Shorts Detected!"
-                    if (previousStatus != "Shorts Detected!") {
-                        // Show Toast on Main UI thread and only on state transition to prevent excessive spamming/suppression
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            try {
-                                android.widget.Toast.makeText(applicationContext, "Shorts Detected", android.widget.Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) {
-                                Log.e("FocusService", "Failed to show Toast", e)
-                            }
-                        }
-                    }
-                } else {
-                    shortsDetectionStatus.value = "Shorts Not Detected"
-                }
-            }
-
             // 4. Content-Level Blocking (YouTube Shorts, Instagram Reels, Snapchat Spotlight)
             // Content-Level Blocking must only be active during Strict Mode.
             if (isStrictModeActive) {
@@ -717,6 +755,9 @@ class FocusAccessibilityService : AccessibilityService() {
                     }
                 }
             }
+        } catch (e: Exception) {
+            // Never let a malformed node tree or a transient IPC failure take the whole service down.
+            Log.e("FocusService", "Error handling accessibility event", e)
         } finally {
             // Always release the node(s) we obtained at the top of this event, on every
             // return path. The previous implementation only recycled the happy-path
@@ -730,13 +771,22 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Current epoch day (days since 1970-01-01, in the device's local timezone) -
-     * used to detect the midnight rollover so usedSecondsToday resets automatically.
-     */
-    private fun currentEpochDay(): Long {
-        return System.currentTimeMillis() / (24 * 60 * 60 * 1000L)
+    /** True when the Strict Mode content-level toggle for this app (Shorts / Reels / Spotlight) is on. */
+    private fun isContentBlockEnabled(packageName: String): Boolean {
+        val prefs = getSharedPreferences("focuss_buddy_settings", MODE_PRIVATE)
+        return when (packageName) {
+            "com.google.android.youtube" -> prefs.getBoolean("youtube_block_shorts", false)
+            "com.instagram.android" -> prefs.getBoolean("instagram_block_reels", false)
+            "com.snapchat.android" -> prefs.getBoolean("snapchat_block_spotlight", false)
+            else -> false
+        }
     }
+
+    /**
+     * Current epoch day (days since 1970-01-01 in the device's LOCAL timezone) - used to detect
+     * the midnight rollover so usedSecondsToday resets automatically.
+     */
+    private fun currentEpochDay(): Long = TimeUtils.localEpochDay(TrustedClock.now())
 
     /**
      * Begins tracking foreground time for a quota-mode long-term-blocked app. Starts a
@@ -746,7 +796,7 @@ class FocusAccessibilityService : AccessibilityService() {
     private fun startQuotaTracking(block: LongTermBlock) {
         quotaTrackingBlockId = block.id
         quotaTrackingPackage = block.target
-        quotaTrackingStartMs = System.currentTimeMillis()
+        quotaTrackingStartMs = TrustedClock.now()
 
         quotaTickerJob?.cancel()
         quotaTickerJob = serviceScope.launch {
@@ -792,31 +842,70 @@ class FocusAccessibilityService : AccessibilityService() {
      * that play session.
      *
      * This heartbeat polls the actual foreground package directly every few seconds,
-     * independent of any event firing, and resumes tracking (or blocks immediately if
-     * already over quota) whenever it finds a quota-enabled app sitting untracked in
-     * the foreground. Started once for the service's lifetime from onServiceConnected().
+     * independent of any event firing. It resumes quota tracking (or blocks immediately if
+     * already over quota) for a quota-enabled app sitting untracked in the foreground, and it
+     * also blocks an app that is ALREADY open when a focus session / long-term block starts
+     * (app blocks are otherwise only evaluated when an app is opened). It additionally closes
+     * a focus session whose time has run out. Started once from onServiceConnected().
      */
     private fun startQuotaHeartbeat() {
         quotaHeartbeatJob?.cancel()
         quotaHeartbeatJob = serviceScope.launch {
             while (true) {
-                kotlinx.coroutines.delay(3_000L)
-                if (longTermBlocks.none { it.type == "APP" && it.dailyLimitSeconds != null }) continue
+                delay(3_000L)
                 try {
-                    val fgPackage = rootInActiveWindow?.packageName?.toString() ?: continue
-                    if (quotaTrackingPackage == fgPackage) continue
+                    val now = TrustedClock.now()
 
-                    val now = System.currentTimeMillis()
+                    // A focus session whose time is up is closed here too, so it ends on time even if
+                    // no accessibility event happens to arrive afterwards.
+                    if (isSessionActive && now >= sessionEndTime) {
+                        (application as FocusApplication).repository.stopActiveSession("Expired")
+                    }
+
+                    val sessionBlocking = isSessionActive && now < sessionEndTime && blockedPackages.isNotEmpty()
+                    val hasAppBlocks = longTermBlocks.any { it.type == "APP" }
+                    if (!sessionBlocking && !hasAppBlocks) continue
+
+                    val root = rootInActiveWindow ?: continue
+                    val fgPackage = root.packageName?.toString()
+                    @Suppress("DEPRECATION")
+                    root.recycle()
+                    if (fgPackage == null || fgPackage == applicationContext.packageName) continue
+                    // A block was just fired and its screen is still loading - don't stack another one.
+                    if (now - lastBlockTriggerAtMs < 2_500L) continue
+
+                    // 1. A focus session started (or the block list changed) while the blocked app was
+                    //    already open - app blocks are otherwise only evaluated when an app is opened.
+                    if (sessionBlocking && blockedPackages.contains(fgPackage)) {
+                        Log.d("FocusService", "Heartbeat: blocked app already in foreground: $fgPackage")
+                        triggerBlockActivity(fgPackage, isLongTerm = false, reason = "", endDate = sessionEndTime)
+                        continue
+                    }
+
+                    // 2. Long-term app blocks: a block that became active while its app was open, or a
+                    //    quota app that is sitting untracked in the foreground.
+                    if (quotaTrackingPackage == fgPackage) continue
                     val activeBlock = longTermBlocks.firstOrNull {
                         it.type == "APP" && it.target == fgPackage && it.isActive &&
-                            now >= it.startDate && now <= it.endDate && it.dailyLimitSeconds != null
+                            now >= it.startDate && now <= it.endDate
                     } ?: continue
+
+                    val limitSeconds = activeBlock.dailyLimitSeconds
+                    if (limitSeconds == null) {
+                        triggerBlockActivity(
+                            fgPackage,
+                            isLongTerm = true,
+                            reason = activeBlock.reason,
+                            endDate = activeBlock.endDate,
+                            targetLabel = activeBlock.targetLabel,
+                            type = "APP"
+                        )
+                        continue
+                    }
 
                     val today = currentEpochDay()
                     val usedMillis = if (activeBlock.lastUsageResetEpochDay != today) 0L else activeBlock.usedMillisToday
-                    val limitMillis = (activeBlock.dailyLimitSeconds ?: continue) * 1000L
-
-                    if (usedMillis >= limitMillis) {
+                    if (usedMillis >= limitSeconds * 1000L) {
                         Log.d("FocusService", "Quota heartbeat: $fgPackage already over quota, blocking")
                         triggerBlockActivity(
                             fgPackage,
@@ -831,7 +920,7 @@ class FocusAccessibilityService : AccessibilityService() {
                         startQuotaTracking(activeBlock)
                     }
                 } catch (e: Exception) {
-                    Log.e("FocusService", "Error in quota heartbeat", e)
+                    Log.e("FocusService", "Error in foreground heartbeat", e)
                 }
             }
         }
@@ -849,31 +938,40 @@ class FocusAccessibilityService : AccessibilityService() {
      * stopQuotaTrackingAndPersist() nulling them before this suspend function got a
      * chance to run, silently dropping the final segment of usage on every app switch.
      */
-    private suspend fun persistQuotaProgress(blockId: Int, startMs: Long): Boolean = quotaPersistMutex.withLock {
-        val elapsedMillis = (System.currentTimeMillis() - startMs).coerceAtLeast(0L)
+    private suspend fun persistQuotaProgress(blockId: Int, startMs: Long): Boolean {
+        val windowEnd = TrustedClock.now()
+        return quotaPersistMutex.withLock {
+            // Count every moment exactly once: a concurrent persist (ticker vs. app switch) may
+            // already have accounted for the start of this window. startMs is snapshotted by the
+            // caller BEFORE it waits for this lock, so the overlap can only be resolved here, inside
+            // it, via the per-block "accounted until" mark.
+            val accountedUntil = quotaAccountedUntil[blockId] ?: 0L
+            val elapsedMillis = (windowEnd - maxOf(startMs, accountedUntil)).coerceAtLeast(0L)
+            quotaAccountedUntil[blockId] = maxOf(windowEnd, accountedUntil)
 
-        val repository = (application as FocusApplication).repository
-        val block = repository.getLongTermBlockById(blockId) ?: return@withLock false
-        val limit = block.dailyLimitSeconds ?: return@withLock false
-        val today = currentEpochDay()
+            val repository = (application as FocusApplication).repository
+            val block = repository.getLongTermBlockById(blockId) ?: return@withLock false
+            val limit = block.dailyLimitSeconds ?: return@withLock false
+            val today = currentEpochDay()
 
-        // Accumulate in milliseconds so brief sub-second segments (rapid Reels
-        // scrolling, quick app peeks) don't get truncated away - only the final
-        // derived usedSecondsToday (for display/threshold checks elsewhere) is
-        // floored to whole seconds, from an otherwise lossless running total.
-        val baseMillis = if (block.lastUsageResetEpochDay != today) 0L else block.usedMillisToday
-        val newMillis = baseMillis + elapsedMillis
-        val newSeconds = newMillis / 1000L
-        repository.updateLongTermBlockUsage(blockId, newSeconds, newMillis, today)
+            // Accumulate in milliseconds so brief sub-second segments (rapid Reels
+            // scrolling, quick app peeks) don't get truncated away - only the final
+            // derived usedSecondsToday (for display/threshold checks elsewhere) is
+            // floored to whole seconds, from an otherwise lossless running total.
+            val baseMillis = if (block.lastUsageResetEpochDay != today) 0L else block.usedMillisToday
+            val newMillis = baseMillis + elapsedMillis
+            val newSeconds = newMillis / 1000L
+            repository.updateLongTermBlockUsage(blockId, newSeconds, newMillis, today)
 
-        // Only reset the shared tracking window if we're still actively tracking this
-        // same block - guards against clobbering a newer tracking window started
-        // concurrently (e.g. the user left and immediately reopened the same app).
-        if (quotaTrackingBlockId == blockId) {
-            quotaTrackingStartMs = System.currentTimeMillis()
+            // Only reset the shared tracking window if we're still actively tracking this
+            // same block - guards against clobbering a newer tracking window started
+            // concurrently (e.g. the user left and immediately reopened the same app).
+            if (quotaTrackingBlockId == blockId) {
+                quotaTrackingStartMs = windowEnd
+            }
+
+            newMillis >= limit * 1000L
         }
-
-        newMillis >= limit * 1000L
     }
 
     /** Stops tracking (app switched away or session ending) and persists final elapsed time. */
@@ -971,17 +1069,17 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     private fun startSettingsWatch() {
-        settingsWatchUntilMs = System.currentTimeMillis() + SETTINGS_WATCH_WINDOW_MS
+        settingsWatchUntilMs = TrustedClock.now() + SETTINGS_WATCH_WINDOW_MS
         if (settingsWatchJob?.isActive == true) return
         settingsWatchJob = serviceScope.launch {
             val appName = applicationContext.getString(R.string.app_name)
-            while (System.currentTimeMillis() < settingsWatchUntilMs) {
+            while (TrustedClock.now() < settingsWatchUntilMs) {
                 delay(SETTINGS_WATCH_INTERVAL_MS)
-                val strict = isSessionActive && System.currentTimeMillis() < sessionEndTime && isSessionStrict
+                val strict = isSessionActive && TrustedClock.now() < sessionEndTime && isSessionStrict
                 if (!strict) break
                 val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: continue
                 if (root.packageName?.toString() != "com.android.settings") break
-                handleSettingsScreen(root, "com.android.settings", appName, System.currentTimeMillis())
+                handleSettingsScreen(root, "com.android.settings", appName, TrustedClock.now())
             }
         }
     }
@@ -1063,6 +1161,7 @@ class FocusAccessibilityService : AccessibilityService() {
             }
         }
 
+        lastBlockTriggerAtMs = TrustedClock.now()
         closeBlockedAppThenBlock(packageName)
 
         val intent = Intent(this, BlockActivity::class.java).apply {
@@ -1100,6 +1199,7 @@ class FocusAccessibilityService : AccessibilityService() {
 
     /** Called by AppLockUnlockActivity once the correct PIN has been entered. */
     fun grantAppUnlock(packageName: String) {
+        unlockedLeftAtMs = 0L
         unlockedPackage = packageName
     }
 
@@ -1207,6 +1307,14 @@ class FocusAccessibilityService : AccessibilityService() {
         if (instance == this) {
             instance = null
         }
+        if (screenOffReceiverRegistered) {
+            try {
+                unregisterReceiver(screenOffReceiver)
+            } catch (e: Exception) {
+                Log.e("FocusService", "Error unregistering screen-off receiver", e)
+            }
+            screenOffReceiverRegistered = false
+        }
         try {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         } catch (e: Exception) {
@@ -1233,6 +1341,7 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     private fun triggerContentBlockActivity(packageName: String, contentType: String) {
+        lastBlockTriggerAtMs = TrustedClock.now()
         closeBlockedAppThenBlock(packageName)
 
         val intent = Intent(this, BlockActivity::class.java).apply {
@@ -1245,11 +1354,9 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Lightweight tree walk that only gathers visible text/content-descriptions.
-     * This runs on every processed event for every app, so it deliberately avoids
-     * building the indented string-dump representation that the old combined
-     * function produced unconditionally (see buildNodeTreeDump for that, which is
-     * now only invoked for the one package that actually logs it).
+     * Lightweight tree walk that only gathers visible text/content-descriptions. Only called
+     * for the few windows whose text is actually used (see readsScreenText in
+     * onAccessibilityEvent).
      */
     private fun collectScreenText(node: AccessibilityNodeInfo?, list: MutableList<String>, depth: Int) {
         if (node == null || depth > 50) return
@@ -1261,24 +1368,6 @@ class FocusAccessibilityService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collectScreenText(child, list, depth + 1)
-            child.recycle()
-        }
-    }
-
-    /** Verbose indented tree dump used only for YouTube debug logging. */
-    private fun buildNodeTreeDump(node: AccessibilityNodeInfo?, builder: StringBuilder, depth: Int) {
-        if (node == null || depth > 50) return
-        val text = node.text?.toString() ?: ""
-        val desc = node.contentDescription?.toString() ?: ""
-        val viewId = node.viewIdResourceName ?: ""
-        val className = node.className?.toString() ?: ""
-
-        val indent = "  ".repeat(depth.coerceAtMost(10))
-        builder.append("$indent[$className] id=$viewId text='$text' desc='$desc'\n")
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            buildNodeTreeDump(child, builder, depth + 1)
             child.recycle()
         }
     }
@@ -1367,14 +1456,16 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     private fun removeOverlay() {
+        // Detach the field right away; only the WindowManager call is posted. Previously the field was
+        // cleared inside the posted runnable, so a new showOverlay() arriving in between saw a
+        // non-null overlayView, skipped adding a fresh cover, and the pending removal then deleted it.
+        val view = overlayView ?: return
+        overlayView = null
+        currentBlockedPackage = null
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             try {
-                overlayView?.let {
-                    windowManager.removeView(it)
-                    overlayView = null
-                    currentBlockedPackage = null
-                    Log.d("FocusService", "Removed overlay view")
-                }
+                windowManager.removeView(view)
+                Log.d("FocusService", "Removed overlay view")
             } catch (e: Exception) {
                 Log.e("FocusService", "Failed to remove overlay view", e)
             }
@@ -1386,7 +1477,7 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     private fun triggerOverlayPermissionRequest() {
-        val now = System.currentTimeMillis()
+        val now = TrustedClock.now()
         if (now - lastPermissionRequestTime > 10000L) { // 10 seconds cooldown to avoid spamming intents
             lastPermissionRequestTime = now
             try {
