@@ -1,28 +1,7 @@
+// Intentionally empty.
+//
+// This file used to hold a feature that was removed from the app (JEE tests / PYQ practice / study chat /
+// Banking Mode / the old uninstall-friction activity). It is kept as an empty stub only because uploading
+// a project over an existing GitHub repository never deletes files: without the stub, the old copy of this
+// file would stay in the repo and break the build. It compiles to nothing - safe to delete from the repo.
 package com.example.data
-
-import androidx.room.Entity
-import androidx.room.PrimaryKey
-import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.Query
-import kotlinx.coroutines.flow.Flow
-
-@Entity(tableName = "chat_messages")
-data class ChatMessage(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val sender: String, // "USER" or "AI"
-    val content: String,
-    val timestamp: Long = System.currentTimeMillis()
-)
-
-@Dao
-interface ChatMessageDao {
-    @Query("SELECT * FROM chat_messages ORDER BY timestamp ASC")
-    fun getAllMessages(): Flow<List<ChatMessage>>
-
-    @Insert
-    suspend fun insertMessage(message: ChatMessage)
-
-    @Query("DELETE FROM chat_messages")
-    suspend fun clearHistory()
-}

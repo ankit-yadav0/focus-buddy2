@@ -1,22 +1,7 @@
+// Intentionally empty.
+//
+// This file used to hold a feature that was removed from the app (JEE tests / PYQ practice / study chat /
+// Banking Mode / the old uninstall-friction activity). It is kept as an empty stub only because uploading
+// a project over an existing GitHub repository never deletes files: without the stub, the old copy of this
+// file would stay in the repo and break the build. It compiles to nothing - safe to delete from the repo.
 package com.example.data
-
-import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
-import androidx.room.Query
-import kotlinx.coroutines.flow.Flow
-
-@Dao
-interface DailyUsageDao {
-    @Query("SELECT * FROM daily_usage WHERE target = :target AND dateKey = :dateKey LIMIT 1")
-    suspend fun getUsage(target: String, dateKey: String): DailyUsage?
-
-    @Query("SELECT * FROM daily_usage WHERE dateKey = :dateKey")
-    fun getUsageForDate(dateKey: String): Flow<List<DailyUsage>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(usage: DailyUsage)
-
-    @Query("DELETE FROM daily_usage WHERE dateKey < :cutoffDateKey")
-    suspend fun deleteOlderThan(cutoffDateKey: String)
-}

@@ -1,17 +1,7 @@
+// Intentionally empty.
+//
+// This file used to hold a feature that was removed from the app (JEE tests / PYQ practice / study chat /
+// Banking Mode / the old uninstall-friction activity). It is kept as an empty stub only because uploading
+// a project over an existing GitHub repository never deletes files: without the stub, the old copy of this
+// file would stay in the repo and break the build. It compiles to nothing - safe to delete from the repo.
 package com.example.data
-
-import androidx.room.Entity
-
-/**
- * Tracks how many minutes a given app/website (identified by [target], the
- * package name or domain) has been used on a given day ([dateKey], formatted
- * "yyyy-MM-dd" in the device's local timezone). Used to enforce the optional
- * daily time limit on a [LongTermBlock]. Rows naturally "reset" each day
- * since a new day gets a new dateKey.
- */
-@Entity(tableName = "daily_usage", primaryKeys = ["target", "dateKey"])
-data class DailyUsage(
-    val target: String,
-    val dateKey: String,
-    val minutesUsed: Int = 0
-)
