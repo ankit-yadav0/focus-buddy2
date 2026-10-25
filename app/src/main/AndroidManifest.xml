@@ -148,6 +148,19 @@
             </intent-filter>
         </receiver>
 
+        <!-- Home Screen Widget (Streak + Today's Focus + 1-Tap Start) -->
+        <receiver
+            android:name=".widget.FocusAppWidgetProvider"
+            android:label="Focuss Buddy Status"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/focus_app_widget_info" />
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

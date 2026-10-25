@@ -14,8 +14,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.SelfImprovement
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -49,6 +49,8 @@ class BlockActivity : ComponentActivity() {
     private var longTermEndDateState by mutableLongStateOf(0L)
     private var longTermTypeState by mutableStateOf("APP")
     private var appLabelState by mutableStateOf("")
+    private var isMindfulDelayState by mutableStateOf(false)
+    private var mindfulTriggerKey by mutableIntStateOf(0)
 
     override fun onResume() {
         super.onResume()
@@ -77,6 +79,8 @@ class BlockActivity : ComponentActivity() {
         longTermEndDateState = newIntent.getLongExtra("LONG_TERM_END_DATE", 0L)
         val targetLabel = newIntent.getStringExtra("LONG_TERM_TARGET_LABEL") ?: ""
         longTermTypeState = newIntent.getStringExtra("LONG_TERM_TYPE") ?: "APP"
+        isMindfulDelayState = newIntent.getBooleanExtra("IS_MINDFUL_DELAY", false)
+        mindfulTriggerKey++
         appLabelState = resolveAppLabel(targetLabel, blockedPkg)
     }
 
@@ -86,12 +90,40 @@ class BlockActivity : ComponentActivity() {
         applyIntent(intent)
     }
 
+    private fun goHomeAndFinish() {
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        startActivity(homeIntent)
+        finish()
+    }
+
+    private fun launchAllowedAppAndFinish(pkg: String) {
+        FocusAccessibilityService.instance?.grantMindfulLaunchPass(pkg)
+        try {
+            val launchIntent = packageManager.getLaunchIntentForPackage(pkg)?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            }
+            if (launchIntent != null) {
+                startActivity(launchIntent)
+            }
+        } catch (e: Exception) {
+            // Fall through to finish() which reveals the underlying app
+        }
+        finish()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
-        // Back/gesture is absorbed: screen leaves only via its own button.
-        onBackPressedDispatcher.addCallback(this) { }
+        // Back/gesture is absorbed: screen leaves only via its own button (or goes home during mindful delay).
+        onBackPressedDispatcher.addCallback(this) {
+            if (isMindfulDelayState) {
+                goHomeAndFinish()
+            }
+        }
 
         applyIntent(intent)
 
@@ -104,7 +136,18 @@ class BlockActivity : ComponentActivity() {
                     val app = application as FocusApplication
                     val activeSession by app.repository.activeSession.collectAsState(initial = null)
 
-                    if (isContentLevelState) {
+                    if (isMindfulDelayState) {
+                        MindfulBreathingGateScreen(
+                            appName = appLabelState,
+                            triggerKey = mindfulTriggerKey,
+                            onProceedWithReason = { _ ->
+                                launchAllowedAppAndFinish(blockedPackageState)
+                            },
+                            onCancelToHome = {
+                                goHomeAndFinish()
+                            }
+                        )
+                    } else if (isContentLevelState) {
                         ContentBlockedScreen(
                             contentType = contentTypeState,
                             activeSession = activeSession,
@@ -114,11 +157,8 @@ class BlockActivity : ComponentActivity() {
                                 if (service != null) {
                                     service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                                 } else {
-                                    val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                                        addCategory(Intent.CATEGORY_HOME)
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                    }
-                                    startActivity(homeIntent)
+                                    goHomeAndFinish()
+                                    return@ContentBlockedScreen
                                 }
                                 finish()
                             }
@@ -133,18 +173,188 @@ class BlockActivity : ComponentActivity() {
                             longTermEndDate = longTermEndDateState,
                             longTermType = longTermTypeState,
                             onReturnHome = {
-                                // Launch home screen
-                                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                                    addCategory(Intent.CATEGORY_HOME)
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                }
-                                startActivity(homeIntent)
-                                finish()
+                                goHomeAndFinish()
                             }
                         )
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun MindfulBreathingGateScreen(
+    appName: String,
+    triggerKey: Int,
+    onProceedWithReason: (String) -> Unit,
+    onCancelToHome: () -> Unit
+) {
+    var secondsLeft by remember(triggerKey) { mutableIntStateOf(7) }
+
+    LaunchedEffect(triggerKey) {
+        secondsLeft = 7
+        while (secondsLeft > 0) {
+            kotlinx.coroutines.delay(1000L)
+            secondsLeft--
+        }
+    }
+
+    val isReady = secondsLeft <= 0
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0A141D),
+                        Color(0xFF0E1B26),
+                        Color(0xFF070B10)
+                    )
+                )
+            )
+            .padding(24.dp)
+            .navigationBarsPadding()
+            .statusBarsPadding(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 16.dp)
+                .clip(RoundedCornerShape(50))
+                .background(Color(0xFF3DFFC4).copy(alpha = 0.15f))
+                .padding(horizontal = 24.dp, vertical = 10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.SelfImprovement,
+                    contentDescription = "Mindful Pause",
+                    tint = Color(0xFF3DFFC4),
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "MINDFUL LAUNCH GATE · 7s PAUSE",
+                    color = Color(0xFF3DFFC4),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.4.sp
+                )
+            }
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+            modifier = Modifier.weight(1f).wrapContentHeight(Alignment.CenterVertically)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(RoundedCornerShape(60.dp))
+                    .background(Color(0xFF3DFFC4).copy(alpha = if (isReady) 0.22f else 0.10f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!isReady) {
+                    Text(
+                        text = "${secondsLeft}s",
+                        color = Color(0xFF3DFFC4),
+                        fontSize = 40.sp,
+                        fontWeight = FontWeight.Black,
+                        fontFamily = FontFamily.Monospace
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.SelfImprovement,
+                        contentDescription = "Ready",
+                        tint = Color(0xFF3DFFC4),
+                        modifier = Modifier.size(56.dp)
+                    )
+                }
+            }
+
+            Text(
+                text = "Rukiye! Kya $appName abhi zaroori hai?",
+                color = Color.White,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center
+            )
+
+            Text(
+                text = if (!isReady) {
+                    "Take a deep breath for $secondsLeft second${if (secondsLeft != 1) "s" else ""}. Break muscle-memory scrolling before deciding."
+                } else {
+                    "If you still need to open $appName, tap your intention below (grants a 10-minute mindful pass)."
+                },
+                color = Color.White.copy(alpha = 0.78f),
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center,
+                lineHeight = 20.sp,
+                modifier = Modifier.padding(horizontal = 12.dp)
+            )
+
+            if (isReady) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "SELECT REASON TO CONTINUE (10 MIN PASS)",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.5.sp,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { onProceedWithReason("Study / Work") },
+                            modifier = Modifier.weight(1f).height(50.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, Color(0xFF3DFFC4).copy(alpha = 0.6f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF3DFFC4))
+                        ) {
+                            Text("📚 Study / Work", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { onProceedWithReason("Urgent Message") },
+                            modifier = Modifier.weight(1f).height(50.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.6f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB74D))
+                        ) {
+                            Text("⚡ Urgent", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        Button(
+            onClick = onCancelToHome,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF3DFFC4),
+                contentColor = Color(0xFF071510)
+            ),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(bottom = 8.dp)
+        ) {
+            Text(
+                text = "Close & Stay Focused",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
         }
     }
 }
@@ -297,7 +507,6 @@ fun BlockScreenContent(
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
 
-            // Section for custom Reason (displayed for BOTH long-term and short-term blocks if reason is not empty)
             if (longTermReason.isNotEmpty()) {
                 Card(
                     colors = CardDefaults.cardColors(
@@ -333,7 +542,6 @@ fun BlockScreenContent(
                     }
                 }
             } else {
-                // If there's no custom reason, but it's a strict mode active focus session
                 val isStrict = activeSession?.isStrict ?: false
                 if (isStrict) {
                     Card(
@@ -372,7 +580,6 @@ fun BlockScreenContent(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Time Remaining Countdown Display Card (Generically used for both)
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = Color(0x15FFFFFF),
@@ -414,7 +621,6 @@ fun BlockScreenContent(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Unified Details Panel
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = Color(0x0AFFFFFF),
@@ -534,7 +740,6 @@ fun ContentBlockedScreen(
     val endTime = activeSession?.endTime ?: fallbackEndTime
     var timeRemaining by remember(endTime) { mutableStateOf(max(0L, endTime - TrustedClock.now())) }
 
-    // Tick the countdown every second for active focus session
     LaunchedEffect(endTime) {
         while (timeRemaining > 0) {
             kotlinx.coroutines.delay(1000L)
@@ -576,7 +781,6 @@ fun ContentBlockedScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Status banner
         Box(
             modifier = Modifier
                 .padding(top = 16.dp)
@@ -605,7 +809,6 @@ fun ContentBlockedScreen(
             }
         }
 
-        // Center Content
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -635,7 +838,6 @@ fun ContentBlockedScreen(
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
 
-            // Dynamic Info / Reason Card
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f),
@@ -660,7 +862,7 @@ fun ContentBlockedScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "You enabled the restriction for $contentType to block short-form video distractions in Strict Mode.",
+                        text = "You enabled the restriction for $contentType to block distractions in Strict Mode.",
                         color = Color.White.copy(alpha = 0.9f),
                         fontSize = 14.sp,
                         textAlign = TextAlign.Center,
@@ -671,7 +873,6 @@ fun ContentBlockedScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Time Remaining Countdown Display Card
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = Color(0x15FFFFFF),
@@ -712,7 +913,6 @@ fun ContentBlockedScreen(
             }
         }
 
-        // Bottom Button
         Button(
             onClick = onGoBack,
             colors = ButtonDefaults.buttonColors(

@@ -1,6 +1,8 @@
 package com.example.data
 
+import com.example.FocusApplication
 import com.example.TrustedClock
+import com.example.widget.FocusAppWidgetProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -117,6 +119,7 @@ class FocusRepository(
             origin = origin
         )
         focusSessionDao.insertSession(session)
+        FocusApplication.instanceOrNull()?.let { FocusAppWidgetProvider.requestUpdate(it) }
     }
 
     /**
@@ -162,6 +165,7 @@ class FocusRepository(
             completed = if (matured) 1 else 0,
             minutes = actualDurationSeconds / 60L
         )
+        FocusApplication.instanceOrNull()?.let { FocusAppWidgetProvider.requestUpdate(it) }
     }
 
     // Long Term Block operations

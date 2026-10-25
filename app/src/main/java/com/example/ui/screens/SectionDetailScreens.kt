@@ -31,10 +31,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.viewmodel.FocusViewModel
 
 /**
- * Dedicated screen for Long-Term Blocks + Daily Dashboard.
- * Previously these were embedded inline in HomeScreen; they now live behind
- * their own bottom-nav tab ("BLOCKS") so Home doesn't need a giant scroll
- * and this content only shows up when that tab is tapped.
+ * Dedicated screen for Long-Term Blocks + Keyword Blocker + Mindful Delay + Morning Lock + Daily Dashboard.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,6 +96,12 @@ fun BlocksProgressScreen(
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
             androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
+
+            MorningFirstTaskLockCard(viewModel = viewModel)
+
+            MindfulLaunchDelayCard(viewModel = viewModel)
+
+            KeywordTopicBlockerCard(viewModel = viewModel)
 
             LongTermBlockSection(
                 appBlocks = longTermBlocks,

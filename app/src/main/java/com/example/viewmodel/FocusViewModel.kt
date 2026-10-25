@@ -1,5 +1,6 @@
 package com.example.viewmodel
 
+import com.example.TimeUtils
 import com.example.TrustedClock
 import android.content.Context
 import android.content.Intent
@@ -20,6 +21,7 @@ import com.example.data.StrictSchedule
 import com.example.data.LockedApp
 import com.example.scheduler.AlarmScheduler
 import com.example.service.BankingPausePolicy
+import com.example.ui.helper.FocusSoundGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,7 +40,8 @@ data class AppInfo(
     val appName: String,
     val isBlocked: Boolean = false,
     val isLocked: Boolean = false,
-    val isBankingPause: Boolean = false
+    val isBankingPause: Boolean = false,
+    val isMindfulDelay: Boolean = false
 )
 
 data class DailyAnalytics(
@@ -86,18 +89,22 @@ class FocusViewModel(
 ) : ViewModel() {
 
     val youtubeBlockShorts = MutableStateFlow(false)
+    val youtubeStudyMode = MutableStateFlow(false)
     val instagramBlockReels = MutableStateFlow(false)
     val snapchatBlockSpotlight = MutableStateFlow(false)
+    val whatsappBlockStatus = MutableStateFlow(false)
     val accentTheme = MutableStateFlow("Phosphor Mint")
+
+    // Offline Focus Sound Generator state
+    val focusSoundMode: StateFlow<FocusSoundGenerator.SoundMode> = FocusSoundGenerator.activeMode
+
+    fun setFocusSoundMode(mode: FocusSoundGenerator.SoundMode) {
+        FocusSoundGenerator.setMode(mode)
+    }
 
     private val _isInitialized = MutableStateFlow(false)
     val isInitialized = _isInitialized.asStateFlow()
 
-    // Emits a short user-facing message whenever an action (add/remove a
-    // long-term or website block) is skipped because Strict Mode's rule-editing
-    // lock is on. Previously these failed completely silently - the dialog would
-    // close and everything looked like it worked, but nothing was saved, which
-    // is exactly what made it look like the app "couldn't add" more blocks.
     val actionBlockedMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
     private val _installedApps = MutableStateFlow<List<AppInfo>>(emptyList())
@@ -148,6 +155,141 @@ class FocusViewModel(
             app.copy(isLocked = lockedPackages.contains(app.packageName))
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // --- Mindful Launch Delay (7-Second Breathing Gate) ---
+    val mindfulDelayEnabled: StateFlow<Boolean> = repository.getSettingFlow("mindful_delay_enabled")
+        .map { it?.toBoolean() ?: false }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val mindfulDelayPackages: StateFlow<Set<String>> = repository.getSettingFlow("mindful_delay_packages")
+        .map { raw ->
+            raw?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    val mindfulDelayListState: StateFlow<List<AppInfo>> = combine(_installedApps, mindfulDelayPackages) { installed, chosen ->
+        installed.map { app ->
+            app.copy(isMindfulDelay = chosen.contains(app.packageName))
+        }.sortedWith(
+            compareByDescending<AppInfo> { it.isMindfulDelay }
+                .thenBy { it.appName.lowercase() }
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun setMindfulDelayEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            if (!enabled && isRulesEditingLocked()) {
+                actionBlockedMessage.tryEmit("Can't turn off Mindful Launch Delay while a Strict Mode session is running.")
+                return@launch
+            }
+            repository.saveSetting("mindful_delay_enabled", enabled.toString())
+        }
+    }
+
+    fun toggleMindfulDelayApp(app: AppInfo) {
+        viewModelScope.launch {
+            val current = repository.getSetting("mindful_delay_packages")
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.toSet()
+                ?: emptySet()
+            if (current.contains(app.packageName) && isRulesEditingLocked()) {
+                actionBlockedMessage.tryEmit("Can't remove apps from Mindful Launch Delay while Strict Mode is active.")
+                return@launch
+            }
+            val updated = if (current.contains(app.packageName)) {
+                current - app.packageName
+            } else {
+                current + app.packageName
+            }
+            repository.saveSetting("mindful_delay_packages", updated.sorted().joinToString(","))
+        }
+    }
+
+    // --- Keyword & Topic Blocker (Browser + YouTube) ---
+    val blockedKeywords: StateFlow<List<String>> = repository.getSettingFlow("blocked_keywords")
+        .map { raw ->
+            raw?.split(",")
+                ?.map { it.trim().lowercase() }
+                ?.filter { it.length >= 3 }
+                ?.distinct()
+                ?: emptyList()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun addBlockedKeyword(keyword: String) {
+        val clean = keyword.trim().lowercase().replace(",", "")
+        if (clean.length < 3) {
+            actionBlockedMessage.tryEmit("Keyword must be at least 3 characters long.")
+            return
+        }
+        viewModelScope.launch {
+            val current = repository.getSetting("blocked_keywords")
+                ?.split(",")
+                ?.map { it.trim().lowercase() }
+                ?.filter { it.length >= 3 }
+                ?.toMutableSet()
+                ?: mutableSetOf()
+            current.add(clean)
+            repository.saveSetting("blocked_keywords", current.sorted().joinToString(","))
+        }
+    }
+
+    fun removeBlockedKeyword(keyword: String) {
+        viewModelScope.launch {
+            if (isRulesEditingLocked()) {
+                actionBlockedMessage.tryEmit("Can't remove blocked keywords while a Strict Mode session is active.")
+                return@launch
+            }
+            val current = repository.getSetting("blocked_keywords")
+                ?.split(",")
+                ?.map { it.trim().lowercase() }
+                ?.filter { it.length >= 3 }
+                ?.toMutableSet()
+                ?: mutableSetOf()
+            current.remove(keyword.trim().lowercase())
+            repository.saveSetting("blocked_keywords", current.sorted().joinToString(","))
+        }
+    }
+
+    // --- Morning "First Task" Lock (5:00 AM - 9:00 AM until 25m Focus completed) ---
+    val morningLockEnabled: StateFlow<Boolean> = repository.getSettingFlow("morning_lock_enabled")
+        .map { it?.toBoolean() ?: false }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun setMorningLockEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            if (!enabled && isRulesEditingLocked()) {
+                actionBlockedMessage.tryEmit("Can't disable Morning First-Task Lock while Strict Mode is active.")
+                return@launch
+            }
+            repository.saveSetting("morning_lock_enabled", enabled.toString())
+        }
+    }
+
+    // --- Exam / Goal Countdown Header ---
+    val goalExamTitle: StateFlow<String> = repository.getSettingFlow("goal_exam_title")
+        .map { it ?: "" }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    val goalExamTargetMillis: StateFlow<Long> = repository.getSettingFlow("goal_exam_target_ms")
+        .map { it?.toLongOrNull() ?: 0L }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
+    fun setGoalExamCountdown(title: String, targetMillis: Long) {
+        viewModelScope.launch {
+            repository.saveSetting("goal_exam_title", title.trim())
+            repository.saveSetting("goal_exam_target_ms", targetMillis.toString())
+        }
+    }
+
+    fun clearGoalExamCountdown() {
+        viewModelScope.launch {
+            repository.saveSetting("goal_exam_title", "")
+            repository.saveSetting("goal_exam_target_ms", "0")
+        }
+    }
 
     // --- Banking Pause (service switches itself off while a chosen banking app is open) ---
 
@@ -248,7 +390,6 @@ class FocusViewModel(
         (PinSecurity.remainingLockMs(context, PinSecurity.SCOPE_STRICT_PASSWORD) + 999) / 1000
 
     suspend fun verifyStrictModePassword(password: String): Boolean {
-        // Same escalating lockout as the App Lock PIN - the password gate used to allow unlimited guesses.
         if (PinSecurity.remainingLockMs(context, PinSecurity.SCOPE_STRICT_PASSWORD) > 0) return false
         val stored = repository.getSetting("strict_password_hash") ?: return false
         if (stored.isBlank()) return false
@@ -346,14 +487,21 @@ class FocusViewModel(
             .apply()
     }
 
-
-
     fun setYoutubeBlockShorts(value: Boolean) {
         if (isStrictModeActive.value) return
         youtubeBlockShorts.value = value
         context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
             .edit()
             .putBoolean("youtube_block_shorts", value)
+            .apply()
+    }
+
+    fun setYoutubeStudyMode(value: Boolean) {
+        if (isStrictModeActive.value) return
+        youtubeStudyMode.value = value
+        context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("youtube_study_mode", value)
             .apply()
     }
 
@@ -372,6 +520,15 @@ class FocusViewModel(
         context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
             .edit()
             .putBoolean("snapchat_block_spotlight", value)
+            .apply()
+    }
+
+    fun setWhatsappBlockStatus(value: Boolean) {
+        if (isStrictModeActive.value) return
+        whatsappBlockStatus.value = value
+        context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("whatsapp_block_status", value)
             .apply()
     }
 
@@ -439,6 +596,20 @@ class FocusViewModel(
 
     val maturedSessions: StateFlow<List<FocusSession>> = repository.maturedSessions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val todayCompletedFocusMinutes: StateFlow<Int> = maturedSessions
+        .map { sessions ->
+            val todayDay = TimeUtils.localEpochDay(TrustedClock.now())
+            sessions.sumOf { session ->
+                val refTime = if (session.actualEndTime > 0L) session.actualEndTime else session.endTime
+                if (TimeUtils.localEpochDay(refTime) == todayDay) {
+                    (session.actualDurationSeconds / 60L).toInt().coerceAtLeast(session.durationMinutes)
+                } else {
+                    0
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val advancedAnalytics: StateFlow<AdvancedAnalytics> = repository.allSessions
         .map { sessions ->
@@ -607,59 +778,72 @@ class FocusViewModel(
         checkAndCleanupExpiredSession()
         startExpiredBlocksDeactivationLoop()
 
-        // Observe session completion to trigger reflection prompt
+        // Observe session completion to trigger reflection prompt & stop focus sound
         viewModelScope.launch {
             repository.sessionCompletedNaturally.collect { completed ->
                 if (completed) {
+                    FocusSoundGenerator.stop()
                     _showReflectionPrompt.value = true
                 }
             }
         }
 
         // Load settings in deterministic order and then track Strict Mode session transitions
-        // using a persisted flag so app restarts don't overwrite the pre-Strict-Mode backup.
         viewModelScope.launch(Dispatchers.IO) {
             val prefs = context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
             val savedYoutubeShorts = prefs.getBoolean("youtube_block_shorts", false)
+            val savedYoutubeStudy = prefs.getBoolean("youtube_study_mode", false)
             val savedInstagramReels = prefs.getBoolean("instagram_block_reels", false)
             val savedSnapchatSpotlight = prefs.getBoolean("snapchat_block_spotlight", false)
+            val savedWhatsappStatus = prefs.getBoolean("whatsapp_block_status", false)
             val dbAccentTheme = try { repository.getSetting("accent_theme") } catch (e: Exception) { null }
             val savedAccentTheme = dbAccentTheme ?: prefs.getString("accent_theme", "Phosphor Mint") ?: "Phosphor Mint"
 
             youtubeBlockShorts.value = savedYoutubeShorts
+            youtubeStudyMode.value = savedYoutubeStudy
             instagramBlockReels.value = savedInstagramReels
             snapchatBlockSpotlight.value = savedSnapchatSpotlight
+            whatsappBlockStatus.value = savedWhatsappStatus
             accentTheme.value = savedAccentTheme
 
             _isInitialized.value = true
 
             var wasStrictModeActive = prefs.getBoolean("was_strict_mode_active", false)
             activeSession.collect { session ->
+                if (session == null || !session.isActive) {
+                    FocusSoundGenerator.stop()
+                }
                 val now = TrustedClock.now()
                 val isStrictActive = session?.let { it.isActive && it.isStrict && now < it.endTime } ?: false
 
                 if (isStrictActive && !wasStrictModeActive) {
-                    // Strict Mode just started! Save the state.
                     prefs.edit()
                         .putBoolean("saved_youtube_block_shorts", youtubeBlockShorts.value)
+                        .putBoolean("saved_youtube_study_mode", youtubeStudyMode.value)
                         .putBoolean("saved_instagram_block_reels", instagramBlockReels.value)
                         .putBoolean("saved_snapchat_block_spotlight", snapchatBlockSpotlight.value)
+                        .putBoolean("saved_whatsapp_block_status", whatsappBlockStatus.value)
                         .putBoolean("was_strict_mode_active", true)
                         .apply()
                 } else if (!isStrictActive && wasStrictModeActive) {
-                    // Strict Mode just ended! Restore the saved state.
                     val savedShorts = prefs.getBoolean("saved_youtube_block_shorts", youtubeBlockShorts.value)
+                    val savedStudy = prefs.getBoolean("saved_youtube_study_mode", youtubeStudyMode.value)
                     val savedReels = prefs.getBoolean("saved_instagram_block_reels", instagramBlockReels.value)
                     val savedSpotlight = prefs.getBoolean("saved_snapchat_block_spotlight", snapchatBlockSpotlight.value)
+                    val savedWaStatus = prefs.getBoolean("saved_whatsapp_block_status", whatsappBlockStatus.value)
 
                     youtubeBlockShorts.value = savedShorts
+                    youtubeStudyMode.value = savedStudy
                     instagramBlockReels.value = savedReels
                     snapchatBlockSpotlight.value = savedSpotlight
+                    whatsappBlockStatus.value = savedWaStatus
 
                     prefs.edit()
                         .putBoolean("youtube_block_shorts", savedShorts)
+                        .putBoolean("youtube_study_mode", savedStudy)
                         .putBoolean("instagram_block_reels", savedReels)
                         .putBoolean("snapchat_block_spotlight", savedSpotlight)
+                        .putBoolean("whatsapp_block_status", savedWaStatus)
                         .putBoolean("was_strict_mode_active", false)
                         .apply()
                 }
@@ -706,7 +890,6 @@ class FocusViewModel(
     fun toggleAppBlocked(app: AppInfo) {
         viewModelScope.launch {
             val active = repository.getActiveSessionSync()
-            // If strict mode focus session is active, changes are completely blocked
             val isStrictSessionActive = active?.let { it.isActive && it.isStrict && TrustedClock.now() < it.endTime } ?: false
             if (isStrictSessionActive) {
                 return@launch
@@ -794,17 +977,11 @@ class FocusViewModel(
     }
 
     fun stopActiveSession() {
+        FocusSoundGenerator.stop()
         viewModelScope.launch {
             repository.stopActiveSession()
         }
     }
-
-    // Strict Mode has no in-app bypass by default: once a strict session starts, it
-    // can only end when its timer reaches zero - UNLESS "Extreme Override" was
-    // explicitly chosen as the deactivation method in the setup wizard, in which
-    // case the flow below (300-word typing + 45-min cooldown + night blackout,
-    // enforced by StrictOverrideScreen) is the only path in, and even it is
-    // completely unavailable 10 PM-6 AM.
 
     val strictBypassRequestedAt: StateFlow<Long> = repository.getSettingFlow("strict_bypass_requested_at")
         .map { it?.toLongOrNull() ?: 0L }
@@ -848,7 +1025,7 @@ class FocusViewModel(
                 } catch (e: Exception) {
                     Log.e("FocusViewModel", "Error deactivating expired blocks", e)
                 }
-                kotlinx.coroutines.delay(10000L) // Check every 10 seconds
+                kotlinx.coroutines.delay(10000L)
             }
         }
     }
@@ -970,12 +1147,10 @@ class FocusViewModel(
     }
 
     fun isAccessibilityServiceEnabled(): Boolean {
-        // 1. Check if the service instance is currently running
         if (com.example.service.FocusAccessibilityService.instance != null) {
             return true
         }
 
-        // 2. Query AccessibilityManager for enabled services matching our package and class name
         val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? android.view.accessibility.AccessibilityManager
         if (am != null) {
             try {
@@ -997,7 +1172,6 @@ class FocusViewModel(
             }
         }
 
-        // 3. Fallback: Parse Secure settings
         try {
             val enabled = Settings.Secure.getInt(
                 context.contentResolver,

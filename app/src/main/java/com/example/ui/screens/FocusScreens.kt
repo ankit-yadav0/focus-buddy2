@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import com.example.TimeUtils
+import com.example.ui.helper.FocusSoundGenerator
 import com.example.TrustedClock
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
@@ -270,6 +271,9 @@ fun HomeScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
+                    // Live Exam / Goal Countdown Header
+                    ExamCountdownHeaderCard(viewModel = viewModel)
+
                     // Hero Illustration / Card
                     HeroBannerCard(blockedCount = blockedApps.size)
 
@@ -303,17 +307,29 @@ fun HomeScreen(
                     ) {
                         activeSession?.let { session ->
                             val deactivationMethod by viewModel.deactivationMethod.collectAsStateWithLifecycle()
+                            val currentSoundMode by viewModel.focusSoundMode.collectAsStateWithLifecycle()
                             ActiveSessionWidget(
                                 session = session,
                                 onStopSession = { viewModel.stopActiveSession() },
                                 showOverrideOption = session.isStrict && deactivationMethod == "EXTREME_OVERRIDE",
-                                onOverrideClick = onNavigateToStrictOverride
+                                onOverrideClick = onNavigateToStrictOverride,
+                                soundMode = currentSoundMode,
+                                onSoundModeChange = { viewModel.setFocusSoundMode(it) }
                             )
                         }
                     }
 
-                    // Content-Level Blocking Settings
+                    // Content-Level Blocking Settings (Shorts, Study Mode, Reels, Spotlight, WhatsApp/Telegram Status)
                     ContentLevelBlockingCard(viewModel = viewModel)
+
+                    // Morning "First Task" Lock (5 AM - 9 AM)
+                    MorningFirstTaskLockCard(viewModel = viewModel)
+
+                    // Mindful Launch Delay (7-Second Breathing Gate)
+                    MindfulLaunchDelayCard(viewModel = viewModel)
+
+                    // Keyword & Topic Blocker (Browser + YouTube)
+                    KeywordTopicBlockerCard(viewModel = viewModel)
 
                     // Accent Theme Settings
                     AccentThemeCard(viewModel = viewModel)
@@ -1058,7 +1074,9 @@ fun ActiveSessionWidget(
     session: FocusSession,
     onStopSession: () -> Unit,
     showOverrideOption: Boolean = false,
-    onOverrideClick: () -> Unit = {}
+    onOverrideClick: () -> Unit = {},
+    soundMode: FocusSoundGenerator.SoundMode = FocusSoundGenerator.SoundMode.OFF,
+    onSoundModeChange: (FocusSoundGenerator.SoundMode) -> Unit = {}
 ) {
     val endTime = session.endTime
     val startTime = session.startTime
@@ -1340,6 +1358,12 @@ fun ActiveSessionWidget(
                     }
                 }
             }
+
+            // Built-in Offline Focus Sound Generator (Brown Noise / 40Hz Gamma / Soft Rain)
+            FocusSoundControlStrip(
+                selectedMode = soundMode,
+                onSelectMode = onSoundModeChange
+            )
 
             HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
 
@@ -3932,6 +3956,12 @@ fun FocusTimerScreen(
                 }
             }
 
+            val timerSoundMode by viewModel.focusSoundMode.collectAsStateWithLifecycle()
+            FocusSoundControlStrip(
+                selectedMode = timerSoundMode,
+                onSelectMode = { viewModel.setFocusSoundMode(it) }
+            )
+
             Spacer(modifier = Modifier.weight(1f))
 
             Card(
@@ -4977,8 +5007,10 @@ fun CounterRow(
 @Composable
 fun ContentLevelBlockingCard(viewModel: FocusViewModel) {
     val youtubeEnabled by viewModel.youtubeBlockShorts.collectAsStateWithLifecycle()
+    val youtubeStudyEnabled by viewModel.youtubeStudyMode.collectAsStateWithLifecycle()
     val instagramEnabled by viewModel.instagramBlockReels.collectAsStateWithLifecycle()
     val snapchatEnabled by viewModel.snapchatBlockSpotlight.collectAsStateWithLifecycle()
+    val whatsappStatusEnabled by viewModel.whatsappBlockStatus.collectAsStateWithLifecycle()
     val isStrictActive by viewModel.isStrictModeActive.collectAsStateWithLifecycle()
 
     Card(
@@ -5144,6 +5176,94 @@ fun ContentLevelBlockingCard(viewModel: FocusViewModel) {
                     checked = snapchatEnabled,
                     enabled = !isStrictActive,
                     onCheckedChange = { viewModel.setSnapchatBlockSpotlight(it) },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = MaterialTheme.colorScheme.primary,
+                        uncheckedColor = Color.White.copy(alpha = 0.4f)
+                    )
+                )
+            }
+
+            // YouTube Study Mode Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !isStrictActive) { viewModel.setYoutubeStudyMode(!youtubeStudyEnabled) }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "YouTube \"Study Mode\" (Lecture Only)",
+                            fontWeight = FontWeight.Bold,
+                            color = if (isStrictActive) Color.White.copy(alpha = 0.6f) else Color.White,
+                            fontSize = 15.sp
+                        )
+                        if (isStrictActive) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Locked icon",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = if (isStrictActive) "This setting is locked while Strict Mode is active." else "Blocks Home Feed recommendations, Shorts & Comments; keeps Search & Video Player open",
+                        color = if (isStrictActive) MaterialTheme.colorScheme.error.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.5f),
+                        fontSize = 12.sp
+                    )
+                }
+                Checkbox(
+                    checked = youtubeStudyEnabled,
+                    enabled = !isStrictActive,
+                    onCheckedChange = { viewModel.setYoutubeStudyMode(it) },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = MaterialTheme.colorScheme.primary,
+                        uncheckedColor = Color.White.copy(alpha = 0.4f)
+                    )
+                )
+            }
+
+            // WhatsApp & Telegram Chat-Only Mode Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !isStrictActive) { viewModel.setWhatsappBlockStatus(!whatsappStatusEnabled) }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "WhatsApp / Telegram \"Chat-Only Mode\"",
+                            fontWeight = FontWeight.Bold,
+                            color = if (isStrictActive) Color.White.copy(alpha = 0.6f) else Color.White,
+                            fontSize = 15.sp
+                        )
+                        if (isStrictActive) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Locked icon",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = if (isStrictActive) "This setting is locked while Strict Mode is active." else "Blocks Status, Stories & Channels (Updates tab); allows direct & study group chats",
+                        color = if (isStrictActive) MaterialTheme.colorScheme.error.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.5f),
+                        fontSize = 12.sp
+                    )
+                }
+                Checkbox(
+                    checked = whatsappStatusEnabled,
+                    enabled = !isStrictActive,
+                    onCheckedChange = { viewModel.setWhatsappBlockStatus(it) },
                     colors = CheckboxDefaults.colors(
                         checkedColor = MaterialTheme.colorScheme.primary,
                         uncheckedColor = Color.White.copy(alpha = 0.4f)
@@ -6796,3 +6916,678 @@ fun SessionReflectionPrompt(
     )
 }
 
+
+
+@Composable
+fun FocusSoundControlStrip(
+    selectedMode: FocusSoundGenerator.SoundMode,
+    onSelectMode: (FocusSoundGenerator.SoundMode) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(16.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.GraphicEq,
+                    contentDescription = "Offline Focus Audio",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "OFFLINE FOCUS SOUND",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White.copy(alpha = 0.85f),
+                    letterSpacing = 1.sp
+                )
+            }
+            Text(
+                text = if (selectedMode == FocusSoundGenerator.SoundMode.OFF) "MUTED" else "LIVE SYNTH",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (selectedMode == FocusSoundGenerator.SoundMode.OFF) Color.White.copy(alpha = 0.4f) else MaterialTheme.colorScheme.primary
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FocusSoundGenerator.SoundMode.entries.forEach { mode ->
+                val active = selectedMode == mode
+                FilterChip(
+                    selected = active,
+                    onClick = { onSelectMode(mode) },
+                    label = {
+                        Text(
+                            text = mode.label,
+                            fontSize = 11.sp,
+                            fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Medium
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                        selectedLabelColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
+    val context = LocalContext.current
+    val goalTitle by viewModel.goalExamTitle.collectAsStateWithLifecycle()
+    val goalTargetMs by viewModel.goalExamTargetMillis.collectAsStateWithLifecycle()
+    var showConfigDialog by remember { mutableStateOf(false) }
+
+    var nowWall by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(goalTargetMs) {
+        while (goalTargetMs > 0L) {
+            kotlinx.coroutines.delay(1000L)
+            nowWall = System.currentTimeMillis()
+        }
+    }
+
+    val remainingMs = max(0L, goalTargetMs - nowWall)
+    val totalSecs = remainingMs / 1000L
+    val days = totalSecs / (24 * 3600)
+    val hours = (totalSecs % (24 * 3600)) / 3600
+    val minutes = (totalSecs % 3600) / 60
+    val seconds = totalSecs % 60
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showConfigDialog = true },
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
+    ) {
+        if (goalTitle.isBlank() || goalTargetMs <= 0L) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Flag,
+                        contentDescription = "Goal Countdown",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "Set Exam / Goal Countdown",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Pin JEE, NEET, Semester Exam or your target date at the top",
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+                Text(
+                    text = "SET",
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        } else {
+            val targetDateStr = remember(goalTargetMs) {
+                SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(goalTargetMs))
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Flag,
+                            contentDescription = "Target Exam",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = goalTitle.uppercase(),
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            letterSpacing = 1.2.sp
+                        )
+                    }
+                    Text(
+                        text = "$targetDateStr · EDIT",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.5f)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CountdownUnitBox(value = String.format(Locale.US, "%02d", days), label = "DAYS", modifier = Modifier.weight(1f))
+                    CountdownUnitBox(value = String.format(Locale.US, "%02d", hours), label = "HOURS", modifier = Modifier.weight(1f))
+                    CountdownUnitBox(value = String.format(Locale.US, "%02d", minutes), label = "MINS", modifier = Modifier.weight(1f))
+                    CountdownUnitBox(value = String.format(Locale.US, "%02d", seconds), label = "SECS", modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+
+    if (showConfigDialog) {
+        var titleInput by remember { mutableStateOf(if (goalTitle.isNotBlank()) goalTitle else "JEE / Target Exam") }
+        val defaultTarget = if (goalTargetMs > System.currentTimeMillis()) {
+            goalTargetMs
+        } else {
+            System.currentTimeMillis() + 60L * 24 * 3600 * 1000L
+        }
+        var selectedDateMs by remember { mutableLongStateOf(defaultTarget) }
+        val dateStr = remember(selectedDateMs) {
+            SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date(selectedDateMs))
+        }
+
+        AlertDialog(
+            onDismissRequest = { showConfigDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = {
+                Text("Exam / Goal Countdown", fontWeight = FontWeight.Bold, color = Color.White)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = titleInput,
+                        onValueChange = { titleInput = it },
+                        label = { Text("Exam or Goal Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("JEE Mains", "NEET UG", "Semester Exam", "UPSC / GATE").forEach { preset ->
+                            AssistChip(
+                                onClick = { titleInput = preset },
+                                label = { Text(preset, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val cal = Calendar.getInstance().apply { timeInMillis = selectedDateMs }
+                            DatePickerDialog(
+                                context,
+                                { _, y, m, d ->
+                                    val chosen = Calendar.getInstance().apply {
+                                        set(Calendar.YEAR, y)
+                                        set(Calendar.MONTH, m)
+                                        set(Calendar.DAY_OF_MONTH, d)
+                                        set(Calendar.HOUR_OF_DAY, 9)
+                                        set(Calendar.MINUTE, 0)
+                                        set(Calendar.SECOND, 0)
+                                    }
+                                    selectedDateMs = chosen.timeInMillis
+                                },
+                                cal.get(Calendar.YEAR),
+                                cal.get(Calendar.MONTH),
+                                cal.get(Calendar.DAY_OF_MONTH)
+                            ).apply {
+                                datePicker.minDate = System.currentTimeMillis() + 60_000L
+                            }.show()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Target Date: $dateStr", fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (titleInput.isNotBlank()) {
+                            viewModel.setGoalExamCountdown(titleInput, selectedDateMs)
+                        }
+                        showConfigDialog = false
+                    }
+                ) {
+                    Text("Save Goal", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (goalTitle.isNotBlank()) {
+                        TextButton(
+                            onClick = {
+                                viewModel.clearGoalExamCountdown()
+                                showConfigDialog = false
+                            }
+                        ) {
+                            Text("Clear", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    TextButton(onClick = { showConfigDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun CountdownUnitBox(value: String, label: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = value,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Black,
+            fontFamily = FontFamily.Monospace,
+            color = Color.White
+        )
+        Text(
+            text = label,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White.copy(alpha = 0.5f),
+            letterSpacing = 1.sp
+        )
+    }
+}
+
+@Composable
+fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
+    val enabled by viewModel.morningLockEnabled.collectAsStateWithLifecycle()
+    val completedMins by viewModel.todayCompletedFocusMinutes.collectAsStateWithLifecycle()
+    val isStrictActive by viewModel.isStrictModeActive.collectAsStateWithLifecycle()
+    val unlockedToday = completedMins >= 25
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.WbSunny,
+                        contentDescription = "Morning Lock",
+                        tint = Color(0xFFFFB74D),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "Morning \"First Task\" Lock",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "5:00 AM – 9:00 AM · No Morning Doomscrolling",
+                            fontSize = 12.sp,
+                            color = Color(0xFFFFB74D)
+                        )
+                    }
+                }
+                Switch(
+                    checked = enabled,
+                    enabled = !(enabled && isStrictActive),
+                    onCheckedChange = { viewModel.setMorningLockEnabled(it) }
+                )
+            }
+
+            Text(
+                text = "Locks social & entertainment apps between 5:00 AM and 9:00 AM until you complete your first 25-minute Focus Session of the day.",
+                fontSize = 13.sp,
+                color = Color.White.copy(alpha = 0.65f),
+                lineHeight = 18.sp
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Today's First-Task Progress",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White.copy(alpha = 0.75f)
+                )
+                Text(
+                    text = if (unlockedToday) "✓ $completedMins / 25 min (Unlocked)" else "$completedMins / 25 min completed",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (unlockedToday) Color(0xFF3DFFC4) else Color(0xFFFFB74D)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun MindfulLaunchDelayCard(viewModel: FocusViewModel) {
+    val enabled by viewModel.mindfulDelayEnabled.collectAsStateWithLifecycle()
+    val selectedPkgs by viewModel.mindfulDelayPackages.collectAsStateWithLifecycle()
+    val appList by viewModel.mindfulDelayListState.collectAsStateWithLifecycle()
+    val isStrictActive by viewModel.isStrictModeActive.collectAsStateWithLifecycle()
+    var showAppPickerDialog by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SelfImprovement,
+                        contentDescription = "Mindful Breathing Gate",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "Mindful Launch Delay (7s Gate)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "\"Rukiye! Kya ye abhi zaroori hai?\"",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                Switch(
+                    checked = enabled,
+                    enabled = !(enabled && isStrictActive),
+                    onCheckedChange = { viewModel.setMindfulDelayEnabled(it) }
+                )
+            }
+
+            Text(
+                text = "Adds a 7-second breathing pause + intention check (Study / Urgent) before opening selected apps, breaking muscle-memory scrolling.",
+                fontSize = 13.sp,
+                color = Color.White.copy(alpha = 0.65f),
+                lineHeight = 18.sp
+            )
+
+            OutlinedButton(
+                onClick = { showAppPickerDialog = true },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = "Select Apps for 7s Breathing Gate (${selectedPkgs.size} chosen)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
+            }
+        }
+    }
+
+    if (showAppPickerDialog) {
+        var searchQuery by remember { mutableStateOf("") }
+        val filteredApps = remember(appList, searchQuery) {
+            if (searchQuery.isBlank()) appList
+            else appList.filter { it.appName.contains(searchQuery, ignoreCase = true) }
+        }
+        AlertDialog(
+            onDismissRequest = { showAppPickerDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = {
+                Text("7s Mindful Gate Apps", fontWeight = FontWeight.Bold, color = Color.White)
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Search apps (WhatsApp, Chrome...)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(filteredApps, key = { it.packageName }) { app ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { viewModel.toggleMindfulDelayApp(app) }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = app.appName,
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (app.isMindfulDelay) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Checkbox(
+                                    checked = app.isMindfulDelay,
+                                    onCheckedChange = { viewModel.toggleMindfulDelayApp(app) }
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showAppPickerDialog = false }) {
+                    Text("Done", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun KeywordTopicBlockerCard(viewModel: FocusViewModel) {
+    val keywords by viewModel.blockedKeywords.collectAsStateWithLifecycle()
+    val isStrictActive by viewModel.isStrictModeActive.collectAsStateWithLifecycle()
+    var inputKeyword by remember { mutableStateOf("") }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.SearchOff,
+                    contentDescription = "Keyword Blocker",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Column {
+                    Text(
+                        text = "Keyword & Topic Blocker",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Enforced in Browsers & YouTube Search/Titles",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.55f)
+                    )
+                }
+            }
+
+            Text(
+                text = "Block distracting topics (e.g., movie, cricket, gaming, web series) while keeping Google & YouTube open for study lectures.",
+                fontSize = 13.sp,
+                color = Color.White.copy(alpha = 0.65f),
+                lineHeight = 18.sp
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = inputKeyword,
+                    onValueChange = { inputKeyword = it },
+                    placeholder = { Text("Add keyword (min 3 chars)") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Button(
+                    onClick = {
+                        if (inputKeyword.trim().length >= 3) {
+                            viewModel.addBlockedKeyword(inputKeyword)
+                            inputKeyword = ""
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.height(52.dp)
+                ) {
+                    Text("Add", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // Quick-add preset distraction topics
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf("movie", "cricket", "gaming", "web series", "trailer", "gossip").forEach { preset ->
+                    if (!keywords.contains(preset)) {
+                        AssistChip(
+                            onClick = { viewModel.addBlockedKeyword(preset) },
+                            label = { Text("+ $preset", fontSize = 11.sp) }
+                        )
+                    }
+                }
+            }
+
+            if (keywords.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    keywords.forEach { kw ->
+                        InputChip(
+                            selected = true,
+                            onClick = {
+                                if (!isStrictActive) viewModel.removeBlockedKeyword(kw)
+                            },
+                            label = {
+                                Text(
+                                    text = if (isStrictActive) "🔒 $kw" else "$kw  ✕",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

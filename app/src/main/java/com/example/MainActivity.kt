@@ -61,6 +61,7 @@ import com.example.ui.screens.BankingPauseScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.FocusViewModel
 import com.example.viewmodel.FocusViewModelFactory
+import com.example.widget.FocusAppWidgetProvider
 
 import android.provider.Settings
 import android.app.admin.DevicePolicyManager
@@ -332,8 +333,9 @@ fun PermissionRow(
 }
 
 // MainActivity is exported, so any app can send it a "deep_link_route" extra. Only routes the
-// app itself ever sends (the accessibility service's uninstall redirect) are honoured.
-private val ALLOWED_DEEP_LINK_ROUTES = setOf("uninstall_reflection")
+// app itself ever sends (the accessibility service's uninstall redirect and the home-screen widget
+// 1-tap start) are honoured.
+private val ALLOWED_DEEP_LINK_ROUTES = setOf("uninstall_reflection", "timer")
 
 private fun sanitizeDeepLink(route: String?): String? = route?.takeIf { it in ALLOWED_DEEP_LINK_ROUTES }
 
@@ -344,6 +346,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        FocusAppWidgetProvider.requestUpdate(applicationContext)
         lifecycleScope.launch(Dispatchers.IO) {
             val info = com.example.update.UpdateManager.checkForUpdate(applicationContext)
             if (info != null) {

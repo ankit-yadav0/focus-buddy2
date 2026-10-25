@@ -37,6 +37,8 @@ import android.view.Gravity
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.view.ViewGroup
+import java.util.Calendar
+import java.util.concurrent.ConcurrentHashMap
 
 class FocusAccessibilityService : AccessibilityService() {
 
@@ -52,11 +54,7 @@ class FocusAccessibilityService : AccessibilityService() {
         private const val UNLOCK_GRACE_MS = 60_000L
         private const val FOREGROUND_NOTIFICATION_ID = 4201
 
-        // Minimum spacing between processed TYPE_WINDOW_CONTENT_CHANGED events. These events
-        // fire very rapidly (every keystroke, scroll, animation frame) and re-walking the node
-        // tree on every single one is a major source of CPU/GC pressure on low-RAM Go devices,
-        // which in turn makes the process a more likely low-memory-killer target. Window state
-        // changes (app/tab switches) are never throttled so blocking still reacts instantly.
+        // Minimum spacing between processed TYPE_WINDOW_CONTENT_CHANGED events.
         private const val CONTENT_CHANGED_THROTTLE_MS = 300L
 
         // Safety-net cap on how long the instant-block overlay can stay up if
@@ -64,8 +62,7 @@ class FocusAccessibilityService : AccessibilityService() {
         private const val OVERLAY_SAFETY_TIMEOUT_MS = 4_000L
 
         // Colour of the text-less backdrop shown while BlockActivity / the PIN screen
-        // loads (same as BlockActivity's top gradient colour). It exists only to hide
-        // the blocked app's content for those few frames. Set to false to disable.
+        // loads (same as BlockActivity's top gradient colour).
         private const val USE_APP_BACKDROP = true
         private const val BACKDROP_COLOR = 0xFF0F0C20.toInt()
 
@@ -79,6 +76,22 @@ class FocusAccessibilityService : AccessibilityService() {
             "com.duckduckgo.mobile.android", "com.brave.browser",
             "com.heytap.browser", "com.coloros.browser", "com.android.browser",
             "com.vivaldi.browser", "com.kiwibrowser.browser", "com.UCMobile.intl"
+        )
+
+        private val WHATSAPP_PACKAGES = setOf(
+            "com.whatsapp", "com.whatsapp.w4b"
+        )
+
+        private val TELEGRAM_PACKAGES = setOf(
+            "org.telegram.messenger", "org.telegram.messenger.web",
+            "org.thunderdog.challegram", "tw.nekomimi.nekogram"
+        )
+
+        private val DEFAULT_MORNING_DISTRACTION_PACKAGES = setOf(
+            "com.instagram.android", "com.google.android.youtube", "com.snapchat.android",
+            "com.facebook.katana", "com.facebook.lite", "com.twitter.android",
+            "com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.reddit.frontpage",
+            "com.netflix.mediaclient", "in.startv.hotstar", "com.amazon.avod.thirdpartyclient"
         )
 
         // Settings + the system package installer: read for the Strict Mode Settings gate and the
@@ -123,44 +136,27 @@ class FocusAccessibilityService : AccessibilityService() {
     private var activeWebsitesList = listOf<WebsiteBlock>()
     private var lastContentChangedProcessTime = 0L
 
-    // App Lock (PIN-gated apps): packages the user chose to lock, and which one (if
-    // any) has already had its PIN entered for the current foreground visit. The
-    // grant is cleared the moment the foreground package changes to anything else,
-    // so re-opening a locked app always asks for the PIN again.
+    // New productivity features state
+    private var mindfulDelayEnabled = false
+    private var mindfulDelayPackages: Set<String> = emptySet()
+    private val mindfulPassUntilMs = ConcurrentHashMap<String, Long>()
+    private var blockedKeywordsList: List<String> = emptyList()
+    private var morningLockEnabled = false
+    private var maturedSessionsList = listOf<com.example.data.FocusSession>()
+
+    // App Lock (PIN-gated apps)
     private var lockedPackages = setOf<String>()
     private var unlockedPackage: String? = null
-    // When the user went to some OTHER app while a locked app was unlocked (0 = they are still in it).
     private var unlockedLeftAtMs = 0L
 
-    // Daily time-quota tracking: while a quota-mode long-term-blocked app is in the
-    // foreground, we track how long it's been open and periodically add that to its
-    // persisted usedSecondsToday, so quota enforcement works both across app
-    // launches (checked at window-state-change) and mid-session (via the ticker).
+    // Daily time-quota tracking
     private var quotaTrackingBlockId: Int? = null
     private var quotaTrackingPackage: String? = null
     private var quotaTrackingStartMs: Long = 0L
     private var quotaTickerJob: kotlinx.coroutines.Job? = null
     private var quotaHeartbeatJob: kotlinx.coroutines.Job? = null
 
-    /**
-     * Guards the read-modify-write in persistQuotaProgress() below. Without this, the
-     * ticker's periodic persist and the stop-triggered persist (fired when an app-switch
-     * event races the ticker mid-write) can both read the same row's usedMillisToday
-     * before either has written back, then write independently - one overwriting the
-     * other (lost update) or both adding overlapping elapsed windows (double-count).
-     * Job cancellation alone doesn't prevent this: once the underlying Room write for a
-     * given call has actually started on the IO thread, cancelling that coroutine's Job
-     * does not abort the in-flight SQL statement, so the write still lands even though
-     * the caller goes on to throw CancellationException. Serializing the whole
-     * read-then-write section on this mutex means a second caller can only start its own
-     * read after the first caller's write (if any) has fully committed, so it always
-     * works from a fresh, consistent value.
-     */
     private val quotaPersistMutex = Mutex()
-
-    // Per quota block: the moment up to which foreground time has already been counted. Only read /
-    // written while holding quotaPersistMutex, it guarantees a window shared by two overlapping persist
-    // calls (ticker vs. app switch) is added to the usage exactly once.
     private val quotaAccountedUntil = HashMap<Int, Long>()
 
     // Drops App Lock's unlock grant (and stops quota tracking) when the screen turns off.
@@ -170,6 +166,7 @@ class FocusAccessibilityService : AccessibilityService() {
             if (intent?.action == Intent.ACTION_SCREEN_OFF) {
                 unlockedPackage = null
                 unlockedLeftAtMs = 0L
+                mindfulPassUntilMs.clear()
                 stopQuotaTrackingAndPersist()
             }
         }
@@ -183,33 +180,15 @@ class FocusAccessibilityService : AccessibilityService() {
     private var currentBlockedPackage: String? = null
     private var lastPermissionRequestTime = 0L
 
-    // Debounce state for the Strict-Mode Settings instant gate. On a 2GB Go
-    // device the very first node-tree read after the gate fires can catch the
-    // destination screen (e.g. the accessibility-service toggle) mid-render,
-    // before its title/description text has painted - that used to read as
-    // "no bypass keyword found" and release the overlay while the real toggle
-    // was still a frame or two from being fully there, which is exactly the
-    // window a fast, repeated tap could land in. We now require two
-    // consecutive harmless reads AND a minimum elapsed time since the gate
-    // fired before trusting a "harmless" verdict enough to release it.
     private var settingsHarmlessStreak = 0
     private var settingsGateShownAtMs = 0L
     private val SETTINGS_RELEASE_MIN_ELAPSED_MS = 200L
     private val SETTINGS_RELEASE_MIN_STREAK = 2
 
-    // GLOBAL_ACTION_BACK from bounceBackFromSettingsBypass() itself generates new
-    // accessibility events as the screen transitions - without this debounce those
-    // events could re-enter the same classification logic before the back navigation
-    // has actually settled, and re-trigger another bounce (a loop). 1.2s is comfortably
-    // longer than any real back-navigation transition on this device class.
     private var lastSettingsBounceAtMs = 0L
     private val SETTINGS_BOUNCE_DEBOUNCE_MS = 450L
     private var lastDeviceWideBlockAtMs = 0L
     private val DEVICE_WIDE_BLOCK_DEBOUNCE_MS = 1500L
-    // Event-independent watcher: after every Settings screen change we poll the
-    // screen every SETTINGS_WATCH_INTERVAL_MS for SETTINGS_WATCH_WINDOW_MS, so a
-    // protected page is caught the moment it is readable instead of whenever the
-    // next accessibility event happens to arrive.
     private var settingsWatchJob: Job? = null
     private var settingsWatchUntilMs = 0L
     private val SETTINGS_WATCH_INTERVAL_MS = 120L
@@ -282,6 +261,47 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
+            // Observe Mindful Launch Delay (7-Second Breathing Gate) settings
+            serviceScope.launch {
+                repository.getSettingFlow("mindful_delay_enabled").collectLatest { value ->
+                    mindfulDelayEnabled = value?.toBoolean() ?: false
+                }
+            }
+            serviceScope.launch {
+                repository.getSettingFlow("mindful_delay_packages").collectLatest { value ->
+                    mindfulDelayPackages = value
+                        ?.split(",")
+                        ?.map { it.trim() }
+                        ?.filter { it.isNotEmpty() }
+                        ?.toSet()
+                        ?: emptySet()
+                }
+            }
+
+            // Observe Keyword & Topic Blocker list
+            serviceScope.launch {
+                repository.getSettingFlow("blocked_keywords").collectLatest { value ->
+                    blockedKeywordsList = value
+                        ?.split(",")
+                        ?.map { it.trim().lowercase() }
+                        ?.filter { it.length >= 3 }
+                        ?.distinct()
+                        ?: emptyList()
+                }
+            }
+
+            // Observe Morning "First Task" Lock setting & matured sessions
+            serviceScope.launch {
+                repository.getSettingFlow("morning_lock_enabled").collectLatest { value ->
+                    morningLockEnabled = value?.toBoolean() ?: false
+                }
+            }
+            serviceScope.launch {
+                repository.maturedSessions.collectLatest { sessions ->
+                    maturedSessionsList = sessions
+                }
+            }
+
             // Observe active long-term blocks
             serviceScope.launch {
                 repository.activeLongTermBlocks.collectLatest { blocks ->
@@ -310,12 +330,6 @@ class FocusAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
 
-        // Some OEM skins (especially on Go Edition) don't fully honor every attribute
-        // declared in accessibility_service_config.xml, so we re-assert the important
-        // ones in code as a safety net. FLAG_REPORT_VIEW_IDS in particular is required
-        // for AccessibilityNodeInfo.viewIdResourceName to ever be populated - without it,
-        // every id-based lookup in this file (URL bar, Shorts/Reels/Spotlight detection)
-        // silently returns nothing, which is what was breaking website blocking.
         serviceInfo = serviceInfo?.apply {
             flags = flags or 
                     AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or 
@@ -326,14 +340,10 @@ class FocusAccessibilityService : AccessibilityService() {
 
         startQuotaHeartbeat()
 
-        // Back on (re-enabled after a Banking Pause, or switched on by hand): any pause is over. The app
-        // in front was never checked while the service was off (no new window event will arrive for
-        // it), so look at it now - otherwise a blocked app opened during the pause would stay usable.
         if (BankingPause.onServiceConnected(this)) recheckForegroundSoon()
 
         if (!screenOffReceiverRegistered) {
             try {
-                // ACTION_SCREEN_OFF is a protected system broadcast, so no exported/not-exported flag is needed.
                 registerReceiver(screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF))
                 screenOffReceiverRegistered = true
             } catch (e: Exception) {
@@ -342,14 +352,6 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Pins this service's process at foreground priority via a low-importance,
-     * silent notification. AccessibilityService is itself a Service, so it can call
-     * startForeground() on itself. This is the single biggest lever against Android
-     * Go's aggressive low-memory killer: background/cached processes are killed far
-     * more readily than ones holding a foreground priority, and Go devices reclaim
-     * RAM much more aggressively than standard Android due to limited memory.
-     */
     private fun startForegroundProtection() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -388,18 +390,10 @@ class FocusAccessibilityService : AccessibilityService() {
                 startForeground(FOREGROUND_NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            // Best-effort optimization only - never let this take the service down.
             Log.e("FocusService", "Could not start foreground protection", e)
         }
     }
 
-    /**
-     * True for windows that pop over the current app without the user actually
-     * switching away from it - soft keyboard, runtime permission dialogs, the
-     * notification shade / quick settings, share sheets. Used to keep App Lock's
-     * unlock grant alive through normal in-app activity (typing, calls, etc.)
-     * instead of revoking it on every transient system window.
-     */
     private fun isTransientSystemPackage(packageName: String): Boolean {
         if (packageName == "com.android.systemui") return true
         if (packageName == "android") return true
@@ -407,13 +401,6 @@ class FocusAccessibilityService : AccessibilityService() {
             packageName == "com.google.android.permissioncontroller"
         ) return true
         if (EXTRA_TRANSIENT_PACKAGES.contains(packageName)) return true
-        // In-call / telecom UI: OEMs each ship this under a different package
-        // (com.android.dialer, com.android.incallui, com.coloros.dialer,
-        // com.realme.dialer, com.android.server.telecom, and more). A voice/video
-        // call started from a locked app (WhatsApp, Messenger, etc.) can briefly
-        // foreground whichever one this device uses, without the user having
-        // actually left the locked app - so match generically instead of trying
-        // to enumerate every OEM's exact package name.
         val lower = packageName.lowercase()
         if (lower.contains("dialer") || lower.contains("telecom") || lower.contains("incallui")) return true
         val currentImePackage = try {
@@ -426,11 +413,6 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     // ---- Strict Mode: Power menu guard ---------------------------------------------
-    // The Power-off / Restart dialog is a SystemUI (or OEM shutdown) window. We detect it
-    // by window class name or by the exact "Power off" button text (rules live in
-    // PowerMenuMatcher), then close it with BACK (+ the legacy close-system-dialogs
-    // broadcast, which only works on Android <= 11 and is wrapped).
-    // NOT blockable without Device Owner: hardware key-combo force reboot, battery death.
     private var lastPowerMenuDismissAtMs = 0L
     private var powerMenuRecheckJob: Job? = null
     private val POWER_MENU_DEBOUNCE_MS = 400L
@@ -446,8 +428,6 @@ class FocusAccessibilityService : AccessibilityService() {
     private fun powerMenuTextOnScreen(): Boolean {
         val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: return false
         try {
-            // The active window can still be the app underneath; never BACK an ordinary app
-            // just because it happens to show the words "Power off".
             if (!PowerMenuMatcher.isPackageCandidate(root.packageName?.toString().orEmpty())) return false
             for (label in PowerMenuMatcher.LABELS) {
                 val hits = root.findAccessibilityNodeInfosByText(label) ?: continue
@@ -513,11 +493,6 @@ class FocusAccessibilityService : AccessibilityService() {
     }
     // ---------------------------------------------------------------------------------
 
-    /**
-     * After a Banking Pause ends, feed the app that is currently in front through the normal
-     * window-state logic once, as if it had just opened. Retries briefly: right after (re)connecting
-     * the window tree may not be readable yet.
-     */
     private fun recheckForegroundSoon() {
         serviceScope.launch {
             for (attempt in 0 until 4) {
@@ -541,11 +516,6 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Banking Pause must never become a loophole: an app Focuss Buddy is blocking right now, a
-     * launcher, a browser or a content-blocked app can never pause protection, and an App Lock app
-     * gets its PIN prompt first (the pause starts on the event after a correct PIN).
-     */
     private fun shouldPauseFor(pkg: String): Boolean {
         if (pkg == applicationContext.packageName) return false
         val longTermTargets = longTermBlocks.filter { it.type == "APP" }.map { it.target }.toSet()
@@ -560,6 +530,47 @@ class FocusAccessibilityService : AccessibilityService() {
             val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
             packageManager.queryIntentActivities(i, 0).any { it.activityInfo.packageName == packageName }
         } catch (e: Exception) { false }
+    }
+
+    /** Grants a temporary pass (default 10 minutes) after the user completes the 7-second Mindful Breathing Gate. */
+    fun grantMindfulLaunchPass(packageName: String, durationMs: Long = 10 * 60 * 1000L) {
+        mindfulPassUntilMs[packageName] = TrustedClock.now() + durationMs
+    }
+
+    /** Returns how many minutes of Focus Sessions have been completed today (local timezone). */
+    private fun getTodayCompletedFocusMinutes(now: Long): Int {
+        val todayDay = TimeUtils.localEpochDay(now)
+        var totalMinutes = 0
+        for (session in maturedSessionsList) {
+            val refTime = if (session.actualEndTime > 0L) session.actualEndTime else session.endTime
+            if (TimeUtils.localEpochDay(refTime) == todayDay) {
+                val mins = (session.actualDurationSeconds / 60L).toInt().coerceAtLeast(session.durationMinutes)
+                totalMinutes += mins
+            }
+        }
+        return totalMinutes
+    }
+
+    private var lastYouTubeSearchAutoClickMs = 0L
+
+    /** Returns true if local trusted time is between 5:00 AM and 8:59:59 AM and the user hasn't finished 25m of focus today. */
+    private fun isMorningFirstTaskLockActive(now: Long): Boolean {
+        if (!morningLockEnabled) return false
+        val cal = Calendar.getInstance().apply { timeInMillis = now }
+        val hour = cal.get(Calendar.HOUR_OF_DAY)
+        if (hour !in 5..8) return false
+        return getTodayCompletedFocusMinutes(now) < 25
+    }
+
+    private fun getTodayNineAmWallOrTrustedMillis(now: Long): Long {
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = now
+            set(Calendar.HOUR_OF_DAY, 9)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return cal.timeInMillis.coerceAtLeast(now + 60_000L)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -580,14 +591,11 @@ class FocusAccessibilityService : AccessibilityService() {
             if (isPowerMenuEvent(event)) {
                 dismissPowerMenu()
             } else {
-                // Menu text may not be painted on the first event - re-check once.
                 schedulePowerMenuRecheck()
             }
         }
 
-        // Banking Pause: a chosen banking app (Navi, GPay...) refuses to run next to a user-installed
-        // accessibility service. Switch this service off while it is open; BankingPauseService
-        // switches it back on when the app is left (or at the latest after MAX_PAUSE_MS).
+        // Banking Pause
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             bankingPauseEnabled &&
             bankingPackages.contains(packageName) &&
@@ -599,10 +607,7 @@ class FocusAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Strict-Mode Settings gate: an invisible, text-less touch guard goes up the
-        // moment a Settings window opens, so the accessibility/device-admin toggle can't
-        // be tapped during the node-tree read below. Released once the screen is
-        // classified harmless (see the LIST/SAFE branch further down).
+        // Strict-Mode Settings gate
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             packageName == "com.android.settings" &&
             overlayView == null &&
@@ -614,31 +619,17 @@ class FocusAccessibilityService : AccessibilityService() {
             settingsGateShownAtMs = now
         }
 
-        // Only tear the overlay down once OUR OWN app (BlockActivity, or MainActivity
-        // for the uninstall-friction redirect) is actually the foreground package -
-        // not on the very next event with any differing package. The block flow
-        // dispatches GLOBAL_ACTION_HOME first, which briefly foregrounds the launcher
-        // before BlockActivity draws; removing the overlay on that launcher event (as
-        // the old check did) tore it down before BlockActivity could cover the
-        // transition, causing a visible home-screen flash. BlockActivity.onResume()
-        // already calls dismissInstantOverlay() explicitly for the normal case; this
-        // check now only acts as a safety net for when our app truly regains focus.
         if (overlayView != null && packageName == applicationContext.packageName) {
             removeOverlay()
         }
 
-        // TYPE_WINDOW_CONTENT_CHANGED fires on nearly every keystroke/scroll/animation
-        // frame. Re-walking the node tree for each one is a major CPU/GC cost on
-        // low-RAM Go devices, so we throttle it. WINDOW_STATE_CHANGED (app/tab
-        // switches) is never throttled, so app/website blocking still reacts instantly.
         if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
             val minGap = if (packageName == "com.android.settings") SETTINGS_CONTENT_THROTTLE_MS else CONTENT_CHANGED_THROTTLE_MS
             if (now - lastContentChangedProcessTime < minGap) return
             lastContentChangedProcessTime = now
         }
 
-        // If a quota-tracked app is no longer in the foreground, stop the ticker and
-        // persist however much time was actually spent in it this session.
+        // If a quota-tracked app is no longer in the foreground, stop the ticker and persist.
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             quotaTrackingPackage != null && quotaTrackingPackage != packageName &&
             !isTransientSystemPackage(packageName)
@@ -646,19 +637,6 @@ class FocusAccessibilityService : AccessibilityService() {
             stopQuotaTrackingAndPersist()
         }
 
-        // A previously PIN-unlocked app is only "unlocked" for as long as it stays in
-        // the foreground. The moment focus moves to any other REAL app, drop the grant
-        // so re-entering it later asks for the PIN again.
-        //
-        // IMPORTANT: don't drop the grant just because SOME other package briefly
-        // reported a window-state-changed event. Transient system windows constantly
-        // pop over a locked app without the user ever actually leaving it - the soft
-        // keyboard when typing in a chat, a runtime permission dialog (mic/camera for
-        // a call), the notification shade, share sheets, the in-call UI overlay. Each
-        // of those has its own packageName, and treating them as "the user switched
-        // apps" was wiping the unlock on every keystroke/tab-switch/call inside the
-        // locked app itself, forcing the PIN again a moment later even though the user
-        // never left. Only a transition to a genuine other app should revoke it.
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             unlockedPackage != null && unlockedPackage != packageName &&
             packageName != applicationContext.packageName &&
@@ -668,10 +646,6 @@ class FocusAccessibilityService : AccessibilityService() {
             unlockedPackage = null
         }
 
-        // Grace window. Leaving an unlocked app through some OTHER app (gesture-switching via Recents,
-        // never touching the launcher) used to keep the unlock alive forever. Now the unlock only
-        // survives a short detour: come back within UNLOCK_GRACE_MS and it is still open, stay away
-        // longer and the PIN is asked again. (Screen-off revokes it too - see screenOffReceiver.)
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && unlockedPackage != null) {
             if (unlockedPackage == packageName) {
                 if (unlockedLeftAtMs != 0L && now - unlockedLeftAtMs > UNLOCK_GRACE_MS) {
@@ -683,15 +657,12 @@ class FocusAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Fetch the window's node tree exactly ONCE per event and reuse it for every check below.
-        // Walking a tree is expensive on a 2GB device, so it is only done where the result is used:
-        //  - browsers: only the URL bar is needed (found by view id) - the page itself is never read
-        //  - Settings / package installer: Strict Mode Settings gate + Uninstall Friction Guard
-        //  - YouTube / Instagram / Snapchat: content-level blocking, which exists only in Strict Mode
-        //    and only when that app's toggle is on
         val isBrowser = BROWSER_PACKAGES.contains(packageName)
+        val hasKeywordBlockingForPkg = blockedKeywordsList.isNotEmpty() &&
+            (isBrowser || packageName == "com.google.android.youtube")
         val readsScreenText = SYSTEM_GUARD_PACKAGES.contains(packageName) ||
-            (isStrictModeActive && isContentBlockEnabled(packageName))
+            (isStrictModeActive && isContentBlockEnabled(packageName)) ||
+            hasKeywordBlockingForPkg
         val needsTree = isBrowser || readsScreenText
         val rootNode = if (needsTree) (try { rootInActiveWindow } catch (e: Exception) { null }) else null
         val usingFallbackSource = needsTree && rootNode == null
@@ -711,9 +682,6 @@ class FocusAccessibilityService : AccessibilityService() {
 
             // Strict-Mode Guard
             if (isStrictModeActive) {
-                // "App Uninstallation" restriction (Strict Mode wizard, step 2): while ON, the system
-                // uninstall confirmation for ANY app is blocked. Text-scoped on purpose - the installer
-                // package itself is not blocked, so installing an update still works.
                 if (restrictUninstallEnabled &&
                     (packageName == "com.android.packageinstaller" || packageName == "com.google.android.packageinstaller") &&
                     screenTexts.any { it.contains("uninstall", ignoreCase = true) }
@@ -730,37 +698,16 @@ class FocusAccessibilityService : AccessibilityService() {
                     return
                 }
 
-                // NOTE: installing/uninstalling via com.android.packageinstaller used to be
-                // blocked outright here, which also blocked installing a brand new APK (e.g.
-                // this app's own update) any time Strict Mode was on. Uninstall protection for
-                // OUR app now lives entirely in the always-on Uninstall Friction Guard below,
-                // which checks screen text instead of blocking the installer package wholesale.
-
-                // Selective Settings Rules - blocks/bounces screens that could be used to
-                // defeat enforcement (uninstalling, disabling the accessibility service or
-                // device admin, revoking the overlay permission), never a full Settings
-                // block, so WiFi/Bluetooth/mobile data/display/sound etc. always stay
-                // reachable. Uses SettingsScreenClassifier to tell an actual per-app detail
-                // screen apart from a LIST screen that merely mentions our app's name as
-                // one row among many (e.g. the Accessibility services list) - see that
-                // file for why a flat "does the text appear anywhere" check isn't enough.
                 if (packageName == "com.android.settings") {
                     if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) startSettingsWatch()
                     if (handleSettingsScreen(nodeToUse, packageName, appName, now)) return
                 }
             }
 
-            // Always-on Uninstall Friction Guard for Focuss Buddy (independent of Strict Mode
-            // session). Redirects into the app's real 600-word uninstall flow instead of a
-            // dead-end block screen, the moment Settings shows Focuss Buddy's own App Info
-            // screen with an "Uninstall" action visible, or the system package installer's
-            // uninstall confirmation appears directly.
+            // Always-on Uninstall Friction Guard for Focuss Buddy
             run {
                 if (isPendingUninstallAllowed()) return@run
 
-                // Must be OUR app's uninstall dialog: the app name AND "uninstall" both on screen.
-                // (An OR here also hijacked every other app's uninstall dialog and this app's own
-                // update-install screen, which shows the app name too.)
                 val isUninstallerScreen = (packageName == "com.android.packageinstaller" || packageName == "com.google.android.packageinstaller") &&
                     screenTexts.any { it.contains(appName, ignoreCase = true) } &&
                     screenTexts.any { it.contains("uninstall", ignoreCase = true) }
@@ -805,6 +752,24 @@ class FocusAccessibilityService : AccessibilityService() {
                     }
                 }
 
+                // 1b. Morning "First Task" Lock (5:00 AM - 9:00 AM until 25 min Focus Session completed today)
+                if (isMorningFirstTaskLockActive(now)) {
+                    val isMorningLockedApp = blockedPackages.contains(packageName) ||
+                        mindfulDelayPackages.contains(packageName) ||
+                        DEFAULT_MORNING_DISTRACTION_PACKAGES.contains(packageName)
+                    if (isMorningLockedApp && !isHomeLauncherPackage(packageName) && !isTransientSystemPackage(packageName)) {
+                        val doneMins = getTodayCompletedFocusMinutes(now)
+                        Log.d("FocusService", "Blocking app due to Morning First-Task Lock: $packageName ($doneMins/25 min)")
+                        triggerBlockActivity(
+                            packageName,
+                            isLongTerm = false,
+                            reason = "Morning First-Task Lock (5 AM – 9 AM): Complete 25 minutes of Focus today ($doneMins/25 min completed) to unlock distracting apps.",
+                            endDate = getTodayNineAmWallOrTrustedMillis(now)
+                        )
+                        return
+                    }
+                }
+
                 // 2. Check for active Long-Term App Blocks
                 val activeLongTermAppBlock = longTermBlocks.firstOrNull {
                     it.type == "APP" && it.target == packageName && now >= it.startDate && now <= it.endDate && it.isActive
@@ -812,7 +777,6 @@ class FocusAccessibilityService : AccessibilityService() {
                 if (activeLongTermAppBlock != null) {
                     val limit = activeLongTermAppBlock.dailyLimitSeconds
                     if (limit == null) {
-                        // Full block - unchanged behavior.
                         Log.d("FocusService", "Blocking app due to Long-Term block: $packageName")
                         triggerBlockActivity(
                             packageName,
@@ -824,9 +788,6 @@ class FocusAccessibilityService : AccessibilityService() {
                         )
                         return
                     } else {
-                        // Daily time-quota mode: reset the counter if the day has rolled
-                        // over, then either block (quota already used up today) or allow
-                        // the app to open and start tracking foreground time against it.
                         val today = currentEpochDay()
                         val usedToday = if (activeLongTermAppBlock.lastUsageResetEpochDay != today) 0L else activeLongTermAppBlock.usedSecondsToday
                         if (usedToday >= limit) {
@@ -846,19 +807,26 @@ class FocusAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                // Check for App Lock (PIN-gated apps) - only relevant for an app that
-                // wasn't already handled by a hard block above, and only if it hasn't
-                // already had its PIN entered for this foreground visit.
+                // 2b. Check for App Lock (PIN-gated apps)
                 if (lockedPackages.contains(packageName) && unlockedPackage != packageName) {
                     Log.d("FocusService", "Prompting for PIN - locked app opened: $packageName")
                     triggerAppLockPrompt(packageName)
                     return
                 }
+
+                // 2c. Check for Mindful Launch Delay (7-Second Breathing Gate)
+                if (mindfulDelayEnabled && mindfulDelayPackages.contains(packageName)) {
+                    val passUntil = mindfulPassUntilMs[packageName] ?: 0L
+                    if (now >= passUntil) {
+                        Log.d("FocusService", "Triggering 7s Mindful Breathing Gate for: $packageName")
+                        triggerMindfulDelayGate(packageName)
+                        return
+                    }
+                }
             }
 
             // 3. Check for active Long-Term Website Blocks (Inspect browser URL/node contents)
-            val browserPackages = BROWSER_PACKAGES
-            if (browserPackages.contains(packageName)) {
+            if (isBrowser) {
                 val activeWebBlocks = activeWebsitesList.filter {
                     now >= it.startDate && now <= it.endDate && it.isActive
                 }
@@ -881,18 +849,29 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 4. Content-Level Blocking (YouTube Shorts, Instagram Reels, Snapchat Spotlight)
+            // 3b. Keyword & Topic Blocker (Browser + YouTube)
+            if (hasKeywordBlockingForPkg && nodeToUse != null) {
+                val matchedKeyword = findMatchedBlockedKeyword(nodeToUse, screenTexts, isBrowser)
+                if (matchedKeyword != null) {
+                    Log.d("FocusService", "Keyword Blocker triggered for '$matchedKeyword' in $packageName")
+                    val fallbackEnd = if (isSessionActive && now < sessionEndTime) sessionEndTime else (now + 15 * 60 * 1000L)
+                    triggerContentBlockActivity(
+                        packageName,
+                        "Blocked Keyword: \"$matchedKeyword\"",
+                        fallbackEnd
+                    )
+                    return
+                }
+            }
+
+            // 4. Content-Level Blocking (YouTube Shorts, YouTube Study Mode, Instagram Reels, Snapchat Spotlight, WhatsApp/Telegram Status & Channels)
             // Content-Level Blocking must only be active during Strict Mode.
             if (isStrictModeActive) {
                 val prefs = getSharedPreferences("focuss_buddy_settings", MODE_PRIVATE)
+                val ytShortsBlocked = prefs.getBoolean("youtube_block_shorts", false)
+                val ytStudyMode = prefs.getBoolean("youtube_study_mode", false)
 
-                if (packageName == "com.google.android.youtube" && prefs.getBoolean("youtube_block_shorts", false)) {
-                    // A single loose signal isn't enough on its own: the Shorts *shelf* (a
-                    // horizontal row of Shorts previews shown inline on the home/subscriptions
-                    // feed, visible without ever opening a Short) can trip a bare class-name or
-                    // resource-id match, and "Dislike" appears on every video, Shorts or not.
-                    // So we require at least two independent signals to agree before treating
-                    // it as the user actually being inside full-screen Shorts/Reels playback.
+                if (packageName == "com.google.android.youtube" && (ytShortsBlocked || ytStudyMode)) {
                     val hasShortsText = screenTexts.any { it.contains("Shorts", ignoreCase = true) }
                     val hasShortsClass = event.className?.toString()?.lowercase()?.contains("shorts") == true ||
                                          event.className?.toString()?.lowercase()?.contains("reel") == true
@@ -907,6 +886,49 @@ class FocusAccessibilityService : AccessibilityService() {
                         Log.d("FocusService", "Content-Level Block: YouTube Shorts detected")
                         triggerContentBlockActivity(packageName, "YouTube Shorts")
                         return
+                    }
+
+                    if (ytStudyMode && nodeToUse != null) {
+                        // Block comments panel inside video player
+                        val isCommentsPanelOpen = screenTexts.any {
+                            it.equals("Comments", ignoreCase = true) || it.startsWith("Comments ", ignoreCase = true)
+                        } && (checkNodeForIdKeyword(nodeToUse, "comment") || checkNodeForIdKeyword(nodeToUse, "engagement_panel"))
+
+                        if (isCommentsPanelOpen) {
+                            Log.d("FocusService", "YouTube Study Mode: Comments panel blocked")
+                            triggerContentBlockActivity(packageName, "YouTube Comments (Study Mode)")
+                            return
+                        }
+
+                        // Allow Search & Lecture Video Player, block Home Feed recommendations
+                        val isSearching = checkNodeForIdKeyword(nodeToUse, "search_edit_text") ||
+                            checkNodeForIdKeyword(nodeToUse, "search_box") ||
+                            checkNodeForIdKeyword(nodeToUse, "search_query") ||
+                            hasFocusedEditText(nodeToUse) ||
+                            screenTexts.any {
+                                it.contains("Search YouTube", ignoreCase = true) ||
+                                it.equals("Search filters", ignoreCase = true)
+                            }
+                        val isVideoPlayerExpanded = checkNodeForIdKeyword(nodeToUse, "watch_next_results") ||
+                            screenTexts.any {
+                                it.equals("Subscribe", ignoreCase = true) ||
+                                it.equals("Subscribed", ignoreCase = true) ||
+                                it.equals("Remix", ignoreCase = true) ||
+                                it.equals("Download", ignoreCase = true) ||
+                                it.equals("Clip", ignoreCase = true)
+                            }
+
+                        if (!isSearching && !isVideoPlayerExpanded && isYouTubeHomeFeedActive(nodeToUse, screenTexts)) {
+                            // First try to auto-open YouTube Search so the student lands directly on lecture search
+                            if (now - lastYouTubeSearchAutoClickMs > 2500L && clickYouTubeSearchButton(nodeToUse)) {
+                                lastYouTubeSearchAutoClickMs = now
+                                Log.d("FocusService", "YouTube Study Mode: Auto-opened YouTube Search from Home feed")
+                                return
+                            }
+                            Log.d("FocusService", "YouTube Study Mode: Home feed recommendations blocked")
+                            triggerContentBlockActivity(packageName, "YouTube Home Feed (Study Mode — Use Search for Lectures)")
+                            return
+                        }
                     }
                 }
 
@@ -933,15 +955,55 @@ class FocusAccessibilityService : AccessibilityService() {
                         return
                     }
                 }
+
+                // Feature 2: WhatsApp / Telegram "Chat-Only Mode" (Status, Stories & Channels Block)
+                if (prefs.getBoolean("whatsapp_block_status", false)) {
+                    if (WHATSAPP_PACKAGES.contains(packageName)) {
+                        val cls = event.className?.toString()?.lowercase() ?: ""
+                        val isStatusPlayback = cls.contains("statusplayback") ||
+                            cls.contains("newsletter") ||
+                            checkNodeForIdKeyword(nodeToUse, "status_playback") ||
+                            checkNodeForIdKeyword(nodeToUse, "status_container")
+                        val isInsideDirectChat = checkNodeForIdKeyword(nodeToUse, "entry") ||
+                            checkNodeForIdKeyword(nodeToUse, "conversation_contact") ||
+                            screenTexts.any { it.contains("Type a message", ignoreCase = true) || it.equals("Message", ignoreCase = true) }
+                        val isUpdatesTabScreen = !isInsideDirectChat && (
+                            (screenTexts.any { it.equals("Status", ignoreCase = true) } &&
+                                screenTexts.any {
+                                    it.equals("Channels", ignoreCase = true) ||
+                                    it.equals("Find channels", ignoreCase = true) ||
+                                    it.equals("Recent updates", ignoreCase = true) ||
+                                    it.equals("Viewed updates", ignoreCase = true) ||
+                                    it.equals("Add status", ignoreCase = true) ||
+                                    it.equals("My status", ignoreCase = true)
+                                }) ||
+                            isWhatsAppUpdatesTabSelected(nodeToUse)
+                        )
+                        if (isStatusPlayback || isUpdatesTabScreen) {
+                            Log.d("FocusService", "Content-Level Block: WhatsApp Status/Channels detected")
+                            triggerContentBlockActivity(packageName, "WhatsApp Status & Channels (Chat-Only Mode)")
+                            return
+                        }
+                    } else if (TELEGRAM_PACKAGES.contains(packageName)) {
+                        val cls = event.className?.toString()?.lowercase() ?: ""
+                        val isTelegramStoriesOrChannels = cls.contains("stories") ||
+                            cls.contains("storyviewer") ||
+                            screenTexts.any {
+                                it.equals("Hidden stories", ignoreCase = true) ||
+                                it.equals("My Stories", ignoreCase = true) ||
+                                it.equals("Similar Channels", ignoreCase = true)
+                            }
+                        if (isTelegramStoriesOrChannels) {
+                            Log.d("FocusService", "Content-Level Block: Telegram Stories/Channels detected")
+                            triggerContentBlockActivity(packageName, "Telegram Stories & Channels (Chat-Only Mode)")
+                            return
+                        }
+                    }
+                }
             }
         } catch (e: Exception) {
-            // Never let a malformed node tree or a transient IPC failure take the whole service down.
             Log.e("FocusService", "Error handling accessibility event", e)
         } finally {
-            // Always release the node(s) we obtained at the top of this event, on every
-            // return path. The previous implementation only recycled the happy-path
-            // rootInActiveWindow and never released event.source when it was used as a
-            // fallback, leaking AccessibilityNodeInfo instances on every such event.
             if (usingFallbackSource) {
                 nodeToUse?.recycle()
             } else {
@@ -950,28 +1012,157 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** True when the Strict Mode content-level toggle for this app (Shorts / Reels / Spotlight) is on. */
+    /** True when any Strict Mode content-level toggle for this app is on. */
     private fun isContentBlockEnabled(packageName: String): Boolean {
         val prefs = getSharedPreferences("focuss_buddy_settings", MODE_PRIVATE)
-        return when (packageName) {
-            "com.google.android.youtube" -> prefs.getBoolean("youtube_block_shorts", false)
-            "com.instagram.android" -> prefs.getBoolean("instagram_block_reels", false)
-            "com.snapchat.android" -> prefs.getBoolean("snapchat_block_spotlight", false)
+        return when {
+            packageName == "com.google.android.youtube" ->
+                prefs.getBoolean("youtube_block_shorts", false) || prefs.getBoolean("youtube_study_mode", false)
+            packageName == "com.instagram.android" ->
+                prefs.getBoolean("instagram_block_reels", false)
+            packageName == "com.snapchat.android" ->
+                prefs.getBoolean("snapchat_block_spotlight", false)
+            WHATSAPP_PACKAGES.contains(packageName) || TELEGRAM_PACKAGES.contains(packageName) ->
+                prefs.getBoolean("whatsapp_block_status", false)
             else -> false
         }
     }
 
-    /**
-     * Current epoch day (days since 1970-01-01 in the device's LOCAL timezone) - used to detect
-     * the midnight rollover so usedSecondsToday resets automatically.
-     */
+    private fun isYouTubeHomeFeedActive(root: AccessibilityNodeInfo?, screenTexts: List<String>): Boolean {
+        if (root == null) return false
+        if (isSelectedTabMatching(root, "Home")) return true
+        // Fallback signal: typical YouTube home feed filter chips when Home tab is visible
+        val homeChips = setOf("all", "new to you", "mixes", "gaming", "live", "music")
+        val chipMatches = screenTexts.count { homeChips.contains(it.trim().lowercase()) }
+        return chipMatches >= 2 && checkNodeForIdKeyword(root, "results")
+    }
+
+    private fun isWhatsAppUpdatesTabSelected(root: AccessibilityNodeInfo?): Boolean {
+        if (root == null) return false
+        return isSelectedTabMatching(root, "Updates") || isSelectedTabMatching(root, "Status")
+    }
+
+    private fun isSelectedTabMatching(node: AccessibilityNodeInfo?, tabKeyword: String): Boolean {
+        if (node == null) return false
+        if (node.isSelected) {
+            val text = node.text?.toString() ?: ""
+            val desc = node.contentDescription?.toString() ?: ""
+            if (text.contains(tabKeyword, ignoreCase = true) || desc.contains(tabKeyword, ignoreCase = true)) {
+                return true
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val matched = isSelectedTabMatching(child, tabKeyword)
+            child.recycle()
+            if (matched) return true
+        }
+        return false
+    }
+
+    private fun findMatchedBlockedKeyword(
+        root: AccessibilityNodeInfo,
+        screenTexts: List<String>,
+        isBrowser: Boolean
+    ): String? {
+        if (blockedKeywordsList.isEmpty()) return null
+        if (isBrowser) {
+            val urlNode = findUrlBarNode(root)
+            try {
+                if (urlNode != null && !urlNode.isFocused && !urlNode.isAccessibilityFocused) {
+                    val urlText = urlNode.text?.toString()?.lowercase() ?: ""
+                    for (kw in blockedKeywordsList) {
+                        if (kw.isNotEmpty() && urlText.contains(kw)) {
+                            return kw
+                        }
+                    }
+                }
+            } finally {
+                if (urlNode != null && urlNode !== root) {
+                    urlNode.recycle()
+                }
+            }
+        }
+        // Check visible titles / headings (skip while an EditText is actively focused so user can type)
+        if (hasFocusedEditText(root)) return null
+        val defaultFilterChips = setOf("all", "gaming", "movies", "music", "live", "mixes", "news", "sports", "new to you")
+        for (txt in screenTexts) {
+            val trimmed = txt.trim().lowercase()
+            // Ignore standalone category filter chip labels on YouTube home/search bar
+            if (defaultFilterChips.contains(trimmed)) continue
+            for (kw in blockedKeywordsList) {
+                if (kw.isNotEmpty() && containsKeywordAsWordOrPhrase(trimmed, kw)) {
+                    return kw
+                }
+            }
+        }
+        return null
+    }
+
+    private fun clickYouTubeSearchButton(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val desc = node.contentDescription?.toString() ?: ""
+        val id = node.viewIdResourceName?.lowercase() ?: ""
+        if ((desc.equals("Search", ignoreCase = true) || id.endsWith("menu_item_search") || id.endsWith("search_button")) &&
+            node.isClickable
+        ) {
+            return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val clicked = clickYouTubeSearchButton(child)
+            child.recycle()
+            if (clicked) return true
+        }
+        return false
+    }
+
+    private fun containsKeywordAsWordOrPhrase(text: String, keyword: String): Boolean {
+        var startIndex = 0
+        while (startIndex <= text.length - keyword.length) {
+            val idx = text.indexOf(keyword, startIndex)
+            if (idx < 0) return false
+            val beforeOk = idx == 0 || !text[idx - 1].isLetterOrDigit()
+            val endIdx = idx + keyword.length
+            val afterOk = endIdx >= text.length || !text[endIdx].isLetterOrDigit()
+            if (beforeOk && afterOk) return true
+            startIndex = idx + 1
+        }
+        return false
+    }
+
+    private fun hasFocusedEditText(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val cls = node.className?.toString() ?: ""
+        if ((node.isFocused || node.isAccessibilityFocused) && cls.contains("EditText", ignoreCase = true)) {
+            return true
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val focused = hasFocusedEditText(child)
+            child.recycle()
+            if (focused) return true
+        }
+        return false
+    }
+
+    private fun triggerMindfulDelayGate(packageName: String) {
+        lastBlockTriggerAtMs = TrustedClock.now()
+        if (Settings.canDrawOverlays(this)) {
+            showOverlay(packageName)
+        } else {
+            triggerOverlayPermissionRequest()
+        }
+        val intent = Intent(this, BlockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra("BLOCKED_PACKAGE", packageName)
+            putExtra("IS_MINDFUL_DELAY", true)
+        }
+        startActivity(intent)
+    }
+
     private fun currentEpochDay(): Long = TimeUtils.localEpochDay(TrustedClock.now())
 
-    /**
-     * Begins tracking foreground time for a quota-mode long-term-blocked app. Starts a
-     * ticker that periodically persists elapsed time and checks whether the daily
-     * limit has now been crossed mid-session (not just at the next app launch).
-     */
     private fun startQuotaTracking(block: LongTermBlock) {
         quotaTrackingBlockId = block.id
         quotaTrackingPackage = block.target
@@ -985,13 +1176,6 @@ class FocusAccessibilityService : AccessibilityService() {
                 val currentStartMs = quotaTrackingStartMs
                 val exceeded = persistQuotaProgress(currentBlockId, currentStartMs)
                 if (exceeded) {
-                    // Clear tracking state up front rather than waiting for a future
-                    // WINDOW_STATE_CHANGED event to a different package to do it via
-                    // stopQuotaTrackingAndPersist(). If GLOBAL_ACTION_HOME/BlockActivity
-                    // ever fails to actually move this app out of the foreground, that
-                    // event never comes - leaving quotaTrackingPackage stuck on this
-                    // app, which made the quota heartbeat's "continue" skip re-checking
-                    // it and silently give up re-triggering the block.
                     quotaTrackingBlockId = null
                     quotaTrackingPackage = null
                     quotaTickerJob = null
@@ -1009,24 +1193,6 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Everything above (startQuotaTracking / stopQuotaTrackingAndPersist) is driven by
-     * TYPE_WINDOW_STATE_CHANGED events - it only knows to (re)start tracking when the
-     * foreground package visibly changes. That assumption breaks for apps like games,
-     * which render through a single game-engine surface and generate few or no
-     * accessibility events for the entire time they're being played. If the service
-     * process also gets killed and restarted mid-game (very likely on a 2GB Go-edition
-     * device with a heavy game in foreground competing for RAM), there is no future
-     * event to ever re-trigger tracking - it silently never resumes for the rest of
-     * that play session.
-     *
-     * This heartbeat polls the actual foreground package directly every few seconds,
-     * independent of any event firing. It resumes quota tracking (or blocks immediately if
-     * already over quota) for a quota-enabled app sitting untracked in the foreground, and it
-     * also blocks an app that is ALREADY open when a focus session / long-term block starts
-     * (app blocks are otherwise only evaluated when an app is opened). It additionally closes
-     * a focus session whose time has run out. Started once from onServiceConnected().
-     */
     private fun startQuotaHeartbeat() {
         quotaHeartbeatJob?.cancel()
         quotaHeartbeatJob = serviceScope.launch {
@@ -1035,15 +1201,14 @@ class FocusAccessibilityService : AccessibilityService() {
                 try {
                     val now = TrustedClock.now()
 
-                    // A focus session whose time is up is closed here too, so it ends on time even if
-                    // no accessibility event happens to arrive afterwards.
                     if (isSessionActive && now >= sessionEndTime) {
                         (application as FocusApplication).repository.stopActiveSession("Expired")
                     }
 
                     val sessionBlocking = isSessionActive && now < sessionEndTime && blockedPackages.isNotEmpty()
                     val hasAppBlocks = longTermBlocks.any { it.type == "APP" }
-                    if (!sessionBlocking && !hasAppBlocks && quotaTrackingPackage == null) continue
+                    val morningActive = isMorningFirstTaskLockActive(now)
+                    if (!sessionBlocking && !hasAppBlocks && !morningActive && quotaTrackingPackage == null) continue
 
                     val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: continue
                     val fgPackage = root.packageName?.toString()
@@ -1055,19 +1220,33 @@ class FocusAccessibilityService : AccessibilityService() {
                         stopQuotaTrackingAndPersist()
                     }
 
-                    // A block was just fired and its screen is still loading - don't stack another one.
                     if (now - lastBlockTriggerAtMs < 2_500L) continue
 
-                    // 1. A focus session started (or the block list changed) while the blocked app was
-                    //    already open - app blocks are otherwise only evaluated when an app is opened.
+                    // 1. Focus session block
                     if (sessionBlocking && blockedPackages.contains(fgPackage)) {
                         Log.d("FocusService", "Heartbeat: blocked app already in foreground: $fgPackage")
                         triggerBlockActivity(fgPackage, isLongTerm = false, reason = "", endDate = sessionEndTime)
                         continue
                     }
 
-                    // 2. Long-term app blocks: a block that became active while its app was open, or a
-                    //    quota app that is sitting untracked in the foreground.
+                    // 1b. Morning First-Task Lock
+                    if (morningActive) {
+                        val isMorningLockedApp = blockedPackages.contains(fgPackage) ||
+                            mindfulDelayPackages.contains(fgPackage) ||
+                            DEFAULT_MORNING_DISTRACTION_PACKAGES.contains(fgPackage)
+                        if (isMorningLockedApp && !isHomeLauncherPackage(fgPackage) && !isTransientSystemPackage(fgPackage)) {
+                            val doneMins = getTodayCompletedFocusMinutes(now)
+                            triggerBlockActivity(
+                                fgPackage,
+                                isLongTerm = false,
+                                reason = "Morning First-Task Lock (5 AM – 9 AM): Complete 25 minutes of Focus today ($doneMins/25 min completed) to unlock distracting apps.",
+                                endDate = getTodayNineAmWallOrTrustedMillis(now)
+                            )
+                            continue
+                        }
+                    }
+
+                    // 2. Long-term app blocks
                     if (quotaTrackingPackage == fgPackage) continue
                     val activeBlock = longTermBlocks.firstOrNull {
                         it.type == "APP" && it.target == fgPackage && it.isActive &&
@@ -1110,25 +1289,9 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Adds elapsed foreground time (since [startMs]) to the persisted usedSecondsToday
-     * for [blockId], handling the midnight reset if the day has rolled over. Returns
-     * true if the daily limit is now exceeded.
-     *
-     * blockId/startMs are passed in explicitly (rather than read from the shared
-     * quotaTracking* fields at call time) so that a caller can snapshot them before
-     * those fields get reset/nulled elsewhere - see stopQuotaTrackingAndPersist().
-     * Reading the shared fields directly here previously raced with
-     * stopQuotaTrackingAndPersist() nulling them before this suspend function got a
-     * chance to run, silently dropping the final segment of usage on every app switch.
-     */
     private suspend fun persistQuotaProgress(blockId: Int, startMs: Long): Boolean {
         val windowEnd = TrustedClock.now()
         return quotaPersistMutex.withLock {
-            // Count every moment exactly once: a concurrent persist (ticker vs. app switch) may
-            // already have accounted for the start of this window. startMs is snapshotted by the
-            // caller BEFORE it waits for this lock, so the overlap can only be resolved here, inside
-            // it, via the per-block "accounted until" mark.
             val accountedUntil = quotaAccountedUntil[blockId] ?: 0L
             val elapsedMillis = (windowEnd - maxOf(startMs, accountedUntil)).coerceAtLeast(0L)
             quotaAccountedUntil[blockId] = maxOf(windowEnd, accountedUntil)
@@ -1138,18 +1301,11 @@ class FocusAccessibilityService : AccessibilityService() {
             val limit = block.dailyLimitSeconds ?: return@withLock false
             val today = currentEpochDay()
 
-            // Accumulate in milliseconds so brief sub-second segments (rapid Reels
-            // scrolling, quick app peeks) don't get truncated away - only the final
-            // derived usedSecondsToday (for display/threshold checks elsewhere) is
-            // floored to whole seconds, from an otherwise lossless running total.
             val baseMillis = if (block.lastUsageResetEpochDay != today) 0L else block.usedMillisToday
             val newMillis = baseMillis + elapsedMillis
             val newSeconds = newMillis / 1000L
             repository.updateLongTermBlockUsage(blockId, newSeconds, newMillis, today)
 
-            // Only reset the shared tracking window if we're still actively tracking this
-            // same block - guards against clobbering a newer tracking window started
-            // concurrently (e.g. the user left and immediately reopened the same app).
             if (quotaTrackingBlockId == blockId) {
                 quotaTrackingStartMs = windowEnd
             }
@@ -1158,13 +1314,10 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Stops tracking (app switched away or session ending) and persists final elapsed time. */
     private fun stopQuotaTrackingAndPersist() {
         quotaTickerJob?.cancel()
         quotaTickerJob = null
 
-        // Snapshot before clearing the shared fields below, so the async persist call
-        // still has valid values to work with regardless of scheduling order.
         val blockId = quotaTrackingBlockId
         val startMs = quotaTrackingStartMs
 
@@ -1182,18 +1335,7 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Sends the device Home before the block screen appears, so the blocked app is
-     * pushed out of the foreground first instead of sitting behind the overlay/
-     * BlockActivity. Third-party accessibility services can't force-stop another
-     * app's process (that needs a system-level permission we don't have), but
-     * GLOBAL_ACTION_HOME reliably backgrounds it immediately and is what every
-     * major app-blocker relies on for this "close it first" behavior. If dispatch
-     * ever fails (e.g. an unusual OEM skin), we still fall through to showing the
-     * overlay/BlockActivity as before instead of silently doing nothing.
-     */
     private fun closeBlockedAppThenBlock(packageName: String) {
-        // No forced HOME. A text-less backdrop hides the app until BlockActivity is up.
         if (Settings.canDrawOverlays(this)) {
             showOverlay(packageName)
         } else {
@@ -1201,10 +1343,6 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Classifies the current Settings screen and acts on it. Returns true when a
-     * bounce/block was fired (caller should stop processing this event).
-     */
     private fun handleSettingsScreen(
         root: AccessibilityNodeInfo?,
         packageName: String,
@@ -1272,32 +1410,6 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Silent, lightweight response used ONLY when the user has navigated straight to
-     * Focuss Buddy's own accessibility/app-info/device-admin toggle screen (i.e. is
-     * literally looking at the toggle that would disable enforcement). Unlike
-     * triggerBlockActivity(), this does NOT launch the full-screen BlockActivity and
-     * does NOT dispatch GLOBAL_ACTION_HOME - it just dispatches GLOBAL_ACTION_BACK to
-     * pop that one screen off Settings' back stack, so the user lands back on the
-     * previous screen (e.g. the Accessibility services list) and stays inside
-     * Settings, instead of being kicked out with a full "App Blocked" screen.
-     *
-     * The overlay drawn by the instant Settings gate is removed right away rather
-     * than left up: GLOBAL_ACTION_BACK is a single fast system call (no Activity
-     * launch, no WindowManager churn), so by the time this runs the offending screen
-     * is already being torn down - there's no meaningful window left for the overlay
-     * to protect. Generic bypass actions (Reset, Uninstall, Force stop, etc. - see
-     * bypassKeywords below) intentionally keep going through triggerBlockActivity()
-     * instead: those are more consequential and still get the full friction screen.
-     *
-     * Dispatches BACK twice, not once: a single back only pops the offending
-     * toggle screen and lands on its immediate parent (e.g. the Accessibility
-     * services list) - one tap away from walking straight back into it. A
-     * second back, fired a beat later once the first has actually been
-     * processed, clears that parent screen too and drops the user out to the
-     * Settings root, so a repeat attempt has to re-navigate the whole path
-     * again instead of just tapping back in.
-     */
     private fun bounceBackFromSettingsBypass(packageName: String) {
         val repository = (application as FocusApplication).repository
         serviceScope.launch {
@@ -1319,9 +1431,6 @@ class FocusAccessibilityService : AccessibilityService() {
 
         removeOverlay()
 
-        // Second back, slightly delayed so it lands after the first one has
-        // actually navigated - firing both in the same instant can race the
-        // first transition and get silently dropped by the system.
         serviceScope.launch {
             delay(220)
             try {
@@ -1365,13 +1474,6 @@ class FocusAccessibilityService : AccessibilityService() {
         startActivity(intent)
     }
 
-    /**
-     * Shows the PIN-entry screen over a locked app. Unlike triggerBlockActivity(),
-     * this deliberately does NOT use FLAG_ACTIVITY_CLEAR_TASK: the locked app's own
-     * task is left completely intact underneath, so once the correct PIN is entered
-     * AppLockUnlockActivity just finishes and the locked app reappears exactly as the
-     * user left it, instead of being relaunched from scratch.
-     */
     private fun triggerAppLockPrompt(packageName: String) {
         if (Settings.canDrawOverlays(this)) {
             showOverlay(packageName)
@@ -1385,7 +1487,6 @@ class FocusAccessibilityService : AccessibilityService() {
         startActivity(intent)
     }
 
-    /** Called by AppLockUnlockActivity once the correct PIN has been entered. */
     fun grantAppUnlock(packageName: String) {
         unlockedLeftAtMs = 0L
         unlockedPackage = packageName
@@ -1415,17 +1516,6 @@ class FocusAccessibilityService : AccessibilityService() {
         return url.substring(0, endIndex).trim()
     }
 
-    /**
-     * Breadth-first search for the browser's URL/address bar node, identified by its
-     * view id (requires FLAG_REPORT_VIEW_IDS to be set - see onServiceConnected()).
-     *
-     * Unlike a naive recursive search, this recycles every visited node that doesn't
-     * match once it has been checked (and drains the remaining queue on an early
-     * match), instead of leaking every intermediate AccessibilityNodeInfo obtained via
-     * getChild(). On a full page's node tree that can be hundreds of nodes per event,
-     * so this matters for GC pressure on low-RAM Go devices. The root node passed in is
-     * owned by the caller and is left untouched.
-     */
     private fun findUrlBarNode(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (root == null) return null
 
@@ -1463,8 +1553,6 @@ class FocusAccessibilityService : AccessibilityService() {
     private fun findBlockedWebsite(node: AccessibilityNodeInfo?, blockedWebsites: Set<String>): String? {
         val urlBarNode = findUrlBarNode(node) ?: return null
         try {
-            // If the URL bar is currently focused, the user is actively typing or editing.
-            // Do not block in this state (prevents premature triggers during search suggestions/autocomplete).
             if (urlBarNode.isFocused || urlBarNode.isAccessibilityFocused) {
                 return null
             }
@@ -1531,7 +1619,11 @@ class FocusAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun triggerContentBlockActivity(packageName: String, contentType: String) {
+    private fun triggerContentBlockActivity(
+        packageName: String,
+        contentType: String,
+        customEndTime: Long = sessionEndTime
+    ) {
         val repository = (application as FocusApplication).repository
         serviceScope.launch {
             try {
@@ -1549,16 +1641,11 @@ class FocusAccessibilityService : AccessibilityService() {
             putExtra("BLOCKED_PACKAGE", packageName)
             putExtra("IS_CONTENT_LEVEL", true)
             putExtra("CONTENT_TYPE", contentType)
-            putExtra("END_TIME", sessionEndTime)
+            putExtra("END_TIME", customEndTime)
         }
         startActivity(intent)
     }
 
-    /**
-     * Lightweight tree walk that only gathers visible text/content-descriptions. Only called
-     * for the few windows whose text is actually used (see readsScreenText in
-     * onAccessibilityEvent).
-     */
     private fun collectScreenText(node: AccessibilityNodeInfo?, list: MutableList<String>, depth: Int) {
         if (node == null || depth > 50) return
         val text = node.text?.toString()
@@ -1620,12 +1707,6 @@ class FocusAccessibilityService : AccessibilityService() {
         return false
     }
 
-    /**
-     * Text-less cover window. opaque=true: solid backdrop (hides the blocked app while
-     * BlockActivity / the PIN screen loads). opaque=false: fully transparent but still
-     * touch-consuming (Settings gate). Removed by BlockActivity/AppLockUnlockActivity
-     * onResume, by the Settings classifier, or by the safety timeout.
-     */
     private fun showOverlay(packageName: String, opaque: Boolean = true) {
         try {
             val color = if (opaque && USE_APP_BACKDROP) BACKDROP_COLOR else Color.TRANSPARENT
@@ -1687,7 +1768,7 @@ class FocusAccessibilityService : AccessibilityService() {
 
     private fun triggerOverlayPermissionRequest() {
         val now = TrustedClock.now()
-        if (now - lastPermissionRequestTime > 10000L) { // 10 seconds cooldown to avoid spamming intents
+        if (now - lastPermissionRequestTime > 10000L) {
             lastPermissionRequestTime = now
             try {
                 val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
