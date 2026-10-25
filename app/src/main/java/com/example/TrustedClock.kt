@@ -40,7 +40,7 @@ object TrustedClock {
     @Synchronized
     fun now(context: Context? = null): Long {
         val targetContext = context ?: try {
-            if (FocusApplication::instance.isInitialized) FocusApplication.instance else null
+            FocusApplication.instanceOrNull()
         } catch (e: Throwable) {
             null
         }

@@ -16,5 +16,8 @@ class FocusApplication : Application() {
     companion object {
         lateinit var instance: FocusApplication
             private set
+
+        fun instanceOrNull(): FocusApplication? =
+            if (::instance.isInitialized) instance else null
     }
 }

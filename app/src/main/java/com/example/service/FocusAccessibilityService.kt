@@ -1662,7 +1662,7 @@ class FocusAccessibilityService : AccessibilityService() {
         val view = overlayView ?: return
         overlayView = null
         currentBlockedPackage = null
-        val removeAction = {
+        val removeAction = Runnable {
             try {
                 if (view.isAttachedToWindow) {
                     windowManager.removeViewImmediate(view)
@@ -1675,7 +1675,7 @@ class FocusAccessibilityService : AccessibilityService() {
             }
         }
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            removeAction()
+            removeAction.run()
         } else {
             android.os.Handler(android.os.Looper.getMainLooper()).post(removeAction)
         }
