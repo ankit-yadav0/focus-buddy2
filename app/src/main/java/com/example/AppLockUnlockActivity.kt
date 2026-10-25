@@ -42,10 +42,13 @@ class AppLockUnlockActivity : ComponentActivity() {
     private var lockedPackageState by mutableStateOf("")
     private var appLabelState by mutableStateOf("")
     private var lockoutMessageState by mutableStateOf<String?>(null)
+    private var promptSeqState by mutableIntStateOf(0)
 
     override fun onResume() {
         super.onResume()
         FocusAccessibilityService.instance?.dismissInstantOverlay()
+        val left = PinSecurity.remainingLockMs(this)
+        lockoutMessageState = if (left > 0) PinSecurity.lockMessage(left) else null
     }
 
     private fun goHomeAndFinish() {
@@ -71,6 +74,9 @@ class AppLockUnlockActivity : ComponentActivity() {
         val lockedPackage = newIntent.getStringExtra("LOCKED_PACKAGE") ?: ""
         lockedPackageState = lockedPackage
         appLabelState = resolveAppLabel(lockedPackage)
+        val left = PinSecurity.remainingLockMs(this)
+        lockoutMessageState = if (left > 0) PinSecurity.lockMessage(left) else null
+        promptSeqState++
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -102,8 +108,18 @@ class AppLockUnlockActivity : ComponentActivity() {
                     val app = application as FocusApplication
                     val scope = rememberCoroutineScope()
 
+                    LaunchedEffect(lockedPackageState, promptSeqState) {
+                        val stored = app.repository.getSetting("app_lock_pin_hash")
+                        if (stored.isNullOrBlank()) {
+                            android.util.Log.w("AppLockUnlockActivity", "No PIN configured in repository; unlocking to prevent lockout.")
+                            FocusAccessibilityService.instance?.grantAppUnlock(lockedPackageState)
+                            finish()
+                        }
+                    }
+
                     PinUnlockScreen(
                         appName = appLabelState,
+                        promptKey = promptSeqState,
                         onCancel = { goHomeAndFinish() },
                         lockoutMessage = lockoutMessageState,
                         onVerifyPin = { pin, onResult ->
@@ -116,6 +132,12 @@ class AppLockUnlockActivity : ComponentActivity() {
                                     return@launch
                                 }
                                 val stored = app.repository.getSetting("app_lock_pin_hash")
+                                if (stored.isNullOrBlank()) {
+                                    android.util.Log.w("AppLockUnlockActivity", "No PIN configured; auto-unlocking.")
+                                    FocusAccessibilityService.instance?.grantAppUnlock(lockedPackageState)
+                                    finish()
+                                    return@launch
+                                }
                                 val correct = PinSecurity.verify(pin, stored)
                                 if (correct) {
                                     if (PinSecurity.isLegacy(stored)) {
@@ -144,14 +166,15 @@ class AppLockUnlockActivity : ComponentActivity() {
 fun PinUnlockScreen(
     appName: String,
     lockoutMessage: String? = null,
+    promptKey: Int = 0,
     onCancel: () -> Unit,
     onVerifyPin: (pin: String, onResult: (Boolean) -> Unit) -> Unit
 ) {
-    // Keyed on appName: if onNewIntent() swaps the target app while this screen
-    // is still alive (singleTask reuse), any digits typed for the previous app
+    // Keyed on appName and promptKey: if onNewIntent() swaps or re-opens the target app
+    // while this screen is still alive (singleTask reuse), any digits typed previously
     // must not carry over.
-    var pin by remember(appName) { mutableStateOf("") }
-    var showError by remember(appName) { mutableStateOf(false) }
+    var pin by remember(appName, promptKey) { mutableStateOf("") }
+    var showError by remember(appName, promptKey) { mutableStateOf(false) }
 
     fun onDigit(d: String) {
         if (pin.length < 6) {
@@ -225,7 +248,7 @@ fun PinUnlockScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        if (showError) {
+        if (showError || lockoutMessage != null) {
             Text(
                 text = lockoutMessage ?: "Wrong PIN, try again",
                 color = Color(0xFFFF5252),

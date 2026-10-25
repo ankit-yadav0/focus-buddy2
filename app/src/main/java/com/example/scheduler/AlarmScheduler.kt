@@ -9,7 +9,7 @@ import android.os.Build
 import android.provider.Settings
 import com.example.data.StrictSchedule
 import com.example.receiver.StrictScheduleReceiver
-import java.time.ZonedDateTime
+import java.util.Calendar
 
 object AlarmScheduler {
     const val ACTION_START_SCHEDULE = "com.example.action.START_SCHEDULE"
@@ -18,25 +18,97 @@ object AlarmScheduler {
     fun getNextOccurrence(hour: Int, minute: Int, daysOfWeekStr: String): Long {
         val enabledDays = daysOfWeekStr.split(",")
             .mapNotNull { it.trim().toIntOrNull() }
-            .toSet()
+            .toSet() // 1 = Monday, 7 = Sunday
         if (enabledDays.isEmpty()) return 0L
 
-        val now = ZonedDateTime.now()
+        val nowMillis = System.currentTimeMillis()
         for (offset in 0..14) {
-            val candidateDay = now.plusDays(offset.toLong())
-            val dayOfWeekVal = candidateDay.dayOfWeek.value // 1 = Monday, 7 = Sunday
-            if (enabledDays.contains(dayOfWeekVal)) {
-                val candidateTime = candidateDay
-                    .withHour(hour)
-                    .withMinute(minute)
-                    .withSecond(0)
-                    .withNano(0)
-                if (candidateTime.isAfter(now)) {
-                    return candidateTime.toInstant().toEpochMilli()
+            val candidate = Calendar.getInstance().apply {
+                timeInMillis = nowMillis
+                add(Calendar.DAY_OF_YEAR, offset)
+                set(Calendar.HOUR_OF_DAY, hour)
+                set(Calendar.MINUTE, minute)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            // Calendar.SUNDAY is 1, Calendar.MONDAY is 2, ..., Calendar.SATURDAY is 7
+            // Convert to ISO 1 (Monday) .. 7 (Sunday)
+            val calDay = candidate.get(Calendar.DAY_OF_WEEK)
+            val isoDay = if (calDay == Calendar.SUNDAY) 7 else calDay - 1
+            if (enabledDays.contains(isoDay)) {
+                if (candidate.timeInMillis > nowMillis) {
+                    return candidate.timeInMillis
                 }
             }
         }
         return 0L
+    }
+
+    /**
+     * If [nowMillis] is currently inside an active window of [schedule], returns the epoch millis
+     * when that current window ends; otherwise returns null.
+     */
+    fun getCurrentWindowEndMillis(schedule: StrictSchedule, nowMillis: Long = System.currentTimeMillis()): Long? {
+        if (!schedule.isEnabled) return null
+        val enabledDays = schedule.daysOfWeek.split(",")
+            .mapNotNull { it.trim().toIntOrNull() }
+            .toSet()
+        if (enabledDays.isEmpty()) return null
+
+        val cal = Calendar.getInstance().apply { timeInMillis = nowMillis }
+        val calDay = cal.get(Calendar.DAY_OF_WEEK)
+        val isoDayToday = if (calDay == Calendar.SUNDAY) 7 else calDay - 1
+        val isoDayYesterday = if (isoDayToday == 1) 7 else isoDayToday - 1
+
+        val nowMinOfDay = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
+        val startTotalMin = schedule.startHour * 60 + schedule.startMinute
+        val endTotalMin = schedule.endHour * 60 + schedule.endMinute
+
+        if (endTotalMin > startTotalMin) {
+            if (isoDayToday in enabledDays && nowMinOfDay in startTotalMin until endTotalMin) {
+                val endCal = Calendar.getInstance().apply {
+                    timeInMillis = nowMillis
+                    set(Calendar.HOUR_OF_DAY, schedule.endHour)
+                    set(Calendar.MINUTE, schedule.endMinute)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                if (endCal.timeInMillis > nowMillis) return endCal.timeInMillis
+            }
+        } else {
+            if (isoDayToday in enabledDays && nowMinOfDay >= startTotalMin) {
+                val endCal = Calendar.getInstance().apply {
+                    timeInMillis = nowMillis
+                    add(Calendar.DAY_OF_YEAR, 1)
+                    set(Calendar.HOUR_OF_DAY, schedule.endHour)
+                    set(Calendar.MINUTE, schedule.endMinute)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                if (endCal.timeInMillis > nowMillis) return endCal.timeInMillis
+            } else if (isoDayYesterday in enabledDays && nowMinOfDay < endTotalMin) {
+                val endCal = Calendar.getInstance().apply {
+                    timeInMillis = nowMillis
+                    set(Calendar.HOUR_OF_DAY, schedule.endHour)
+                    set(Calendar.MINUTE, schedule.endMinute)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                if (endCal.timeInMillis > nowMillis) return endCal.timeInMillis
+            }
+        }
+        return null
+    }
+
+    /**
+     * If [nowMillis] is currently inside an active window of [schedule], returns the remaining
+     * duration in minutes (at least 1); otherwise returns null.
+     */
+    fun getRemainingMinutesInCurrentWindow(schedule: StrictSchedule, nowMillis: Long = System.currentTimeMillis()): Int? {
+        val endMillis = getCurrentWindowEndMillis(schedule, nowMillis) ?: return null
+        val diffMs = endMillis - nowMillis
+        if (diffMs <= 0L) return null
+        return ((diffMs + 59_999L) / 60_000L).toInt().coerceAtLeast(1)
     }
 
     fun scheduleWindow(context: Context, schedule: StrictSchedule) {
@@ -48,13 +120,14 @@ object AlarmScheduler {
 
         // Computed as a fixed duration added to startMillis (not independently via
         // getNextOccurrence) so this is correct for both same-day and midnight-crossing
-        // windows - see the bug description above for why the independent-lookup
-        // approach breaks for overnight schedules.
+        // windows. If we are currently inside an active window (e.g. after a reboot or
+        // enabling a schedule mid-window), arm the current window's STOP alarm first.
         val startTotalMin = schedule.startHour * 60 + schedule.startMinute
         var endTotalMin = schedule.endHour * 60 + schedule.endMinute
         if (endTotalMin <= startTotalMin) endTotalMin += 24 * 60
         val durationMinutes = (endTotalMin - startTotalMin).coerceAtLeast(1)
-        val endMillis = if (startMillis > 0L) startMillis + durationMinutes * 60_000L else 0L
+        val currentWindowEndMillis = getCurrentWindowEndMillis(schedule)
+        val endMillis = currentWindowEndMillis ?: if (startMillis > 0L) startMillis + durationMinutes * 60_000L else 0L
 
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE

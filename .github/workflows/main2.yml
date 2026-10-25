@@ -60,20 +60,51 @@ jobs:
           name: focussbuddy-debug-apk
           path: app/build/outputs/apk/debug/*.apk
 
+      # --- Release signing (only if secrets are configured) ---
+
+      # Check whether the release keystore secret exists before attempting
+      # to decode it. If it is missing the release steps are skipped
+      # gracefully so the debug APK is still uploaded and the workflow
+      # run does not fail.
+      - name: Check release secrets
+        id: secrets
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "have_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_release=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::KEYSTORE_BASE64 secret not configured — skipping release APK build."
+          fi
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+      # Secrets go in through env vars, never interpolated into the script text: a password
+      # containing $, ", ` or a newline would otherwise break (or inject into) the shell command.
       - name: Decode release keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.keystore
+        if: steps.secrets.outputs.have_release == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: printf '%s' "$KEYSTORE_BASE64" | base64 -d > release.keystore
 
       - name: Build release APK
+        if: steps.secrets.outputs.have_release == 'true'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          EFFECTIVE_KEY_ALIAS="${KEY_ALIAS:-upload}"
+          EFFECTIVE_KEY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
           gradle assembleRelease --no-daemon --stacktrace \
             -PappVersionCode=${{ steps.version.outputs.code }} \
             -PappVersionName=${{ steps.version.outputs.name }} \
             -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/release.keystore" \
-            -Pandroid.injected.signing.store.password="${{ secrets.KEYSTORE_PASSWORD }}" \
-            -Pandroid.injected.signing.key.alias="${{ secrets.KEY_ALIAS }}" \
-            -Pandroid.injected.signing.key.password="${{ secrets.KEY_PASSWORD }}"
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$EFFECTIVE_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$EFFECTIVE_KEY_PASSWORD"
 
       - name: Upload release APK
+        if: steps.secrets.outputs.have_release == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: focussbuddy-release-apk
@@ -87,7 +118,7 @@ jobs:
       # an actual push to main, not on pull_request builds, so PRs don't spam
       # releases and don't need a real signing secret to build/test.
       - name: Publish GitHub Release
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.secrets.outputs.have_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.code }}

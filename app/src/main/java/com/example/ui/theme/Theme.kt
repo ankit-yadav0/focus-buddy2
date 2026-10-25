@@ -104,7 +104,11 @@ fun MyApplicationTheme(
     val accent = AccentTheme.values().find { it.displayName == accentThemeName } ?: AccentTheme.PHOSPHOR_MINT
 
     val colorScheme = when {
-        isNightModeActive -> InstrumentNightColors
+        isNightModeActive -> InstrumentNightColors.copy(
+            primary = accent.primary,
+            secondary = accent.secondary,
+            tertiary = accent.tertiary
+        )
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)

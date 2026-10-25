@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.TextToolbar
@@ -34,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.geometry.Rect
 import com.example.receiver.MyDeviceAdminReceiver
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 val noOpTextToolbar = object : TextToolbar {
     override fun showMenu(
@@ -49,12 +52,18 @@ val noOpTextToolbar = object : TextToolbar {
     override val status: TextToolbarStatus get() = TextToolbarStatus.Hidden
 }
 
+val noOpClipboardManager = object : androidx.compose.ui.platform.ClipboardManager {
+    override fun setText(annotatedString: androidx.compose.ui.text.AnnotatedString) {}
+    override fun getText(): androidx.compose.ui.text.AnnotatedString? = null
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UninstallReflectionScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val dpm = remember { context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager }
     val adminComp = remember { ComponentName(context, MyDeviceAdminReceiver::class.java) }
     var adminRemovedPendingUninstall by remember { mutableStateOf(false) }
@@ -63,6 +72,7 @@ fun UninstallReflectionScreen(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode != android.app.Activity.RESULT_OK) {
+            com.example.service.FocusAccessibilityService.allowPendingUninstall(0L)
             adminRemovedPendingUninstall = true
         }
     }
@@ -224,7 +234,10 @@ fun UninstallReflectionScreen(
                 }
             }
 
-            CompositionLocalProvider(LocalTextToolbar provides noOpTextToolbar) {
+            CompositionLocalProvider(
+                LocalClipboardManager provides noOpClipboardManager,
+                LocalTextToolbar provides noOpTextToolbar
+            ) {
                 OutlinedTextField(
                     value = textState,
                     onValueChange = { newVal ->
@@ -263,16 +276,24 @@ fun UninstallReflectionScreen(
             Button(
                 onClick = {
                     if (isReady) {
-                        try {
-                            if (dpm.isAdminActive(adminComp)) {
-                                dpm.removeActiveAdmin(adminComp)
+                        scope.launch {
+                            try {
+                                com.example.service.FocusAccessibilityService.allowPendingUninstall()
+                                if (dpm.isAdminActive(adminComp)) {
+                                    dpm.removeActiveAdmin(adminComp)
+                                    var attempts = 0
+                                    while (dpm.isAdminActive(adminComp) && attempts < 10) {
+                                        delay(50L)
+                                        attempts++
+                                    }
+                                }
+                                val uninstallIntent = Intent(Intent.ACTION_DELETE).apply {
+                                    data = Uri.parse("package:" + context.packageName)
+                                }
+                                uninstallLauncher.launch(uninstallIntent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Error executing uninstallation: ${e.message}", Toast.LENGTH_LONG).show()
                             }
-                            val uninstallIntent = Intent(Intent.ACTION_DELETE).apply {
-                                data = Uri.parse("package:" + context.packageName)
-                            }
-                            uninstallLauncher.launch(uninstallIntent)
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "Error executing uninstallation: ${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
                 },

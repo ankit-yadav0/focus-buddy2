@@ -49,16 +49,7 @@ class FocusRepository(
     suspend fun getScheduleById(id: Int): StrictSchedule? = strictScheduleDao.getScheduleById(id)
 
     suspend fun startScheduledStrictSession(scheduleId: Int, durationMinutes: Int) {
-        val active = focusSessionDao.getActiveSessionSync()
-        // A running Strict Mode session is never replaced. A normal session, on the other hand, gives way
-        // to the scheduled strict window - previously the window was silently skipped whenever ANY session
-        // happened to be running, leaving the whole window unprotected.
-        if (active != null && active.isStrict && TrustedClock.now() < active.endTime) return
-        startFocusSession(durationMinutes, isStrict = true)
-        val inserted = focusSessionDao.getActiveSessionSync()
-        if (inserted != null && inserted.isStrict) {
-            focusSessionDao.updateSession(inserted.copy(origin = "SCHEDULE:$scheduleId"))
-        }
+        startFocusSession(durationMinutes, isStrict = true, origin = "SCHEDULE:$scheduleId")
     }
 
     suspend fun stopScheduledStrictSession(scheduleId: Int) {
@@ -91,7 +82,12 @@ class FocusRepository(
         return blockedAppDao.isAppBlocked(packageName)
     }
 
-    suspend fun startFocusSession(durationMinutes: Int, isStrict: Boolean, totalMs: Long? = null): Unit = sessionMutex.withLock {
+    suspend fun startFocusSession(
+        durationMinutes: Int,
+        isStrict: Boolean,
+        totalMs: Long? = null,
+        origin: String = "MANUAL"
+    ): Unit = sessionMutex.withLock {
         val now = TrustedClock.now()
         val active = focusSessionDao.getActiveSessionSync()
         if (active != null) {
@@ -117,7 +113,8 @@ class FocusRepository(
             isActive = true,
             isStrict = isStrict,
             plantStatus = "SEED",
-            assetPath = "img_plant_seed"
+            assetPath = "img_plant_seed",
+            origin = origin
         )
         focusSessionDao.insertSession(session)
     }
@@ -154,7 +151,7 @@ class FocusRepository(
                 assetPath = if (matured) "img_plant_matured" else "img_plant_withered"
             )
         )
-        if (finalStatus == "Completed") {
+        if (matured) {
             sessionCompletedNaturally.tryEmit(true)
         }
 
@@ -162,7 +159,7 @@ class FocusRepository(
         // read-modify-write could lose an update when two writers overlapped.
         analyticsDao.insertIfAbsent(Analytics())
         analyticsDao.addSessionResult(
-            completed = if (finalStatus == "Completed") 1 else 0,
+            completed = if (matured) 1 else 0,
             minutes = actualDurationSeconds / 60L
         )
     }
@@ -222,7 +219,7 @@ class FocusRepository(
     // Only ever called from the "Extreme Override" deactivation flow, which itself
     // only exists when that method was explicitly chosen at Strict Mode activation
     // time (see StrictModeSetupWizardScreen / FocusViewModel.deactivateStrictModeViaOverride).
-    suspend fun deactivateStrictModeOverride() {
+    suspend fun deactivateStrictModeOverride() = sessionMutex.withLock {
         val active = focusSessionDao.getActiveSessionSync()
         if (active != null && active.isActive && active.isStrict) {
             focusSessionDao.updateSession(active.copy(isStrict = false))

@@ -15,9 +15,8 @@ import kotlin.math.abs
  * reboot), so the user cannot move it.
  *
  * We keep an anchor (trusted time, elapsedRealtime, boot count) and derive "now" from the monotonic
- * clock. The wall clock is only followed when it agrees with the monotonic clock (ordinary drift / an
- * NTP nudge), when "Automatic date & time" is on (a big jump is then a genuine network correction), or
- * right after a reboot (minus any manual offset we already detected).
+ * clock. Within the same boot, elapsedRealtime() is hardware-monotonic and is never overridden by large
+ * wall-clock jumps (even if AUTO_TIME is toggled back on while offline after a manual clock change).
  */
 object TrustedClock {
     private const val PREFS = "trusted_clock"
@@ -39,16 +38,26 @@ object TrustedClock {
     private var bootCountCache = Int.MIN_VALUE
 
     @Synchronized
-    fun now(context: Context = FocusApplication.instance): Long {
+    fun now(context: Context? = null): Long {
+        val targetContext = context ?: try {
+            if (FocusApplication::instance.isInitialized) FocusApplication.instance else null
+        } catch (e: Throwable) {
+            null
+        }
+        if (targetContext == null) {
+            return System.currentTimeMillis()
+        }
         val wall = System.currentTimeMillis()
         val elapsed = SystemClock.elapsedRealtime()
-        val boot = bootCount(context)
-        if (!loaded) load(context, wall, elapsed, boot)
+        val boot = bootCount(targetContext)
+        if (!loaded) load(targetContext, wall, elapsed, boot)
 
         if (boot != anchorBoot || elapsed < anchorElapsed) {
             // Rebooted since the anchor: elapsedRealtime restarted from zero, so the wall clock is the
-            // only reference left (minus any manual offset we already know about).
-            reanchor(context, wall - wallOffset, elapsed, boot)
+            // only reference left (minus any manual offset we already know about). Never allow time to
+            // jump backwards behind anchorTrusted across a reboot.
+            val candidate = (wall - wallOffset).coerceAtLeast(anchorTrusted)
+            reanchor(targetContext, candidate, elapsed, boot)
             return anchorTrusted
         }
 
@@ -56,17 +65,10 @@ object TrustedClock {
         val drift = (wall - wallOffset) - trusted
         if (abs(drift) <= DRIFT_TOLERANCE_MS) return trusted
 
-        if (isAutoTimeOn(context)) {
-            // Network time is on, so the user cannot have set this by hand: genuine correction, adopt it.
-            wallOffset = 0L
-            reanchor(context, wall, elapsed, boot)
-            return anchorTrusted
-        }
-
-        // Manual clock change: ignore it. Remember the offset so the wall clock can still be mapped
-        // back to trusted time after a reboot.
-        wallOffset += drift
-        save(context)
+        // Wall clock jumped relative to the monotonic clock during the same boot: ignore the jump and
+        // record the offset so the wall clock can still be mapped back to trusted time after a reboot.
+        wallOffset = wall - trusted
+        save(targetContext)
         return trusted
     }
 
@@ -112,11 +114,5 @@ object TrustedClock {
             }
         }
         return bootCountCache
-    }
-
-    private fun isAutoTimeOn(context: Context): Boolean = try {
-        Settings.Global.getInt(context.contentResolver, Settings.Global.AUTO_TIME, 0) == 1
-    } catch (e: Exception) {
-        false
     }
 }

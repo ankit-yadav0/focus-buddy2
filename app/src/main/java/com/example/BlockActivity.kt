@@ -40,9 +40,50 @@ import kotlin.math.max
 
 class BlockActivity : ComponentActivity() {
 
+    private var blockedPackageState by mutableStateOf("Unknown App")
+    private var fallbackEndTimeState by mutableLongStateOf(0L)
+    private var isContentLevelState by mutableStateOf(false)
+    private var contentTypeState by mutableStateOf("")
+    private var isLongTermState by mutableStateOf(false)
+    private var longTermReasonState by mutableStateOf("")
+    private var longTermEndDateState by mutableLongStateOf(0L)
+    private var longTermTypeState by mutableStateOf("APP")
+    private var appLabelState by mutableStateOf("")
+
     override fun onResume() {
         super.onResume()
         FocusAccessibilityService.instance?.dismissInstantOverlay()
+    }
+
+    private fun resolveAppLabel(targetLabel: String, pkg: String): String {
+        if (targetLabel.isNotEmpty()) return targetLabel
+        val pm = packageManager
+        return try {
+            val appInfo = pm.getApplicationInfo(pkg, 0)
+            pm.getApplicationLabel(appInfo).toString()
+        } catch (e: Exception) {
+            pkg.substringAfterLast(".")
+        }
+    }
+
+    private fun applyIntent(newIntent: Intent) {
+        val blockedPkg = newIntent.getStringExtra("BLOCKED_PACKAGE") ?: "Unknown App"
+        blockedPackageState = blockedPkg
+        fallbackEndTimeState = newIntent.getLongExtra("END_TIME", 0L)
+        isContentLevelState = newIntent.getBooleanExtra("IS_CONTENT_LEVEL", false)
+        contentTypeState = newIntent.getStringExtra("CONTENT_TYPE") ?: ""
+        isLongTermState = newIntent.getBooleanExtra("IS_LONG_TERM", false)
+        longTermReasonState = newIntent.getStringExtra("LONG_TERM_REASON") ?: ""
+        longTermEndDateState = newIntent.getLongExtra("LONG_TERM_END_DATE", 0L)
+        val targetLabel = newIntent.getStringExtra("LONG_TERM_TARGET_LABEL") ?: ""
+        longTermTypeState = newIntent.getStringExtra("LONG_TERM_TYPE") ?: "APP"
+        appLabelState = resolveAppLabel(targetLabel, blockedPkg)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyIntent(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,32 +93,7 @@ class BlockActivity : ComponentActivity() {
         // Back/gesture is absorbed: screen leaves only via its own button.
         onBackPressedDispatcher.addCallback(this) { }
 
-        val blockedPackage = intent.getStringExtra("BLOCKED_PACKAGE") ?: "Unknown App"
-        val fallbackEndTime = intent.getLongExtra("END_TIME", 0L)
-
-        // Content-level block details
-        val isContentLevel = intent.getBooleanExtra("IS_CONTENT_LEVEL", false)
-        val contentType = intent.getStringExtra("CONTENT_TYPE") ?: ""
-
-        // Long-term block details
-        val isLongTerm = intent.getBooleanExtra("IS_LONG_TERM", false)
-        val longTermReason = intent.getStringExtra("LONG_TERM_REASON") ?: ""
-        val longTermEndDate = intent.getLongExtra("LONG_TERM_END_DATE", 0L)
-        val longTermTargetLabel = intent.getStringExtra("LONG_TERM_TARGET_LABEL") ?: ""
-        val longTermType = intent.getStringExtra("LONG_TERM_TYPE") ?: "APP"
-
-        // Find clean name of package if possible
-        val pm = packageManager
-        val appLabel = if (longTermTargetLabel.isNotEmpty()) {
-            longTermTargetLabel
-        } else {
-            try {
-                val appInfo = pm.getApplicationInfo(blockedPackage, 0)
-                pm.getApplicationLabel(appInfo).toString()
-            } catch (e: Exception) {
-                blockedPackage.substringAfterLast(".")
-            }
-        }
+        applyIntent(intent)
 
         setContent {
             MyApplicationTheme(darkTheme = true) { // Force Dark Theme
@@ -88,11 +104,11 @@ class BlockActivity : ComponentActivity() {
                     val app = application as FocusApplication
                     val activeSession by app.repository.activeSession.collectAsState(initial = null)
 
-                    if (isContentLevel) {
+                    if (isContentLevelState) {
                         ContentBlockedScreen(
-                            contentType = contentType,
+                            contentType = contentTypeState,
                             activeSession = activeSession,
-                            fallbackEndTime = fallbackEndTime,
+                            fallbackEndTime = fallbackEndTimeState,
                             onGoBack = {
                                 val service = FocusAccessibilityService.instance
                                 if (service != null) {
@@ -109,13 +125,13 @@ class BlockActivity : ComponentActivity() {
                         )
                     } else {
                         BlockScreenContent(
-                            appName = appLabel,
+                            appName = appLabelState,
                             activeSession = activeSession,
-                            fallbackEndTime = fallbackEndTime,
-                            isLongTerm = isLongTerm,
-                            longTermReason = longTermReason,
-                            longTermEndDate = longTermEndDate,
-                            longTermType = longTermType,
+                            fallbackEndTime = fallbackEndTimeState,
+                            isLongTerm = isLongTermState,
+                            longTermReason = longTermReasonState,
+                            longTermEndDate = longTermEndDateState,
+                            longTermType = longTermTypeState,
                             onReturnHome = {
                                 // Launch home screen
                                 val homeIntent = Intent(Intent.ACTION_MAIN).apply {

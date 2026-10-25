@@ -96,6 +96,7 @@ fun HomeScreen(
     onNavigateToTimer: () -> Unit,
     onNavigateToAppSelection: () -> Unit,
     onNavigateToAppLock: () -> Unit = {},
+    onNavigateToBankingPause: () -> Unit = {},
     onNavigateToBlockDetails: (Int, String) -> Unit,
     onPickWallpaper: () -> Unit = {},
     onClearWallpaper: () -> Unit = {},
@@ -425,6 +426,41 @@ fun HomeScreen(
                                 )
                                 Text(
                                     text = "App Lock",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = onNavigateToBankingPause,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .testTag("banking_pause_button"),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.primary
+                            ),
+                            border = ButtonDefaults.outlinedButtonBorder.copy(
+                                brush = Brush.linearGradient(
+                                    listOf(
+                                        MaterialTheme.colorScheme.primary,
+                                        MaterialTheme.colorScheme.secondary
+                                    )
+                                )
+                            )
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Shield,
+                                    contentDescription = "Banking Pause Icon"
+                                )
+                                Text(
+                                    text = "Banking Pause",
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -1042,6 +1078,7 @@ fun ActiveSessionWidget(
             val elapsed = (TrustedClock.now() - startTime).coerceIn(0L, totalDurationMs)
             progressFraction = elapsed.toFloat() / totalDurationMs.toFloat()
         }
+        onStopSession()
     }
 
     val totalSeconds = timeRemaining / 1000
@@ -1466,7 +1503,7 @@ fun LongTermBlockSection(
                     appBlocks.forEach { block ->
                         val isLocked = now < block.endDate
                         val diff = block.endDate - now
-                        val remainingDays = if (diff <= 0) 0 else (diff / (24 * 60 * 60 * 1000L))
+                        val remainingDays = if (diff <= 0) 0 else ((diff + 24 * 60 * 60 * 1000L - 1) / (24 * 60 * 60 * 1000L))
                         val dateFormatter = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()) }
                         val startDateStr = remember(block.startDate) { dateFormatter.format(Date(block.startDate)) }
                         val endDateStr = remember(block.endDate) { dateFormatter.format(Date(block.endDate)) }
@@ -1686,7 +1723,7 @@ fun LongTermBlockSection(
                       websiteBlocks.forEach { block ->
                           val isLocked = now < block.endDate
                           val diff = block.endDate - now
-                          val remainingDays = if (diff <= 0) 0 else (diff / (24 * 60 * 60 * 1000L))
+                          val remainingDays = if (diff <= 0) 0 else ((diff + 24 * 60 * 60 * 1000L - 1) / (24 * 60 * 60 * 1000L))
                           val dateFormatter = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()) }
                           val startDateStr = remember(block.startDate) { dateFormatter.format(Date(block.startDate)) }
                           val endDateStr = remember(block.endDate) { dateFormatter.format(Date(block.endDate)) }
@@ -3042,6 +3079,9 @@ fun AddLongTermBlockDialog(
                             value = appSearchQuery,
                             onValueChange = {
                                 appSearchQuery = it
+                                if (selectedApp != null && it != selectedApp?.appName) {
+                                    selectedApp = null
+                                }
                                 isAppDropdownExpanded = true
                             },
                             placeholder = { Text("Search and tap to select...", color = Color.White.copy(alpha = 0.4f)) },
@@ -3049,10 +3089,12 @@ fun AddLongTermBlockDialog(
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                             trailingIcon = {
-                                if (selectedApp != null) {
-                                    Icon(imageVector = Icons.Default.CheckCircle, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
-                                } else {
-                                    Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
+                                IconButton(onClick = { isAppDropdownExpanded = !isAppDropdownExpanded }) {
+                                    if (selectedApp != null) {
+                                        Icon(imageVector = Icons.Default.CheckCircle, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                                    } else {
+                                        Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
+                                    }
                                 }
                             }
                         )
@@ -4592,7 +4634,7 @@ fun BlockDetailsScreen(
         } else {
             val isLocked = now < blockInfo.endDate
             val diff = blockInfo.endDate - now
-            val remainingDays = if (diff <= 0) 0 else (diff / (24 * 60 * 60 * 1000L))
+            val remainingDays = if (diff <= 0) 0 else ((diff + 24 * 60 * 60 * 1000L - 1) / (24 * 60 * 60 * 1000L))
             val dateFormatter = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()) }
             val startDateStr = dateFormatter.format(Date(blockInfo.startDate))
             val endDateStr = dateFormatter.format(Date(blockInfo.endDate))
@@ -4791,7 +4833,7 @@ fun DailyDashboardCard(
             val cal2 = java.util.Calendar.getInstance().apply { timeInMillis = session.startTime }
             cal1.get(java.util.Calendar.YEAR) == cal2.get(java.util.Calendar.YEAR) &&
             cal1.get(java.util.Calendar.DAY_OF_YEAR) == cal2.get(java.util.Calendar.DAY_OF_YEAR) &&
-            session.sessionStatus == "Completed"
+            (session.sessionStatus == "Completed" || session.sessionStatus == "Expired")
         }
     }
 

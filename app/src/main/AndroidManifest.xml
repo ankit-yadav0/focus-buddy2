@@ -17,6 +17,11 @@
     <!-- Permission to check active application op status -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 
+    <!-- Banking Pause: lets Focuss Buddy switch its own accessibility service back ON after a banking
+         app (Navi, GPay...) has been closed. Not grantable from the UI: it is granted once over adb
+         (adb shell pm grant <applicationId> android.permission.WRITE_SECURE_SETTINGS). -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
+
     <!-- Lets the Accessibility Service pin itself at foreground priority so
          Android (especially Go Edition's aggressive low-memory killer) is far
          less likely to kill the process while blocking is active. -->
@@ -97,6 +102,21 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- Banking Pause watcher: foreground while the accessibility service is switched off for a banking app -->
+        <service
+            android:name=".service.BankingPauseService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Watches which app is in front while protection is paused for a banking app, then switches protection back on" />
+        </service>
+
+        <!-- Banking Pause dead-man's switch + "Resume now" notification action -->
+        <receiver
+            android:name=".receiver.BankingPauseRecoveryReceiver"
+            android:exported="false" />
 
         <!-- BroadcastReceiver for scheduled strict mode sessions -->
         <receiver

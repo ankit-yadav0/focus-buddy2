@@ -62,6 +62,13 @@ fun StrictModeSetupWizardScreen(
 
     LaunchedEffect(Unit) {
         passwordIsSet = viewModel.hasStrictModePassword()
+        viewModel.getSetting("strict_restriction_editing_mode")?.let { editingMode = it }
+        viewModel.getSetting("strict_restrict_rules_specific")?.toBooleanStrictOrNull()?.let { restrictRulesSpecific = it }
+        viewModel.getSetting("strict_restrict_schedules_specific")?.toBooleanStrictOrNull()?.let { restrictSchedulesSpecific = it }
+        viewModel.getSetting("strict_restrict_uninstall")?.toBooleanStrictOrNull()?.let { restrictUninstall = it }
+        viewModel.getSetting("strict_restrict_settings")?.toBooleanStrictOrNull()?.let { restrictSettings = it }
+        viewModel.getSetting("strict_require_password")?.toBooleanStrictOrNull()?.let { requirePassword = it }
+        viewModel.getSetting("strict_deactivation_method")?.let { deactivationMethod = it }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current

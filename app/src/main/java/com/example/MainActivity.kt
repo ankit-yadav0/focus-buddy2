@@ -57,6 +57,7 @@ import com.example.ui.screens.BlocksProgressScreen
 import com.example.ui.screens.InsightsScreen
 import com.example.ui.screens.ForestGalleryScreen
 import com.example.ui.screens.AppLockScreen
+import com.example.ui.screens.BankingPauseScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.FocusViewModel
 import com.example.viewmodel.FocusViewModelFactory
@@ -86,7 +87,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.text.font.FontWeight
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -331,6 +331,12 @@ fun PermissionRow(
     }
 }
 
+// MainActivity is exported, so any app can send it a "deep_link_route" extra. Only routes the
+// app itself ever sends (the accessibility service's uninstall redirect) are honoured.
+private val ALLOWED_DEEP_LINK_ROUTES = setOf("uninstall_reflection")
+
+private fun sanitizeDeepLink(route: String?): String? = route?.takeIf { it in ALLOWED_DEEP_LINK_ROUTES }
+
 class MainActivity : ComponentActivity() {
 
     private val pendingDeepLinkRoute = mutableStateOf<String?>(null)
@@ -350,7 +356,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingDeepLinkRoute.value = intent.getStringExtra("deep_link_route")
+        pendingDeepLinkRoute.value = sanitizeDeepLink(intent.getStringExtra("deep_link_route"))
         handleUpdateIntent(intent)
     }
 
@@ -362,10 +368,11 @@ class MainActivity : ComponentActivity() {
         if (!intent.getBooleanExtra("start_update_download", false)) return
         val url = intent.getStringExtra("update_download_url") ?: return
         val versionName = intent.getStringExtra("update_version_name") ?: "latest"
-        com.example.update.UpdateManager.startDownload(this, url, versionName)
+        val started = com.example.update.UpdateManager.startDownload(this, url, versionName)
         android.widget.Toast.makeText(
             this,
-            "Downloading update $versionName - you'll get a notification when it's ready to install.",
+            if (started) "Downloading update $versionName - you'll get a notification when it's ready to install."
+            else "Update link rejected (not an official release).",
             android.widget.Toast.LENGTH_LONG
         ).show()
         // Consume so a later recreate()/config change doesn't re-trigger the download.
@@ -424,7 +431,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        pendingDeepLinkRoute.value = intent.getStringExtra("deep_link_route")
+        pendingDeepLinkRoute.value = sanitizeDeepLink(intent.getStringExtra("deep_link_route"))
         handleUpdateIntent(intent)
         lifecycleScope.launch(Dispatchers.Default) {
             try {
@@ -462,8 +469,12 @@ class MainActivity : ComponentActivity() {
                     },
                     confirmButton = {
                         androidx.compose.material3.TextButton(onClick = {
-                            com.example.update.UpdateManager.startDownload(this@MainActivity, pendingUpdate.downloadUrl, pendingUpdate.versionName)
-                            android.widget.Toast.makeText(this@MainActivity, "Downloading update...", android.widget.Toast.LENGTH_LONG).show()
+                            val started = com.example.update.UpdateManager.startDownload(this@MainActivity, pendingUpdate.downloadUrl, pendingUpdate.versionName)
+                            android.widget.Toast.makeText(
+                                this@MainActivity,
+                                if (started) "Downloading update..." else "Update link rejected (not an official release).",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
                             availableUpdate.value = null
                         }) { androidx.compose.material3.Text("Update") }
                     },
@@ -544,11 +555,16 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     } else {
+                        val activeSession by focusViewModel.activeSession.collectAsStateWithLifecycle()
                         var isPasswordGateActive by remember { mutableStateOf(false) }
                         var passwordVerified by remember { mutableStateOf(false) }
 
-                        LaunchedEffect(Unit) {
+                        LaunchedEffect(activeSession) {
                             isPasswordGateActive = focusViewModel.isPasswordGateActive()
+                            while (isPasswordGateActive) {
+                                kotlinx.coroutines.delay(1000L)
+                                isPasswordGateActive = focusViewModel.isPasswordGateActive()
+                            }
                         }
 
                         val gateLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -587,9 +603,14 @@ class MainActivity : ComponentActivity() {
                         }
                         val navBackStackEntry by navController.currentBackStackEntryAsState()
                         val currentRoute = navBackStackEntry?.destination?.route
+                        val isGateShowing = isPasswordGateActive && !passwordVerified
 
-                        DisposableEffect(currentRoute) {
-                            if (currentRoute == "uninstall_reflection" || currentRoute == "strict_override") {
+                        DisposableEffect(currentRoute, isGateShowing) {
+                            if (currentRoute == "uninstall_reflection" ||
+                                currentRoute == "strict_override" ||
+                                currentRoute == "app_lock" ||
+                                isGateShowing
+                            ) {
                                 window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                             } else {
                                 window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -656,6 +677,7 @@ class MainActivity : ComponentActivity() {
                                                     onNavigateToTimer = { navController.navigate("timer") },
                                                     onNavigateToAppSelection = { navController.navigate("app_selection") },
                                                     onNavigateToAppLock = { navController.navigate("app_lock") },
+                                                    onNavigateToBankingPause = { navController.navigate("banking_pause") },
                                                     onNavigateToBlockDetails = { id, type -> navController.navigate("block_details/$type/$id") },
                                                     onPickWallpaper = { launchWallpaperPicker() },
                                                     onClearWallpaper = { removeCustomWallpaper() },
@@ -720,6 +742,12 @@ class MainActivity : ComponentActivity() {
                                                     onBack = { navController.popBackStack() }
                                                 )
                                             }
+                                            composable("banking_pause") {
+                                                BankingPauseScreen(
+                                                    viewModel = focusViewModel,
+                                                    onBack = { navController.popBackStack() }
+                                                )
+                                            }
                                             composable("block_details/{type}/{id}") { backStackEntry ->
                                                 val type = backStackEntry.arguments?.getString("type") ?: ""
                                                 val id = backStackEntry.arguments?.getString("id")?.toIntOrNull() ?: -1
@@ -750,7 +778,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        if (isPasswordGateActive && !passwordVerified) {
+                        if (isGateShowing) {
                             StrictPasswordGate(
                                 viewModel = focusViewModel,
                                 onUnlocked = { passwordVerified = true },

@@ -94,6 +94,17 @@ class FocusAccessibilityService : AccessibilityService() {
             "com.android.intentresolver", "com.android.providers.media.module",
             "com.google.android.providers.media.module"
         )
+
+        @Volatile
+        private var pendingUninstallAllowedUntilMs = 0L
+
+        fun allowPendingUninstall(durationMs: Long = 90_000L) {
+            pendingUninstallAllowedUntilMs = System.currentTimeMillis() + durationMs
+        }
+
+        fun isPendingUninstallAllowed(): Boolean {
+            return System.currentTimeMillis() < pendingUninstallAllowedUntilMs
+        }
     }
 
     private val serviceJob = SupervisorJob()
@@ -105,6 +116,9 @@ class FocusAccessibilityService : AccessibilityService() {
     private var blockedPackages = setOf<String>()
     private var restrictSettingsFullyEnabled = false
     private var restrictUninstallEnabled = false
+    // Banking Pause (see BankingPause.kt): chosen banking apps switch this service off while open.
+    private var bankingPauseEnabled = false
+    private var bankingPackages: Set<String> = emptySet()
     private var longTermBlocks = listOf<LongTermBlock>()
     private var activeWebsitesList = listOf<WebsiteBlock>()
     private var lastContentChangedProcessTime = 0L
@@ -256,6 +270,18 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
+            // Observe Banking Pause settings
+            serviceScope.launch {
+                repository.getSettingFlow("banking_pause_enabled").collectLatest { value ->
+                    bankingPauseEnabled = value?.toBoolean() ?: false
+                }
+            }
+            serviceScope.launch {
+                repository.getSettingFlow("banking_pause_packages").collectLatest { value ->
+                    bankingPackages = BankingPausePolicy.parsePackages(value)
+                }
+            }
+
             // Observe active long-term blocks
             serviceScope.launch {
                 repository.activeLongTermBlocks.collectLatest { blocks ->
@@ -299,6 +325,11 @@ class FocusAccessibilityService : AccessibilityService() {
         }
 
         startQuotaHeartbeat()
+
+        // Back on (re-enabled after a Banking Pause, or switched on by hand): any pause is over. The app
+        // in front was never checked while the service was off (no new window event will arrive for
+        // it), so look at it now - otherwise a blocked app opened during the pause would stay usable.
+        if (BankingPause.onServiceConnected(this)) recheckForegroundSoon()
 
         if (!screenOffReceiverRegistered) {
             try {
@@ -394,6 +425,136 @@ class FocusAccessibilityService : AccessibilityService() {
         return packageName == currentImePackage
     }
 
+    // ---- Strict Mode: Power menu guard ---------------------------------------------
+    // The Power-off / Restart dialog is a SystemUI (or OEM shutdown) window. We detect it
+    // by window class name or by the exact "Power off" button text (rules live in
+    // PowerMenuMatcher), then close it with BACK (+ the legacy close-system-dialogs
+    // broadcast, which only works on Android <= 11 and is wrapped).
+    // NOT blockable without Device Owner: hardware key-combo force reboot, battery death.
+    private var lastPowerMenuDismissAtMs = 0L
+    private var powerMenuRecheckJob: Job? = null
+    private val POWER_MENU_DEBOUNCE_MS = 400L
+
+    private fun isPowerMenuCandidatePackage(pkg: String): Boolean =
+        PowerMenuMatcher.isPackageCandidate(pkg)
+
+    private fun isPowerMenuEvent(event: AccessibilityEvent): Boolean {
+        if (PowerMenuMatcher.isPowerMenuClass(event.className?.toString())) return true
+        return powerMenuTextOnScreen()
+    }
+
+    private fun powerMenuTextOnScreen(): Boolean {
+        val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: return false
+        try {
+            // The active window can still be the app underneath; never BACK an ordinary app
+            // just because it happens to show the words "Power off".
+            if (!PowerMenuMatcher.isPackageCandidate(root.packageName?.toString().orEmpty())) return false
+            for (label in PowerMenuMatcher.LABELS) {
+                val hits = root.findAccessibilityNodeInfosByText(label) ?: continue
+                var matched = false
+                for (n in hits) {
+                    if (!matched && (PowerMenuMatcher.isPowerMenuLabel(n.text?.toString()) ||
+                            PowerMenuMatcher.isPowerMenuLabel(n.contentDescription?.toString()))
+                    ) {
+                        matched = true
+                    }
+                    n.recycle()
+                }
+                if (matched) return true
+            }
+            return false
+        } catch (e: Exception) {
+            return false
+        } finally {
+            root.recycle()
+        }
+    }
+
+    private fun schedulePowerMenuRecheck() {
+        if (powerMenuRecheckJob?.isActive == true) return
+        powerMenuRecheckJob = serviceScope.launch {
+            repeat(2) {
+                delay(180)
+                val strict = isSessionActive && TrustedClock.now() < sessionEndTime && isSessionStrict
+                if (!strict) return@launch
+                if (powerMenuTextOnScreen()) {
+                    dismissPowerMenu()
+                    return@launch
+                }
+            }
+        }
+    }
+
+    private fun dismissPowerMenu() {
+        val now = TrustedClock.now()
+        if (now - lastPowerMenuDismissAtMs < POWER_MENU_DEBOUNCE_MS) return
+        lastPowerMenuDismissAtMs = now
+        try {
+            @Suppress("DEPRECATION")
+            sendBroadcast(Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
+        } catch (e: Exception) {
+            // SecurityException on Android 12+, ignore
+        }
+        try {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+        } catch (e: Exception) {
+            Log.e("FocusService", "Power menu BACK failed", e)
+        }
+        serviceScope.launch {
+            delay(250)
+            if (powerMenuTextOnScreen()) {
+                try { performGlobalAction(GLOBAL_ACTION_BACK) } catch (e: Exception) { }
+            }
+        }
+        serviceScope.launch {
+            try { (application as FocusApplication).repository.incrementBlockedLaunches() }
+            catch (e: Exception) { Log.e("FocusService", "incrementBlockedLaunches failed", e) }
+        }
+    }
+    // ---------------------------------------------------------------------------------
+
+    /**
+     * After a Banking Pause ends, feed the app that is currently in front through the normal
+     * window-state logic once, as if it had just opened. Retries briefly: right after (re)connecting
+     * the window tree may not be readable yet.
+     */
+    private fun recheckForegroundSoon() {
+        serviceScope.launch {
+            for (attempt in 0 until 4) {
+                delay(if (attempt == 0) 250L else 400L)
+                val root = try { rootInActiveWindow } catch (e: Exception) { null }
+                val pkg = try { root?.packageName?.toString() } finally { root?.recycle() }
+                if (pkg != null && pkg != applicationContext.packageName) {
+                    @Suppress("DEPRECATION")
+                    val ev = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+                    ev.packageName = pkg
+                    try {
+                        onAccessibilityEvent(ev)
+                    } catch (e: Exception) {
+                        Log.e("FocusService", "Foreground re-check failed", e)
+                    } finally {
+                        try { ev.recycle() } catch (e: Exception) { }
+                    }
+                    return@launch
+                }
+            }
+        }
+    }
+
+    /**
+     * Banking Pause must never become a loophole: an app Focuss Buddy is blocking right now, a
+     * launcher, a browser or a content-blocked app can never pause protection, and an App Lock app
+     * gets its PIN prompt first (the pause starts on the event after a correct PIN).
+     */
+    private fun shouldPauseFor(pkg: String): Boolean {
+        if (pkg == applicationContext.packageName) return false
+        val longTermTargets = longTermBlocks.filter { it.type == "APP" }.map { it.target }.toSet()
+        if (!BankingPausePolicy.isEligible(pkg, blockedPackages, longTermTargets)) return false
+        if (isHomeLauncherPackage(pkg)) return false
+        if (lockedPackages.contains(pkg) && unlockedPackage != pkg) return false
+        return true
+    }
+
     private fun isHomeLauncherPackage(packageName: String): Boolean {
         return try {
             val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
@@ -410,6 +571,33 @@ class FocusAccessibilityService : AccessibilityService() {
 
         val now = TrustedClock.now()
         val isStrictModeActive = isSessionActive && now < sessionEndTime && isSessionStrict
+
+        // Strict Mode: block the Power-off / Restart menu (runs before every throttle).
+        if (isStrictModeActive &&
+            eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            isPowerMenuCandidatePackage(packageName)
+        ) {
+            if (isPowerMenuEvent(event)) {
+                dismissPowerMenu()
+            } else {
+                // Menu text may not be painted on the first event - re-check once.
+                schedulePowerMenuRecheck()
+            }
+        }
+
+        // Banking Pause: a chosen banking app (Navi, GPay...) refuses to run next to a user-installed
+        // accessibility service. Switch this service off while it is open; BankingPauseService
+        // switches it back on when the app is left (or at the latest after MAX_PAUSE_MS).
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            bankingPauseEnabled &&
+            bankingPackages.contains(packageName) &&
+            shouldPauseFor(packageName) &&
+            BankingPause.begin(this, packageName)
+        ) {
+            Log.d("FocusService", "Banking Pause: switching service off for $packageName")
+            disableSelf()
+            return
+        }
 
         // Strict-Mode Settings gate: an invisible, text-less touch guard goes up the
         // moment a Settings window opens, so the accessibility/device-admin toggle can't
@@ -452,7 +640,8 @@ class FocusAccessibilityService : AccessibilityService() {
         // If a quota-tracked app is no longer in the foreground, stop the ticker and
         // persist however much time was actually spent in it this session.
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            quotaTrackingPackage != null && quotaTrackingPackage != packageName
+            quotaTrackingPackage != null && quotaTrackingPackage != packageName &&
+            !isTransientSystemPackage(packageName)
         ) {
             stopQuotaTrackingAndPersist()
         }
@@ -504,9 +693,9 @@ class FocusAccessibilityService : AccessibilityService() {
         val readsScreenText = SYSTEM_GUARD_PACKAGES.contains(packageName) ||
             (isStrictModeActive && isContentBlockEnabled(packageName))
         val needsTree = isBrowser || readsScreenText
-        val rootNode = if (needsTree) rootInActiveWindow else null
+        val rootNode = if (needsTree) (try { rootInActiveWindow } catch (e: Exception) { null }) else null
         val usingFallbackSource = needsTree && rootNode == null
-        val nodeToUse = if (needsTree) (rootNode ?: event.source) else null
+        val nodeToUse = if (needsTree) (rootNode ?: try { event.source } catch (e: Exception) { null }) else null
 
         try {
             val screenTexts = mutableListOf<String>()
@@ -567,6 +756,8 @@ class FocusAccessibilityService : AccessibilityService() {
             // screen with an "Uninstall" action visible, or the system package installer's
             // uninstall confirmation appears directly.
             run {
+                if (isPendingUninstallAllowed()) return@run
+
                 // Must be OUR app's uninstall dialog: the app name AND "uninstall" both on screen.
                 // (An OR here also hijacked every other app's uninstall dialog and this app's own
                 // update-install screen, which shows the app name too.)
@@ -690,40 +881,28 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Shorts detection logic
-            // A single loose signal isn't enough on its own: the Shorts *shelf* (a
-            // horizontal row of Shorts previews shown inline on the home/subscriptions
-            // feed, visible without ever opening a Short) can trip a bare class-name or
-            // resource-id match, and "Dislike" appears on every video, Shorts or not.
-            // So we require at least two independent signals to agree before treating
-            // it as the user actually being inside full-screen Shorts/Reels playback.
-            var isShortsDetected = false
-            if (packageName == "com.google.android.youtube") {
-                val hasShortsText = screenTexts.any { it.contains("Shorts", ignoreCase = true) }
-                val hasShortsClass = event.className?.toString()?.lowercase()?.contains("shorts") == true ||
-                                     event.className?.toString()?.lowercase()?.contains("reel") == true
-                val hasShortsId = checkNodeForShortsSpecifics(nodeToUse)
-                val hasShortsDescription = screenTexts.any { it.contains("shorts player", ignoreCase = true) || it.contains("reel player", ignoreCase = true) }
-                val hasRemixAction = screenTexts.any { it.equals("Remix", ignoreCase = true) }
-
-                val signalCount = listOf(hasShortsClass, hasShortsId, hasShortsDescription, hasRemixAction).count { it }
-
-                // hasShortsDescription alone is already a strong, specific signal
-                // ("shorts player" / "reel player" text doesn't show up outside actual
-                // playback), so it's enough by itself. Everything else needs at least
-                // one corroborating signal, and bare "Shorts" text (e.g. the nav tab
-                // label, always visible) never counts as a signal on its own.
-                if (hasShortsDescription || signalCount >= 2 || (hasShortsText && signalCount >= 1)) {
-                    isShortsDetected = true
-                }
-            }
-
             // 4. Content-Level Blocking (YouTube Shorts, Instagram Reels, Snapchat Spotlight)
             // Content-Level Blocking must only be active during Strict Mode.
             if (isStrictModeActive) {
                 val prefs = getSharedPreferences("focuss_buddy_settings", MODE_PRIVATE)
 
                 if (packageName == "com.google.android.youtube" && prefs.getBoolean("youtube_block_shorts", false)) {
+                    // A single loose signal isn't enough on its own: the Shorts *shelf* (a
+                    // horizontal row of Shorts previews shown inline on the home/subscriptions
+                    // feed, visible without ever opening a Short) can trip a bare class-name or
+                    // resource-id match, and "Dislike" appears on every video, Shorts or not.
+                    // So we require at least two independent signals to agree before treating
+                    // it as the user actually being inside full-screen Shorts/Reels playback.
+                    val hasShortsText = screenTexts.any { it.contains("Shorts", ignoreCase = true) }
+                    val hasShortsClass = event.className?.toString()?.lowercase()?.contains("shorts") == true ||
+                                         event.className?.toString()?.lowercase()?.contains("reel") == true
+                    val hasShortsId = checkNodeForShortsSpecifics(nodeToUse)
+                    val hasShortsDescription = screenTexts.any { it.contains("shorts player", ignoreCase = true) || it.contains("reel player", ignoreCase = true) }
+                    val hasRemixAction = screenTexts.any { it.equals("Remix", ignoreCase = true) }
+
+                    val signalCount = listOf(hasShortsClass, hasShortsId, hasShortsDescription, hasRemixAction).count { it }
+                    val isShortsDetected = hasShortsDescription || signalCount >= 2 || (hasShortsText && signalCount >= 1)
+
                     if (isShortsDetected) {
                         Log.d("FocusService", "Content-Level Block: YouTube Shorts detected")
                         triggerContentBlockActivity(packageName, "YouTube Shorts")
@@ -864,13 +1043,18 @@ class FocusAccessibilityService : AccessibilityService() {
 
                     val sessionBlocking = isSessionActive && now < sessionEndTime && blockedPackages.isNotEmpty()
                     val hasAppBlocks = longTermBlocks.any { it.type == "APP" }
-                    if (!sessionBlocking && !hasAppBlocks) continue
+                    if (!sessionBlocking && !hasAppBlocks && quotaTrackingPackage == null) continue
 
-                    val root = rootInActiveWindow ?: continue
+                    val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: continue
                     val fgPackage = root.packageName?.toString()
                     @Suppress("DEPRECATION")
                     root.recycle()
                     if (fgPackage == null || fgPackage == applicationContext.packageName) continue
+
+                    if (quotaTrackingPackage != null && quotaTrackingPackage != fgPackage && !isTransientSystemPackage(fgPackage)) {
+                        stopQuotaTrackingAndPersist()
+                    }
+
                     // A block was just fired and its screen is still loading - don't stack another one.
                     if (now - lastBlockTriggerAtMs < 2_500L) continue
 
@@ -1078,8 +1262,12 @@ class FocusAccessibilityService : AccessibilityService() {
                 val strict = isSessionActive && TrustedClock.now() < sessionEndTime && isSessionStrict
                 if (!strict) break
                 val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: continue
-                if (root.packageName?.toString() != "com.android.settings") break
-                handleSettingsScreen(root, "com.android.settings", appName, TrustedClock.now())
+                try {
+                    if (root.packageName?.toString() != "com.android.settings") break
+                    handleSettingsScreen(root, "com.android.settings", appName, TrustedClock.now())
+                } finally {
+                    root.recycle()
+                }
             }
         }
     }
@@ -1215,11 +1403,13 @@ class FocusAccessibilityService : AccessibilityService() {
 
         val firstSlash = url.indexOf('/')
         val firstQuestion = url.indexOf('?')
+        val firstHash = url.indexOf('#')
         val firstColon = url.indexOf(':')
         
         var endIndex = url.length
         if (firstSlash in 0 until endIndex) endIndex = firstSlash
         if (firstQuestion in 0 until endIndex) endIndex = firstQuestion
+        if (firstHash in 0 until endIndex) endIndex = firstHash
         if (firstColon in 0 until endIndex) endIndex = firstColon
 
         return url.substring(0, endIndex).trim()
@@ -1255,7 +1445,10 @@ class FocusAccessibilityService : AccessibilityService() {
                     id.contains("mozac_browser_toolbar_url_view")
 
             if (isUrlBar) {
-                while (queue.isNotEmpty()) queue.removeFirst().recycle()
+                while (queue.isNotEmpty()) {
+                    val rem = queue.removeFirst()
+                    if (rem !== root) rem.recycle()
+                }
                 return node
             }
 
@@ -1282,14 +1475,16 @@ class FocusAccessibilityService : AccessibilityService() {
 
             val cleanHost = host.removePrefix("www.")
             for (web in blockedWebsites) {
-                val cleanWeb = web.lowercase().trim().removePrefix("http://").removePrefix("https://").removePrefix("www.")
+                val cleanWeb = extractHost(web).removePrefix("www.")
                 if (cleanWeb.isNotEmpty() && (cleanHost == cleanWeb || cleanHost.endsWith("." + cleanWeb))) {
                     return web
                 }
             }
             return null
         } finally {
-            urlBarNode.recycle()
+            if (urlBarNode !== node) {
+                urlBarNode.recycle()
+            }
         }
     }
 
@@ -1298,12 +1493,8 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
-        // No synchronous flush here anymore - a previous version used runBlocking to
-        // force a final quota-progress write, but that risked briefly blocking the
-        // main thread during teardown for marginal benefit. The quota heartbeat now
-        // self-heals within ~3 seconds of any restart regardless of cause, and the
-        // ticker's 2-second interval already caps normal-teardown loss on its own.
         super.onDestroy()
+        removeOverlay()
         if (instance == this) {
             instance = null
         }
@@ -1327,7 +1518,7 @@ class FocusAccessibilityService : AccessibilityService() {
         if (node == null) return false
         val id = node.viewIdResourceName?.lowercase() ?: ""
         if (id.contains(keyword)) {
-            if (!id.contains("tab") && !id.contains("button") && !id.contains("icon")) {
+            if (!id.contains("tab") && !id.contains("button") && !id.contains("icon") && !id.contains("tray")) {
                 return true
             }
         }
@@ -1341,6 +1532,15 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     private fun triggerContentBlockActivity(packageName: String, contentType: String) {
+        val repository = (application as FocusApplication).repository
+        serviceScope.launch {
+            try {
+                repository.incrementBlockedLaunches()
+            } catch (e: Exception) {
+                Log.e("FocusService", "Error incrementing blocked launch", e)
+            }
+        }
+
         lastBlockTriggerAtMs = TrustedClock.now()
         closeBlockedAppThenBlock(packageName)
 
@@ -1349,6 +1549,7 @@ class FocusAccessibilityService : AccessibilityService() {
             putExtra("BLOCKED_PACKAGE", packageName)
             putExtra("IS_CONTENT_LEVEL", true)
             putExtra("CONTENT_TYPE", contentType)
+            putExtra("END_TIME", sessionEndTime)
         }
         startActivity(intent)
     }
@@ -1390,7 +1591,9 @@ class FocusAccessibilityService : AccessibilityService() {
     private fun checkNodeForReelsSpecifics(node: AccessibilityNodeInfo?): Boolean {
         if (node == null) return false
         val id = node.viewIdResourceName?.lowercase() ?: ""
-        if (id.contains("clips") || id.contains("reels") || id.contains("reel_viewer") || id.contains("clips_video_container")) {
+        if ((id.contains("clips_video_container") || id.contains("clips_viewer") || id.contains("reel_viewer") || id.contains("reels_viewer")) &&
+            !id.contains("tab") && !id.contains("button") && !id.contains("icon") && !id.contains("tray")
+        ) {
             return true
         }
         for (i in 0 until node.childCount) {
@@ -1405,7 +1608,7 @@ class FocusAccessibilityService : AccessibilityService() {
     private fun checkNodeForSpotlightSpecifics(node: AccessibilityNodeInfo?): Boolean {
         if (node == null) return false
         val id = node.viewIdResourceName?.lowercase() ?: ""
-        if (id.contains("spotlight")) {
+        if (id.contains("spotlight") && !id.contains("tab") && !id.contains("button") && !id.contains("icon")) {
             return true
         }
         for (i in 0 until node.childCount) {
@@ -1456,19 +1659,25 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     private fun removeOverlay() {
-        // Detach the field right away; only the WindowManager call is posted. Previously the field was
-        // cleared inside the posted runnable, so a new showOverlay() arriving in between saw a
-        // non-null overlayView, skipped adding a fresh cover, and the pending removal then deleted it.
         val view = overlayView ?: return
         overlayView = null
         currentBlockedPackage = null
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
+        val removeAction = {
             try {
-                windowManager.removeView(view)
+                if (view.isAttachedToWindow) {
+                    windowManager.removeViewImmediate(view)
+                } else {
+                    windowManager.removeView(view)
+                }
                 Log.d("FocusService", "Removed overlay view")
             } catch (e: Exception) {
                 Log.e("FocusService", "Failed to remove overlay view", e)
             }
+        }
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            removeAction()
+        } else {
+            android.os.Handler(android.os.Looper.getMainLooper()).post(removeAction)
         }
     }
 

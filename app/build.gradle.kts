@@ -23,19 +23,37 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
+  val localDebugKeystore = file("${rootDir}/debug.keystore")
+  val releaseKeystore = file("${rootDir}/release.keystore")
+  val uploadKeystore = file("${rootDir}/my-upload-key.jks")
+
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      val customKeystorePath = System.getenv("KEYSTORE_PATH")?.takeIf { it.isNotEmpty() }
+      val store = when {
+        customKeystorePath != null -> file(customKeystorePath)
+        releaseKeystore.exists() -> releaseKeystore
+        uploadKeystore.exists() -> uploadKeystore
+        else -> null
+      }
+      if (store != null) {
+        storeFile = store
+        storePassword = System.getenv("STORE_PASSWORD")?.takeIf { it.isNotEmpty() }
+          ?: System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotEmpty() }
+          ?: "android"
+        keyAlias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotEmpty() } ?: "upload"
+        keyPassword = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotEmpty() }
+          ?: System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotEmpty() }
+          ?: "android"
+      }
     }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
+    if (localDebugKeystore.exists()) {
+      create("debugConfig") {
+        storeFile = localDebugKeystore
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
     }
   }
 
@@ -44,10 +62,17 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      val releaseConfig = signingConfigs.findByName("release")
+      if (releaseConfig?.storeFile != null && releaseConfig.storeFile!!.exists()) {
+        signingConfig = releaseConfig
+      } else if (localDebugKeystore.exists()) {
+        signingConfig = signingConfigs.findByName("debugConfig")
+      }
     }
     debug {
-      signingConfig = signingConfigs.getByName("debugConfig")
+      if (localDebugKeystore.exists()) {
+        signingConfig = signingConfigs.getByName("debugConfig")
+      }
     }
   }
   compileOptions {

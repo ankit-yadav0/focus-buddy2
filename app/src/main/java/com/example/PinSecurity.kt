@@ -79,6 +79,7 @@ object PinSecurity {
     private fun toHex(b: ByteArray) = b.joinToString("") { "%02x".format(it) }
 
     private fun fromHex(s: String): ByteArray? = try {
-        ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+        if (s.length % 2 != 0) null
+        else ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
     } catch (e: Exception) { null }
 }

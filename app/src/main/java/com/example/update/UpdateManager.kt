@@ -213,29 +213,40 @@ object UpdateManager {
      * the app being backgrounded and shows its own progress notification.
      * UpdateDownloadReceiver picks up completion and launches the installer.
      */
-    fun startDownload(context: Context, downloadUrl: String, versionName: String) {
-        val safeVersion = versionName.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        val fileName = "focus-buddy-update-$safeVersion.apk"
-        val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-        // Each version downloads to its own file name, so old update APKs (~tens of MB each) used to pile up.
-        downloadsDir?.listFiles { f -> f.name.startsWith("focus-buddy-update-") && f.name.endsWith(".apk") }
-            ?.forEach { it.delete() }
-        val destFile = File(downloadsDir, fileName)
+    fun startDownload(context: Context, downloadUrl: String, versionName: String): Boolean {
+        // MainActivity is exported, so this URL can come from another app's intent extras.
+        if (!ReleaseUrlGuard.isTrusted(downloadUrl, GITHUB_REPO)) {
+            Log.w("UpdateManager", "Refusing download: URL is not a release asset of $GITHUB_REPO")
+            return false
+        }
+        return try {
+            val safeVersion = versionName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val fileName = "focus-buddy-update-$safeVersion.apk"
+            val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return false
+            // Each version downloads to its own file name, so old update APKs (~tens of MB each) used to pile up.
+            downloadsDir.listFiles { f -> f.name.startsWith("focus-buddy-update-") && f.name.endsWith(".apk") }
+                ?.forEach { it.delete() }
+            val destFile = File(downloadsDir, fileName)
 
-        val request = DownloadManager.Request(Uri.parse(downloadUrl))
-            .setTitle("Focuss Buddy update")
-            .setDescription("Downloading version $versionName")
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationUri(Uri.fromFile(destFile))
-            .setAllowedOverMetered(true)
+            val request = DownloadManager.Request(Uri.parse(downloadUrl))
+                .setTitle("Focuss Buddy update")
+                .setDescription("Downloading version $versionName")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationUri(Uri.fromFile(destFile))
+                .setAllowedOverMetered(true)
 
-        val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val downloadId = downloadManager.enqueue(request)
+            val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val downloadId = downloadManager.enqueue(request)
 
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putLong(KEY_PENDING_DOWNLOAD_ID, downloadId)
-            .apply()
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putLong(KEY_PENDING_DOWNLOAD_ID, downloadId)
+                .apply()
+            true
+        } catch (e: Exception) {
+            Log.e("UpdateManager", "Failed to start download", e)
+            false
+        }
     }
 
     /**

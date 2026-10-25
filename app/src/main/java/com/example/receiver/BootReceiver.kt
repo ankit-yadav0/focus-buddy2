@@ -11,6 +11,7 @@ import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityManager
 import androidx.core.app.NotificationCompat
+import com.example.FocusApplication
 import com.example.MainActivity
 import com.example.R
 import com.example.data.AppDatabase
@@ -34,7 +35,7 @@ class BootReceiver : BroadcastReceiver() {
         Log.d("BootReceiver", "Received broadcast: $action")
         if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED) {
             // Re-anchor the tamper-resistant clock as early as possible after boot.
-            TrustedClock.now(context)
+            val now = TrustedClock.now(context)
             val pendingResult = goAsync()
             receiverScope.launch {
                 try {
@@ -42,9 +43,34 @@ class BootReceiver : BroadcastReceiver() {
                   // 2GB device a cold database open can eat into that, so cap the work well under it
                   // (the finally block below always releases the broadcast).
                   withTimeout(BOOT_WORK_TIMEOUT_MS) {
+                    // A Banking Pause interrupted by a reboot must not leave protection off.
+                    val restoredFromPause = com.example.service.BankingPause.restoreAfterBoot(context)
+
                     val db = AppDatabase.getDatabase(context)
-                    val activeSession = db.focusSessionDao().getActiveSessionSync()
-                    if (activeSession != null && activeSession.isActive && activeSession.isStrict) {
+                    val repository = (context.applicationContext as? FocusApplication)?.repository
+
+                    // Reschedule enabled schedules on boot, and start any schedule whose window is active right now
+                    try {
+                        val enabledSchedules = db.strictScheduleDao().getEnabledSchedulesSync()
+                        com.example.scheduler.AlarmScheduler.rescheduleAll(context, enabledSchedules)
+                        for (schedule in enabledSchedules) {
+                            val remainingMin = com.example.scheduler.AlarmScheduler.getRemainingMinutesInCurrentWindow(schedule)
+                            if (remainingMin != null && remainingMin > 0) {
+                                repository?.startScheduledStrictSession(schedule.id, remainingMin)
+                            }
+                        }
+                        Log.d("BootReceiver", "Rescheduled ${enabledSchedules.size} enabled schedules on boot.")
+                    } catch (e: Exception) {
+                        Log.e("BootReceiver", "Error rescheduling schedules on boot", e)
+                    }
+
+                    var activeSession = db.focusSessionDao().getActiveSessionSync()
+                    if (activeSession != null && activeSession.isActive && now >= activeSession.endTime) {
+                        repository?.stopActiveSession("Expired")
+                        activeSession = db.focusSessionDao().getActiveSessionSync()
+                    }
+
+                    if (activeSession != null && activeSession.isActive && activeSession.isStrict && now < activeSession.endTime) {
                         Log.d("BootReceiver", "Active strict session found during $action. Checking accessibility service.")
                         val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
                         val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
@@ -53,7 +79,12 @@ class BootReceiver : BroadcastReceiver() {
                             sInfo != null && sInfo.packageName == context.packageName && sInfo.name.endsWith("FocusAccessibilityService")
                         } == true
 
-                        if (!isServiceEnabled) {
+                        // With WRITE_SECURE_SETTINGS (Banking Pause setup) the service can simply be switched
+                        // back on; otherwise the user has to do it from the notification below.
+                        val restoredAutomatically = !isServiceEnabled && !restoredFromPause &&
+                            com.example.service.BankingPause.restoreAccessibilityIfPossible(context)
+
+                        if (!isServiceEnabled && !restoredFromPause && !restoredAutomatically) {
                             Log.d("BootReceiver", "Service is NOT enabled. Posting re-grant notification.")
                             val channelId = "focus_buddy_reenable"
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -96,15 +127,6 @@ class BootReceiver : BroadcastReceiver() {
                         }
                     } else {
                         Log.d("BootReceiver", "No active strict session. Accessibility check not required.")
-                    }
-
-                    // Reschedule enabled schedules on boot
-                    try {
-                        val enabledSchedules = db.strictScheduleDao().getEnabledSchedulesSync()
-                        com.example.scheduler.AlarmScheduler.rescheduleAll(context, enabledSchedules)
-                        Log.d("BootReceiver", "Rescheduled ${enabledSchedules.size} enabled schedules on boot.")
-                    } catch (e: Exception) {
-                        Log.e("BootReceiver", "Error rescheduling schedules on boot", e)
                     }
                   }
                 } catch (e: Exception) {

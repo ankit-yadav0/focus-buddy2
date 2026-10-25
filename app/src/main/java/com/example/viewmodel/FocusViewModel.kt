@@ -19,6 +19,7 @@ import com.example.data.WebsiteBlock
 import com.example.data.StrictSchedule
 import com.example.data.LockedApp
 import com.example.scheduler.AlarmScheduler
+import com.example.service.BankingPausePolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,7 +37,8 @@ data class AppInfo(
     val packageName: String,
     val appName: String,
     val isBlocked: Boolean = false,
-    val isLocked: Boolean = false
+    val isLocked: Boolean = false,
+    val isBankingPause: Boolean = false
 )
 
 data class DailyAnalytics(
@@ -98,23 +100,6 @@ class FocusViewModel(
     // is exactly what made it look like the app "couldn't add" more blocks.
     val actionBlockedMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
-    init {
-        viewModelScope.launch(Dispatchers.IO) {
-            val prefs = context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
-            val savedYoutubeShorts = prefs.getBoolean("youtube_block_shorts", false)
-            val savedInstagramReels = prefs.getBoolean("instagram_block_reels", false)
-            val savedSnapchatSpotlight = prefs.getBoolean("snapchat_block_spotlight", false)
-            val savedAccentTheme = prefs.getString("accent_theme", "Phosphor Mint") ?: "Phosphor Mint"
-
-            youtubeBlockShorts.value = savedYoutubeShorts
-            instagramBlockReels.value = savedInstagramReels
-            snapchatBlockSpotlight.value = savedSnapchatSpotlight
-            accentTheme.value = savedAccentTheme
-
-            _isInitialized.value = true
-        }
-    }
-
     private val _installedApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val installedApps = _installedApps.asStateFlow()
 
@@ -164,12 +149,36 @@ class FocusViewModel(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // --- Banking Pause (service switches itself off while a chosen banking app is open) ---
+
+    val bankingPauseEnabled: StateFlow<Boolean> = repository.getSettingFlow("banking_pause_enabled")
+        .map { it?.toBoolean() ?: false }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val bankingPackages: StateFlow<Set<String>> = repository.getSettingFlow("banking_pause_packages")
+        .map { BankingPausePolicy.parsePackages(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
     // Phase 2 flows
     val allLongTermBlocks: StateFlow<List<LongTermBlock>> = repository.allLongTermBlocks
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val activeLongTermBlocks: StateFlow<List<LongTermBlock>> = repository.activeLongTermBlocks
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Installed apps that MAY be paused for (blocked apps, long-term blocked apps, browsers, social/system apps are left out). */
+    val bankingPauseListState: StateFlow<List<AppInfo>> = combine(_installedApps, bankingPackages, blockedApps, activeLongTermBlocks) { installed, chosen, blocked, longTerm ->
+        val blockedPkgs = blocked.map { it.packageName }.toSet()
+        val longTermTargets = longTerm.filter { it.type == "APP" && it.isActive }.map { it.target }.toSet()
+        installed
+            .filter { it.packageName != context.packageName && BankingPausePolicy.isEligible(it.packageName, blockedPkgs, longTermTargets) }
+            .map { it.copy(isBankingPause = chosen.contains(it.packageName)) }
+            .sortedWith(
+                compareByDescending<AppInfo> { it.isBankingPause }
+                    .thenByDescending { BankingPausePolicy.SUGGESTED_PACKAGES.contains(it.packageName) }
+                    .thenBy { it.appName.lowercase() }
+            )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val allWebsiteBlocks: StateFlow<List<WebsiteBlock>> = repository.allWebsiteBlocks
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -268,8 +277,13 @@ class FocusViewModel(
         viewModelScope.launch {
             if (isSchedulesEditingLocked()) return@launch
             val id = repository.addSchedule(schedule)
-            if (schedule.isEnabled) {
-                AlarmScheduler.scheduleWindow(context, schedule.copy(id = id.toInt()))
+            val saved = schedule.copy(id = id.toInt())
+            if (saved.isEnabled) {
+                AlarmScheduler.scheduleWindow(context, saved)
+                val remainingMin = AlarmScheduler.getRemainingMinutesInCurrentWindow(saved)
+                if (remainingMin != null && remainingMin > 0) {
+                    repository.startScheduledStrictSession(saved.id, remainingMin)
+                }
             }
         }
     }
@@ -281,6 +295,10 @@ class FocusViewModel(
             AlarmScheduler.cancelWindow(context, schedule.id)
             if (schedule.isEnabled) {
                 AlarmScheduler.scheduleWindow(context, schedule)
+                val remainingMin = AlarmScheduler.getRemainingMinutesInCurrentWindow(schedule)
+                if (remainingMin != null && remainingMin > 0) {
+                    repository.startScheduledStrictSession(schedule.id, remainingMin)
+                }
             }
         }
     }
@@ -368,7 +386,7 @@ class FocusViewModel(
             val successRate = if (total == 0) 0 else ((completed + expired) * 100 / total)
             DailyAnalytics(
                 totalActualFocusTimeSeconds = totalActualSeconds,
-                completedSessions = completed,
+                completedSessions = completed + expired,
                 endedEarlySessions = endedEarly,
                 expiredSessions = expired,
                 successRate = successRate
@@ -462,14 +480,14 @@ class FocusViewModel(
             val todaySessionsCompleted = todaySessions.count { it.sessionStatus == "Completed" || it.sessionStatus == "Expired" }
             val todaySessionsEndedEarly = todaySessions.count { it.sessionStatus == "Ended Early" }
 
-            val weeklySessions = sessions.filter { it.startTime in weekStart..TrustedClock.now() }
+            val weeklySessions = sessions.filter { it.startTime in weekStart..TrustedClock.now() && !it.isActive && it.sessionStatus != "Active" }
             val weeklyActualSeconds = weeklySessions.sumOf { it.actualDurationSeconds }
             val weeklyFocusHours = weeklyActualSeconds / 3600f
             val weeklySessionsCount = weeklySessions.size
             val weeklyCompleted = weeklySessions.count { it.sessionStatus == "Completed" || it.sessionStatus == "Expired" }
             val weeklySuccessRate = if (weeklySessionsCount == 0) 0 else (weeklyCompleted * 100 / weeklySessionsCount)
 
-            val monthlySessions = sessions.filter { it.startTime in monthStart..TrustedClock.now() }
+            val monthlySessions = sessions.filter { it.startTime in monthStart..TrustedClock.now() && !it.isActive && it.sessionStatus != "Active" }
             val monthlyActualSeconds = monthlySessions.sumOf { it.actualDurationSeconds }
             val monthlyFocusHours = monthlyActualSeconds / 3600f
             val longestSessionSeconds = monthlySessions.maxOfOrNull { it.actualDurationSeconds } ?: 0L
@@ -547,7 +565,10 @@ class FocusViewModel(
                 loopCal.add(java.util.Calendar.DAY_OF_YEAR, -i)
                 val dateStr = sdfDate.format(loopCal.time)
                 
-                val daySessions = sessions.filter { sdfDate.format(java.util.Date(it.startTime)) == dateStr }
+                val daySessions = sessions.filter {
+                    sdfDate.format(java.util.Date(it.startTime)) == dateStr &&
+                        !it.isActive && it.sessionStatus != "Active"
+                }
                 val hasCompleted = daySessions.any { it.sessionStatus == "Completed" || it.sessionStatus == "Expired" }
                 val hasMissed = daySessions.isNotEmpty() && !hasCompleted
                 
@@ -595,50 +616,56 @@ class FocusViewModel(
             }
         }
 
-        // Load accent theme setting from the database
-        viewModelScope.launch {
-            repository.getSetting("accent_theme")?.let { savedTheme ->
-                accentTheme.value = savedTheme
-            }
-        }
+        // Load settings in deterministic order and then track Strict Mode session transitions
+        // using a persisted flag so app restarts don't overwrite the pre-Strict-Mode backup.
+        viewModelScope.launch(Dispatchers.IO) {
+            val prefs = context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
+            val savedYoutubeShorts = prefs.getBoolean("youtube_block_shorts", false)
+            val savedInstagramReels = prefs.getBoolean("instagram_block_reels", false)
+            val savedSnapchatSpotlight = prefs.getBoolean("snapchat_block_spotlight", false)
+            val dbAccentTheme = try { repository.getSetting("accent_theme") } catch (e: Exception) { null }
+            val savedAccentTheme = dbAccentTheme ?: prefs.getString("accent_theme", "Phosphor Mint") ?: "Phosphor Mint"
 
-        // Track Strict Mode session transitions to back up / restore setting states
-        viewModelScope.launch {
-            var wasStrictModeActive = false
+            youtubeBlockShorts.value = savedYoutubeShorts
+            instagramBlockReels.value = savedInstagramReels
+            snapchatBlockSpotlight.value = savedSnapchatSpotlight
+            accentTheme.value = savedAccentTheme
+
+            _isInitialized.value = true
+
+            var wasStrictModeActive = prefs.getBoolean("was_strict_mode_active", false)
             activeSession.collect { session ->
                 val now = TrustedClock.now()
                 val isStrictActive = session?.let { it.isActive && it.isStrict && now < it.endTime } ?: false
-                
+
                 if (isStrictActive && !wasStrictModeActive) {
                     // Strict Mode just started! Save the state.
-                    val prefs = context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
                     prefs.edit()
                         .putBoolean("saved_youtube_block_shorts", youtubeBlockShorts.value)
                         .putBoolean("saved_instagram_block_reels", instagramBlockReels.value)
                         .putBoolean("saved_snapchat_block_spotlight", snapchatBlockSpotlight.value)
+                        .putBoolean("was_strict_mode_active", true)
                         .apply()
                 } else if (!isStrictActive && wasStrictModeActive) {
                     // Strict Mode just ended! Restore the saved state.
-                    val prefs = context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
                     val savedShorts = prefs.getBoolean("saved_youtube_block_shorts", youtubeBlockShorts.value)
                     val savedReels = prefs.getBoolean("saved_instagram_block_reels", instagramBlockReels.value)
                     val savedSpotlight = prefs.getBoolean("saved_snapchat_block_spotlight", snapchatBlockSpotlight.value)
-                    
+
                     youtubeBlockShorts.value = savedShorts
                     instagramBlockReels.value = savedReels
                     snapchatBlockSpotlight.value = savedSpotlight
-                    
+
                     prefs.edit()
                         .putBoolean("youtube_block_shorts", savedShorts)
                         .putBoolean("instagram_block_reels", savedReels)
                         .putBoolean("snapchat_block_spotlight", savedSpotlight)
+                        .putBoolean("was_strict_mode_active", false)
                         .apply()
                 }
                 wasStrictModeActive = isStrictActive
             }
         }
-
-
     }
 
     private fun checkAndCleanupExpiredSession() {
@@ -660,11 +687,13 @@ class FocusViewModel(
                         addCategory(Intent.CATEGORY_LAUNCHER)
                     }
                     val resolvedInfos = pm.queryIntentActivities(mainIntent, 0)
-                    resolvedInfos.map { info ->
-                        val packageName = info.activityInfo.packageName
-                        val appName = info.loadLabel(pm).toString()
-                        AppInfo(packageName, appName)
-                    }.distinctBy { it.packageName }.sortedBy { it.appName }
+                    resolvedInfos
+                        .filter { it.activityInfo.packageName != context.packageName }
+                        .map { info ->
+                            val packageName = info.activityInfo.packageName
+                            val appName = info.loadLabel(pm).toString()
+                            AppInfo(packageName, appName)
+                        }.distinctBy { it.packageName }.sortedBy { it.appName }
                 } catch (e: Exception) {
                     emptyList()
                 }
@@ -693,7 +722,7 @@ class FocusViewModel(
     // --- App Lock (PIN-gated apps) ---
 
     suspend fun hasAppLockPin(): Boolean {
-        return repository.getSetting("app_lock_pin_hash") != null
+        return !repository.getSetting("app_lock_pin_hash").isNullOrBlank()
     }
 
     suspend fun setAppLockPin(pin: String) {
@@ -724,6 +753,37 @@ class FocusViewModel(
             } else {
                 repository.addLockedApp(LockedApp(app.packageName, app.appName))
             }
+        }
+    }
+
+    /** Banking Pause settings are frozen while a Strict Mode session runs (else "add Instagram" would be a bypass). */
+    private suspend fun bankingEditsLocked(): Boolean {
+        val active = repository.getActiveSessionSync()
+        return active?.let { it.isActive && it.isStrict && TrustedClock.now() < it.endTime } ?: false
+    }
+
+    fun setBankingPauseEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            if (bankingEditsLocked()) return@launch
+            repository.saveSetting("banking_pause_enabled", enabled.toString())
+        }
+    }
+
+    fun toggleBankingApp(app: AppInfo) {
+        viewModelScope.launch {
+            if (bankingEditsLocked()) return@launch
+            val blockedPkgs = repository.getBlockedAppsList().map { it.packageName }.toSet()
+            val longTermTargets = repository.getActiveLongTermBlocksList()
+                .filter { it.type == "APP" && it.isActive }
+                .map { it.target }
+                .toSet()
+            val current = BankingPausePolicy.parsePackages(repository.getSetting("banking_pause_packages"))
+            val updated = when {
+                current.contains(app.packageName) -> current - app.packageName
+                BankingPausePolicy.isEligible(app.packageName, blockedPkgs, longTermTargets) -> current + app.packageName
+                else -> current
+            }
+            repository.saveSetting("banking_pause_packages", BankingPausePolicy.serializePackages(updated))
         }
     }
 
@@ -779,7 +839,12 @@ class FocusViewModel(
         viewModelScope.launch {
             while (true) {
                 try {
-                    repository.deactivateExpiredBlocks(TrustedClock.now())
+                    val now = TrustedClock.now()
+                    repository.deactivateExpiredBlocks(now)
+                    val active = repository.getActiveSessionSync()
+                    if (active != null && active.isActive && now >= active.endTime) {
+                        repository.stopActiveSession("Expired")
+                    }
                 } catch (e: Exception) {
                     Log.e("FocusViewModel", "Error deactivating expired blocks", e)
                 }
@@ -799,6 +864,14 @@ class FocusViewModel(
         if (slashIndex != -1) {
             clean = clean.substring(0, slashIndex)
         }
+        val questionIndex = clean.indexOf('?')
+        if (questionIndex != -1) {
+            clean = clean.substring(0, questionIndex)
+        }
+        val hashIndex = clean.indexOf('#')
+        if (hashIndex != -1) {
+            clean = clean.substring(0, hashIndex)
+        }
         val colonIndex = clean.indexOf(':')
         if (colonIndex != -1) {
             clean = clean.substring(0, colonIndex)
@@ -806,7 +879,7 @@ class FocusViewModel(
         if (clean.startsWith("www.")) {
             clean = clean.substring(4)
         }
-        return clean
+        return clean.trim()
     }
 
     // Long Term Block operations
@@ -940,7 +1013,7 @@ class FocusViewModel(
                     val splitter = TextUtils.SimpleStringSplitter(':')
                     splitter.setString(settingValue)
                     while (splitter.hasNext()) {
-                        val accessService = splitter.hasNext().let { splitter.next() }
+                        val accessService = splitter.next()
                         if (accessService.contains(context.packageName) && accessService.contains("FocusAccessibilityService")) {
                             return true
                         }
