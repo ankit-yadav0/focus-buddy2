@@ -1,29 +1,25 @@
 package com.example.ui.theme
 
 import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-
-import androidx.compose.runtime.collectAsState
 import com.example.ui.helper.SmartNightModeManager
 
-// Precision Instrument base scheme - the app's default look. Deep ink-navy,
-// phosphor-mint as the signature accent, amber as secondary, red reserved
-// for the Material "error" role (which lines up with blocked/strict states).
+// Cozy Lofi Night-Study (Espresso & Sunset Amber) base scheme - Design 6 default look.
 private val InstrumentDarkColors = darkColorScheme(
     primary = Phosphor,
-    onPrimary = Void,
+    onPrimary = Color(0xFF1A1108),
     secondary = Amber,
-    onSecondary = Void,
-    tertiary = Phosphor,
-    onTertiary = Void,
+    onSecondary = Color(0xFF1A1108),
+    tertiary = Color(0xFFFFCC80),
+    onTertiary = Color(0xFF1A1108),
     background = Void,
     onBackground = TextPrimary,
     surface = Panel,
@@ -38,20 +34,18 @@ private val InstrumentDarkColors = darkColorScheme(
     onErrorContainer = Alert
 )
 
-// Even more austere variant used when auto night-mode is active - pushes the
-// background closer to true black to save battery on AMOLED screens and cut
-// glare late at night, while keeping the same phosphor/amber accent identity.
+// Deeper late-night espresso variant used when Smart Night Mode is active (10 PM - 6 AM).
 private val InstrumentNightColors = darkColorScheme(
     primary = Phosphor,
-    onPrimary = Color.Black,
+    onPrimary = Color(0xFF140C04),
     secondary = Amber,
-    onSecondary = Color.Black,
-    tertiary = Phosphor,
-    background = Color(0xFF000000),
+    onSecondary = Color(0xFF140C04),
+    tertiary = Color(0xFFFFCC80),
+    background = Color(0xFF110D13),
     onBackground = TextPrimary,
-    surface = Color(0xFF090A0C),
+    surface = Color(0xFF1B141E),
     onSurface = TextPrimary,
-    surfaceVariant = Color(0xFF12141A),
+    surfaceVariant = Color(0xFF251B28),
     onSurfaceVariant = TextSecondary,
     outline = Hairline,
     error = Alert,
@@ -61,47 +55,42 @@ private val InstrumentNightColors = darkColorScheme(
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFF0F6E56),
+    primary = Color(0xFFD9822B),
     onPrimary = Color.White,
-    secondary = Color(0xFFB5730B),
+    secondary = Color(0xFFB55D35),
     onSecondary = Color.White,
-    background = Color(0xFFF4F6F5),
-    onBackground = Color(0xFF171D1A),
+    background = Color(0xFFFBF7F0),
+    onBackground = Color(0xFF231924),
     surface = Color.White,
-    onSurface = Color(0xFF171D1A),
+    onSurface = Color(0xFF231924),
     error = Color(0xFFA32D2D),
     onError = Color.White
 )
 
-/**
- * User-selectable accent overrides (Settings > Accent theme). Kept as an
- * existing feature - values updated so each option still reads as a
- * cohesive, deliberate palette against the new ink-navy/instrument base
- * rather than clashing with it.
- */
 enum class AccentTheme(
     val displayName: String,
     val primary: Color,
     val secondary: Color,
     val tertiary: Color
 ) {
-    PHOSPHOR_MINT("Phosphor Mint", Phosphor, Amber, Phosphor),
-    OCEAN_BLUE("Ocean Blue", Color(0xFF29B6F6), Amber, Color(0xFF29B6F6)),
-    FOREST_GREEN("Forest Green", Color(0xFF66BB6A), Amber, Color(0xFF66BB6A)),
-    ROYAL_PURPLE("Royal Purple", Color(0xFFAB47BC), Phosphor, Color(0xFFAB47BC)),
-    NEON_CRIMSON("Neon Crimson", Color(0xFFEC407A), Amber, Color(0xFFEC407A)),
+    LOFI_AMBER("Lofi Sunset Amber", Color(0xFFFFB74D), Color(0xFFFF8A65), Color(0xFFFFCC80)),
+    PHOSPHOR_MINT("Phosphor Mint", Color(0xFF3DFFC4), Color(0xFFFFA630), Color(0xFF3DFFC4)),
+    OCEAN_BLUE("Ocean Blue", Color(0xFF29B6F6), Color(0xFFFFB74D), Color(0xFF29B6F6)),
+    FOREST_GREEN("Forest Green", Color(0xFF66BB6A), Color(0xFFFFB74D), Color(0xFF66BB6A)),
+    ROYAL_PURPLE("Royal Purple", Color(0xFFAB47BC), Color(0xFFFFB74D), Color(0xFFAB47BC)),
+    NEON_CRIMSON("Neon Crimson", Color(0xFFEC407A), Color(0xFFFFB74D), Color(0xFFEC407A)),
     CYBERPUNK("Cyberpunk", Color(0xFFFF4081), Color(0xFF00E5FF), Color(0xFFD500F9))
 }
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = true, // Default to true - Focuss Buddy is a premium dark theme app
-    accentThemeName: String = "Phosphor Mint",
-    dynamicColor: Boolean = false, // Keep false to maintain our custom visual branding identity
+    darkTheme: Boolean = true,
+    accentThemeName: String = "Lofi Sunset Amber",
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val isNightModeActive = SmartNightModeManager.isNightModeActive.collectAsState().value
-    val accent = AccentTheme.values().find { it.displayName == accentThemeName } ?: AccentTheme.PHOSPHOR_MINT
+    val accent = AccentTheme.values().find { it.displayName == accentThemeName } ?: AccentTheme.LOFI_AMBER
 
     val colorScheme = when {
         isNightModeActive -> InstrumentNightColors.copy(

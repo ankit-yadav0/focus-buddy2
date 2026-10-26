@@ -105,15 +105,47 @@ fun HomeScreen(
     onWallpaperOpacityChange: (Float) -> Unit = {},
     onNavigateToUninstall: () -> Unit = {},
     onNavigateToStrictOverride: () -> Unit = {},
-
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
     val blockedApps by viewModel.blockedApps.collectAsStateWithLifecycle()
+    val dailyAnalytics by viewModel.dailyAnalytics.collectAsStateWithLifecycle()
+    val advancedAnalytics by viewModel.advancedAnalytics.collectAsStateWithLifecycle()
+    val currentSoundMode by viewModel.focusSoundMode.collectAsStateWithLifecycle()
+
+    val youtubeStudyEnabled by viewModel.youtubeStudyMode.collectAsStateWithLifecycle()
+    val whatsappStatusEnabled by viewModel.whatsappBlockStatus.collectAsStateWithLifecycle()
+    val mindfulEnabled by viewModel.mindfulDelayEnabled.collectAsStateWithLifecycle()
+    val mindfulPkgs by viewModel.mindfulDelayPackages.collectAsStateWithLifecycle()
+    val blockedKeywords by viewModel.blockedKeywords.collectAsStateWithLifecycle()
 
     val isStrictModeActive by viewModel.isStrictModeActive.collectAsStateWithLifecycle()
     val showReflectionPrompt by viewModel.showReflectionPrompt.collectAsStateWithLifecycle()
+
+    var selectedQuickMinutes by remember { mutableIntStateOf(25) }
+    var quickStrictSelected by remember { mutableStateOf(false) }
+    var showStrictWizardFromHome by remember { mutableStateOf(false) }
+    var showMindfulDialogFromHome by remember { mutableStateOf(false) }
+    var showKeywordDialogFromHome by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.actionBlockedMessage.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    if (showStrictWizardFromHome) {
+        StrictModeSetupWizardScreen(
+            viewModel = viewModel,
+            onBack = { showStrictWizardFromHome = false },
+            onActivated = {
+                quickStrictSelected = true
+                showStrictWizardFromHome = false
+            }
+        )
+        return
+    }
 
     if (showReflectionPrompt) {
         SessionReflectionPrompt(
@@ -129,7 +161,6 @@ fun HomeScreen(
     var isAccessibilityEnabled by remember { mutableStateOf(viewModel.isAccessibilityServiceEnabled()) }
     var isUsageEnabled by remember { mutableStateOf(viewModel.isUsageStatsPermissionGranted()) }
 
-    // Refresh permission states when app resumes
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -155,32 +186,45 @@ fun HomeScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
+    val lofiAmber = Color(0xFFFFB74D)
+    val lofiCoral = Color(0xFFFF8A65)
+    val lofiCream = Color(0xFFFFF8E7)
+    val lofiEspressoDark = Color(0xFF171219)
+    val lofiEspressoMid = Color(0xFF221824)
+    val lofiCardBg = Color(0xFF281E29)
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = MaterialTheme.colorScheme.surface,
+                drawerContainerColor = Color(0xFF1E1620),
                 modifier = Modifier.width(320.dp)
             ) {
                 Spacer(modifier = Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Focuss Buddy",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 22.sp,
+                        color = lofiCream,
+                        letterSpacing = 0.5.sp
+                    )
+                    Text(text = "🦉", fontSize = 20.sp)
+                }
                 Text(
-                    text = "Focuss Buddy",
-                    fontWeight = FontWeight.Black,
-                    fontSize = 22.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(horizontal = 24.dp)
-                )
-                Text(
-                    text = "Customization & Settings",
+                    text = "Cozy Lofi Study & Protection Settings",
                     fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.5f),
+                    color = lofiAmber.copy(alpha = 0.8f),
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
                 )
 
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = 16.dp, horizontal = 24.dp),
-                    color = Color.White.copy(alpha = 0.1f)
+                    color = lofiAmber.copy(alpha = 0.18f)
                 )
 
                 Column(
@@ -206,11 +250,9 @@ fun HomeScreen(
                         }
                     )
 
+                    AccentThemeCard(viewModel = viewModel)
 
-
-
-
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     UninstallDrawerCard(
                         onUninstallClick = {
@@ -218,73 +260,175 @@ fun HomeScreen(
                             onNavigateToUninstall()
                         }
                     )
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
             }
         }
     ) {
         Scaffold(
-            topBar = {
-                CenterAlignedTopAppBar(
-                    title = {
-                        Text(
-                            text = "Focuss Buddy",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 22.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            letterSpacing = 1.sp
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(
-                            onClick = {
-                                scope.launch {
-                                    drawerState.open()
-                                }
-                            },
-                            modifier = Modifier.testTag("hamburger_menu_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Menu,
-                                contentDescription = "Menu",
-                                tint = Color.White
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = Color.Transparent
-                    )
-                )
-            },
-            containerColor = MaterialTheme.colorScheme.background,
+            containerColor = Color.Transparent,
             modifier = modifier
         ) { innerPadding ->
+            val bgAlpha = if (hasWallpaper) 0.42f else 1.0f
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                lofiEspressoDark.copy(alpha = bgAlpha),
+                                lofiEspressoMid.copy(alpha = bgAlpha),
+                                Color(0xFF120E14).copy(alpha = bgAlpha)
+                            )
+                        )
+                    )
                     .padding(innerPadding)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 24.dp)
+                        .padding(horizontal = 20.dp)
                         .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Live Exam / Goal Countdown Header
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Top Header matching Design 6: "Focuss Buddy" in glowing warm cream + Night Owl badge
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            IconButton(
+                                onClick = { scope.launch { drawerState.open() } },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .testTag("hamburger_menu_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Menu,
+                                    contentDescription = "Menu",
+                                    tint = lofiCream
+                                )
+                            }
+                            Text(
+                                text = "Focuss Buddy",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 28.sp,
+                                color = lofiCream,
+                                style = TextStyle(
+                                    shadow = Shadow(
+                                        color = lofiAmber.copy(alpha = 0.45f),
+                                        offset = Offset(0f, 0f),
+                                        blurRadius = 18f
+                                    )
+                                )
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(lofiCardBg)
+                                .border(1.dp, lofiAmber.copy(alpha = 0.35f), CircleShape)
+                                .clickable { onNavigateToTimer() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = "🦉", fontSize = 26.sp)
+                        }
+                    }
+
+                    // 1. TARGET EXAM Countdown Pill Banner (Exact Design 6 style)
                     ExamCountdownHeaderCard(viewModel = viewModel)
 
-                    // Hero Illustration / Card
-                    HeroBannerCard(blockedCount = blockedApps.size)
+                    // 2. Two Side-by-Side Cozy Stat Cards: "🔥 X Day Streak" & "☕ Xh Ym Studied Today"
+                    val todaySecs = dailyAnalytics.totalActualFocusTimeSeconds
+                    val todayH = todaySecs / 3600L
+                    val todayM = (todaySecs % 3600L) / 60L
+                    val todayTimeFormatted = if (todayH > 0L) "${todayH}h ${todayM}m" else "${todayM}m"
 
-                    // Permission Warning Banner if any is missing
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Left Stat Card: Streak
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(72.dp),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF332623)),
+                            border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.22f))
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(text = "🔥", fontSize = 20.sp)
+                                    Text(
+                                        text = "${advancedAnalytics.currentStreak} Day Streak",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 16.sp,
+                                        color = lofiAmber,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+
+                        // Right Stat Card: Studied Today
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(72.dp),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF352229)),
+                            border = BorderStroke(1.dp, lofiCoral.copy(alpha = 0.22f))
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(text = "☕", fontSize = 18.sp)
+                                    Text(
+                                        text = todayTimeFormatted,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 17.sp,
+                                        color = lofiCoral,
+                                        maxLines = 1
+                                    )
+                                }
+                                Text(
+                                    text = "Studied Today",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    color = lofiCream.copy(alpha = 0.9f)
+                                )
+                            }
+                        }
+                    }
+
+                    // Permission Alert Banner if Accessibility or Usage Stats is missing
                     if (!isAccessibilityEnabled || !isUsageEnabled) {
                         PermissionsAlertCard(
                             isAccessibilityEnabled = isAccessibilityEnabled,
                             isUsageEnabled = isUsageEnabled,
                             onGrantAccessibility = {
-                                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                                context.startActivity(intent)
+                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                             },
                             onGrantUsage = {
                                 val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
@@ -299,192 +443,479 @@ fun HomeScreen(
                         )
                     }
 
-                    // Live active session widget
-                    AnimatedVisibility(
-                        visible = activeSession != null && activeSession?.isActive == true,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically()
+                    // 3. Centerpiece: Glowing Golden-Amber Circular Focus Ring + Starfield + Bonsai Tree
+                    val isSessionRunning = activeSession != null && activeSession?.isActive == true
+                    LofiAmberFocusCenterpiece(
+                        activeSession = activeSession,
+                        selectedMinutes = selectedQuickMinutes,
+                        onSessionExpired = { viewModel.stopActiveSession() }
+                    )
+
+                    // 4. Duration & Mode Pill Selector Row ("15m", "25m", "60m", "Strict") — Exact Design 6
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        activeSession?.let { session ->
-                            val deactivationMethod by viewModel.deactivationMethod.collectAsStateWithLifecycle()
-                            val currentSoundMode by viewModel.focusSoundMode.collectAsStateWithLifecycle()
-                            ActiveSessionWidget(
-                                session = session,
-                                onStopSession = { viewModel.stopActiveSession() },
-                                showOverrideOption = session.isStrict && deactivationMethod == "EXTREME_OVERRIDE",
-                                onOverrideClick = onNavigateToStrictOverride,
-                                soundMode = currentSoundMode,
-                                onSoundModeChange = { viewModel.setFocusSoundMode(it) }
+                        listOf(15, 25, 60).forEach { mins ->
+                            val isSelected = selectedQuickMinutes == mins
+                            LofiSelectablePill(
+                                text = "${mins}m",
+                                selected = isSelected,
+                                onClick = {
+                                    if (!isSessionRunning) {
+                                        selectedQuickMinutes = mins
+                                    }
+                                }
+                            )
+                        }
+                        val strictHighlighted = quickStrictSelected || isStrictModeActive
+                        LofiSelectablePill(
+                            text = "Strict",
+                            selected = strictHighlighted,
+                            onClick = {
+                                if (!isStrictModeActive) {
+                                    if (quickStrictSelected) {
+                                        quickStrictSelected = false
+                                    } else {
+                                        showStrictWizardFromHome = true
+                                    }
+                                }
+                            }
+                        )
+                    }
+
+                    // 5. Offline Focus Sound Pill Row ("Off", "Brown Noise", "40Hz Gamma", "Soft Rain") — Exact Design 6
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FocusSoundGenerator.SoundMode.entries.forEach { mode ->
+                            val isSelected = currentSoundMode == mode
+                            LofiSelectablePill(
+                                text = mode.displayName,
+                                selected = isSelected,
+                                onClick = { viewModel.setFocusSoundMode(mode) }
                             )
                         }
                     }
 
-                    // Content-Level Blocking Settings (Shorts, Study Mode, Reels, Spotlight, WhatsApp/Telegram Status)
-                    ContentLevelBlockingCard(viewModel = viewModel)
-
-                    // Morning "First Task" Lock (5 AM - 9 AM)
-                    MorningFirstTaskLockCard(viewModel = viewModel)
-
-                    // Mindful Launch Delay (7-Second Breathing Gate)
-                    MindfulLaunchDelayCard(viewModel = viewModel)
-
-                    // Keyword & Topic Blocker (Browser + YouTube)
-                    KeywordTopicBlockerCard(viewModel = viewModel)
-
-                    // Accent Theme Settings
-                    AccentThemeCard(viewModel = viewModel)
-
-                    // Quick Actions Title
-                    Text(
-                        text = "Session Quick Actions",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // Action Buttons
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 32.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
+                    // 6. Primary Golden-Amber Pill Button: "Start Focus Session" (or Active Session Controls)
+                    if (!isSessionRunning) {
                         Button(
-                            onClick = onNavigateToTimer,
+                            onClick = {
+                                viewModel.startFocusSession(
+                                    minutes = selectedQuickMinutes,
+                                    isStrict = quickStrictSelected,
+                                    totalMs = selectedQuickMinutes * 60 * 1000L
+                                )
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(56.dp)
                                 .testTag("start_focus_session_button"),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(28.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            )
+                                containerColor = lofiAmber,
+                                contentColor = Color(0xFF1A1108)
+                            ),
+                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
                         ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PlayArrow,
-                                    contentDescription = "Start Icon"
-                                )
-                                Text(
-                                    text = "Start Focus Session",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            Text(
+                                text = "Start Focus Session",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
                         }
 
+                        TextButton(
+                            onClick = onNavigateToTimer,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "Custom Timer & Schedules →",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = lofiAmber.copy(alpha = 0.85f)
+                            )
+                        }
+                    } else {
+                        val session = activeSession!!
+                        val deactivationMethod by viewModel.deactivationMethod.collectAsStateWithLifecycle()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            if (!session.isStrict) {
+                                Button(
+                                    onClick = { viewModel.stopActiveSession() },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(54.dp)
+                                        .testTag("stop_session_icon_button"),
+                                    shape = RoundedCornerShape(27.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error,
+                                        contentColor = Color.White
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Stop, contentDescription = "Stop")
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Stop Focus Session", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                                }
+                            } else {
+                                Button(
+                                    onClick = {
+                                        if (deactivationMethod == "EXTREME_OVERRIDE") {
+                                            onNavigateToStrictOverride()
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(54.dp)
+                                        .testTag("start_focus_session_button"),
+                                    shape = RoundedCornerShape(27.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF3A2428),
+                                        contentColor = lofiAmber
+                                    ),
+                                    border = BorderStroke(1.5.dp, lofiAmber.copy(alpha = 0.7f))
+                                ) {
+                                    Icon(Icons.Default.Lock, contentDescription = "Strict Active", modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (deactivationMethod == "EXTREME_OVERRIDE") "Strict Mode Active • Override" else "Strict Mode Locked",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 15.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 7. Exact Design 6 2x2 Bento Grid with Golden-Amber Borders
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            // Top-Left: YouTube Study Mode
+                            LofiBentoFeatureCard(
+                                title = "YouTube\nStudy Mode",
+                                subtitle = if (youtubeStudyEnabled) "ON • Lecture Only" else "Tap to enable",
+                                isActive = youtubeStudyEnabled,
+                                badgeContent = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(52.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    listOf(Color(0xFF1A243B), Color(0xFF0F1523))
+                                                )
+                                            )
+                                            .border(1.dp, lofiAmber.copy(alpha = 0.35f), RoundedCornerShape(14.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(width = 32.dp, height = 22.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(Color(0xFFE53935)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    if (!isStrictModeActive) {
+                                        viewModel.setYoutubeStudyMode(!youtubeStudyEnabled)
+                                    } else {
+                                        Toast.makeText(context, "Locked while Strict Mode is active.", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            // Top-Right: WhatsApp Chat-Only
+                            LofiBentoFeatureCard(
+                                title = "WhatsApp\nChat-Only",
+                                subtitle = if (whatsappStatusEnabled) "ON • No Status" else "Tap to enable",
+                                isActive = whatsappStatusEnabled,
+                                badgeContent = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(52.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(Color(0xFF332625))
+                                            .border(1.dp, lofiAmber.copy(alpha = 0.35f), RoundedCornerShape(14.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFF3C68F)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Chat,
+                                                contentDescription = null,
+                                                tint = Color(0xFF281C18),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    if (!isStrictModeActive) {
+                                        viewModel.setWhatsappBlockStatus(!whatsappStatusEnabled)
+                                    } else {
+                                        Toast.makeText(context, "Locked while Strict Mode is active.", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            // Bottom-Left: 7s Mindful Gate
+                            LofiBentoFeatureCard(
+                                title = "7s Mindful\nGate",
+                                subtitle = if (mindfulEnabled) "ON • ${mindfulPkgs.size} Apps" else "Tap to configure",
+                                isActive = mindfulEnabled,
+                                badgeContent = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(52.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    listOf(Color(0xFF253C46), Color(0xFF3A5F56))
+                                                )
+                                            )
+                                            .border(1.dp, lofiAmber.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.SelfImprovement,
+                                            contentDescription = null,
+                                            tint = lofiCream,
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                    }
+                                },
+                                onClick = { showMindfulDialogFromHome = true },
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            // Bottom-Right: Keyword Blocker
+                            LofiBentoFeatureCard(
+                                title = "Keyword\nBlocker",
+                                subtitle = if (blockedKeywords.isNotEmpty()) "${blockedKeywords.size} Topics Active" else "Tap to add words",
+                                isActive = blockedKeywords.isNotEmpty(),
+                                badgeContent = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(52.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(Color(0xFF332328))
+                                            .border(1.dp, lofiAmber.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Shield,
+                                            contentDescription = null,
+                                            tint = lofiAmber,
+                                            modifier = Modifier.size(30.dp)
+                                        )
+                                    }
+                                },
+                                onClick = { showKeywordDialogFromHome = true },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    // 8. Secondary Protection Controls & Quick Actions (Scrollable below the Design 6 hero screen)
+                    MorningFirstTaskLockCard(viewModel = viewModel)
+
+                    ContentLevelBlockingCard(viewModel = viewModel)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         OutlinedButton(
                             onClick = onNavigateToAppSelection,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp)
+                                .weight(1f)
+                                .height(48.dp)
                                 .testTag("view_blocked_apps_button"),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.primary
-                            ),
-                            border = ButtonDefaults.outlinedButtonBorder.copy(
-                                brush = Brush.linearGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.primary,
-                                        MaterialTheme.colorScheme.secondary
-                                    )
-                                )
-                            )
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.55f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = lofiCream)
                         ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.AppBlocking,
-                                    contentDescription = "Blocked Apps Icon"
-                                )
-                                Text(
-                                    text = "View Blocked Apps",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            Icon(Icons.Default.AppBlocking, contentDescription = null, tint = lofiAmber, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Apps (${blockedApps.size})", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
                         }
 
                         OutlinedButton(
                             onClick = onNavigateToAppLock,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp)
+                                .weight(1f)
+                                .height(48.dp)
                                 .testTag("app_lock_button"),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.primary
-                            ),
-                            border = ButtonDefaults.outlinedButtonBorder.copy(
-                                brush = Brush.linearGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.primary,
-                                        MaterialTheme.colorScheme.secondary
-                                    )
-                                )
-                            )
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.55f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = lofiCream)
                         ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = "App Lock Icon"
-                                )
-                                Text(
-                                    text = "App Lock",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = lofiAmber, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("App Lock", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
                         }
 
                         OutlinedButton(
                             onClick = onNavigateToBankingPause,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp)
+                                .weight(1f)
+                                .height(48.dp)
                                 .testTag("banking_pause_button"),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.primary
-                            ),
-                            border = ButtonDefaults.outlinedButtonBorder.copy(
-                                brush = Brush.linearGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.primary,
-                                        MaterialTheme.colorScheme.secondary
-                                    )
-                                )
-                            )
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.55f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = lofiCream)
                         ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Shield,
-                                    contentDescription = "Banking Pause Icon"
-                                )
-                                Text(
-                                    text = "Banking Pause",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            Icon(Icons.Default.Shield, contentDescription = null, tint = lofiAmber, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Banking", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(100.dp))
+                    Spacer(modifier = Modifier.height(90.dp))
+                }
+
+                // Single-Step Interactive Dialog for 7s Mindful Gate from Bento Grid
+                if (showMindfulDialogFromHome) {
+                    val appList by viewModel.mindfulDelayListState.collectAsStateWithLifecycle()
+                    var searchQuery by remember { mutableStateOf("") }
+                    val filteredApps = remember(appList, searchQuery) {
+                        if (searchQuery.isBlank()) appList
+                        else appList.filter { it.appName.contains(searchQuery, ignoreCase = true) }
+                    }
+                    AlertDialog(
+                        onDismissRequest = { showMindfulDialogFromHome = false },
+                        containerColor = Color(0xFF241B26),
+                        title = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("7s Mindful Gate", fontWeight = FontWeight.Bold, color = lofiCream, fontSize = 18.sp)
+                                    Text(
+                                        text = "\"Rukiye! Kya ye abhi zaroori hai?\"",
+                                        fontSize = 11.sp,
+                                        color = lofiAmber
+                                    )
+                                }
+                                Switch(
+                                    checked = mindfulEnabled,
+                                    enabled = !(mindfulEnabled && isStrictModeActive),
+                                    onCheckedChange = { viewModel.setMindfulDelayEnabled(it) }
+                                )
+                            }
+                        },
+                        text = {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(360.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "Select apps that will show a 7-second breathing pause + intention check before opening (${mindfulPkgs.size} chosen):",
+                                    fontSize = 12.sp,
+                                    color = lofiCream.copy(alpha = 0.75f)
+                                )
+                                OutlinedTextField(
+                                    value = searchQuery,
+                                    onValueChange = { searchQuery = it },
+                                    placeholder = { Text("Search apps (WhatsApp, Chrome...)") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    items(filteredApps, key = { it.packageName }) { app ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { viewModel.toggleMindfulDelayApp(app) }
+                                                .padding(vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                text = app.appName,
+                                                color = lofiCream,
+                                                fontSize = 14.sp,
+                                                fontWeight = if (app.isMindfulDelay) FontWeight.Bold else FontWeight.Normal,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Checkbox(
+                                                checked = app.isMindfulDelay,
+                                                onCheckedChange = { viewModel.toggleMindfulDelayApp(app) }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Button(onClick = { showMindfulDialogFromHome = false }) {
+                                Text("Done", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    )
+                }
+
+                // Quick Dialog for Keyword Blocker from Bento Grid
+                if (showKeywordDialogFromHome) {
+                    AlertDialog(
+                        onDismissRequest = { showKeywordDialogFromHome = false },
+                        containerColor = Color(0xFF241B26),
+                        title = { Text("Keyword & Topic Blocker", fontWeight = FontWeight.Bold, color = lofiCream) },
+                        text = {
+                            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                                KeywordTopicBlockerCard(viewModel = viewModel)
+                            }
+                        },
+                        confirmButton = {
+                            Button(onClick = { showKeywordDialogFromHome = false }) {
+                                Text("Done", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    )
                 }
 
                 // Collapsible Wallpaper Brightness Adjustment Tray
@@ -575,10 +1006,302 @@ fun HomeScreen(
                     }
                 }
 
-                // Infinite Cyberpunk Neon Hexagon honeycomb Shield Overlay when strict mode is active
                 StrictShieldHexagonVisual(
                     isStrictModeActive = isStrictModeActive,
                     modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun LofiAmberFocusCenterpiece(
+    activeSession: FocusSession?,
+    selectedMinutes: Int,
+    onSessionExpired: () -> Unit
+) {
+    val isRunning = activeSession != null && activeSession.isActive
+    val startTime = activeSession?.startTime ?: 0L
+    val endTime = activeSession?.endTime ?: 0L
+    val totalDurationMs = remember(startTime, endTime, isRunning) {
+        if (isRunning) (endTime - startTime).coerceAtLeast(1L) else selectedMinutes * 60 * 1000L
+    }
+
+    var timeRemainingMs by remember(endTime, isRunning, selectedMinutes) {
+        mutableLongStateOf(
+            if (isRunning) max(0L, endTime - TrustedClock.now()) else selectedMinutes * 60 * 1000L
+        )
+    }
+
+    LaunchedEffect(endTime, isRunning) {
+        if (isRunning) {
+            while (timeRemainingMs > 0L) {
+                kotlinx.coroutines.delay(1000L)
+                timeRemainingMs = max(0L, endTime - TrustedClock.now())
+            }
+            onSessionExpired()
+        }
+    }
+
+    val ringProgress = remember(timeRemainingMs, totalDurationMs, isRunning) {
+        if (!isRunning) {
+            0.78f // Aesthetic golden-amber arc when idle, matching Design 6
+        } else {
+            val elapsed = (totalDurationMs - timeRemainingMs).coerceIn(0L, totalDurationMs)
+            (elapsed.toFloat() / totalDurationMs.toFloat()).coerceIn(0.05f, 1f)
+        }
+    }
+
+    val totalSecs = timeRemainingMs / 1000L
+    val hrs = totalSecs / 3600L
+    val mins = (totalSecs % 3600L) / 60L
+    val secs = totalSecs % 60L
+    val formattedTimer = remember(hrs, mins, secs, isRunning, selectedMinutes) {
+        if (!isRunning) {
+            String.format(Locale.US, "%02d:00", selectedMinutes)
+        } else if (hrs > 0L) {
+            String.format(Locale.US, "%02d:%02d:%02d", hrs, mins, secs)
+        } else {
+            String.format(Locale.US, "%02d:%02d", mins, secs)
+        }
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "lofi_stars")
+    val glowPulse by infiniteTransition.animateFloat(
+        initialValue = 0.75f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "amber_glow_pulse"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(250.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        // Background starfield + glowing golden-amber circular ring
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val ringRadius = size.minDimension * 0.41f
+
+            // Subtle twinkling golden starfield particles around the ring (Design 6 signature detail)
+            val starOffsets = listOf(
+                Triple(-1.35f, -0.78f, 3.5f),
+                Triple(1.28f, -0.72f, 3.2f),
+                Triple(-1.42f, 0.15f, 2.2f),
+                Triple(1.38f, 0.25f, 2.6f),
+                Triple(-1.18f, 0.78f, 2.0f),
+                Triple(1.22f, 0.74f, 3.0f),
+                Triple(-0.95f, -0.95f, 1.8f),
+                Triple(0.98f, -0.92f, 2.0f)
+            )
+            starOffsets.forEachIndexed { idx, (dx, dy, rDp) ->
+                val sx = cx + ringRadius * dx
+                val sy = cy + ringRadius * dy
+                val alpha = ((glowPulse + (idx % 3) * 0.1f).coerceIn(0.35f, 0.95f))
+                drawCircle(
+                    color = Color(0xFFFFD584).copy(alpha = alpha),
+                    radius = rDp.dp.toPx(),
+                    center = Offset(sx, sy)
+                )
+            }
+
+            // Soft radial amber halo behind the ring
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFFFFB74D).copy(alpha = 0.18f * glowPulse),
+                        Color(0xFFFF8A65).copy(alpha = 0.06f),
+                        Color.Transparent
+                    ),
+                    center = Offset(cx, cy),
+                    radius = ringRadius * 1.32f
+                ),
+                radius = ringRadius * 1.32f,
+                center = Offset(cx, cy)
+            )
+
+            // Dark warm espresso inner disc
+            drawCircle(
+                color = Color(0xFF1B141D),
+                radius = ringRadius * 0.92f,
+                center = Offset(cx, cy)
+            )
+
+            val strokePx = 11.dp.toPx()
+            val arcSize = Size(ringRadius * 2f, ringRadius * 2f)
+            val topLeft = Offset(cx - ringRadius, cy - ringRadius)
+
+            // Dim warm amber track ring
+            drawArc(
+                color = Color(0xFF4A3325),
+                startAngle = 0f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = Stroke(width = strokePx, cap = StrokeCap.Round)
+            )
+
+            // Outer soft glow on active progress arc
+            drawArc(
+                color = Color(0xFFFFB74D).copy(alpha = 0.32f * glowPulse),
+                startAngle = -90f,
+                sweepAngle = 360f * ringProgress,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = Stroke(width = strokePx * 1.9f, cap = StrokeCap.Round)
+            )
+
+            // Main Golden-Amber progress arc
+            drawArc(
+                brush = Brush.sweepGradient(
+                    colors = listOf(
+                        Color(0xFFFFA726),
+                        Color(0xFFFFCC80),
+                        Color(0xFFFFB74D)
+                    ),
+                    center = Offset(cx, cy)
+                ),
+                startAngle = -90f,
+                sweepAngle = 360f * ringProgress,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = Stroke(width = strokePx, cap = StrokeCap.Round)
+            )
+        }
+
+        // Center content: Large "25:00" digits + Glowing Bonsai Tree
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(top = 12.dp)
+        ) {
+            Text(
+                text = formattedTimer,
+                fontSize = if (formattedTimer.length > 5) 36.sp else 50.sp,
+                fontWeight = FontWeight.Black,
+                color = Color(0xFFFFF8E7),
+                letterSpacing = 1.sp
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            val dynamicStage = when {
+                !isRunning -> GrowthStage.MATURED
+                timeRemainingMs <= 0L -> GrowthStage.MATURED
+                ringProgress >= 0.50f -> GrowthStage.SAPLING
+                else -> GrowthStage.SEED
+            }
+            Box(
+                modifier = Modifier.size(64.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                PlantVisual(
+                    stage = dynamicStage,
+                    size = 64.dp
+                )
+            }
+            if (isRunning) {
+                Text(
+                    text = if (activeSession?.isStrict == true) "🔒 STRICT FOCUS • ${(ringProgress * 100).toInt()}%" else "FOCUS ACTIVE • ${(ringProgress * 100).toInt()}%",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFFFFB74D),
+                    letterSpacing = 0.8.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LofiSelectablePill(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val lofiAmber = Color(0xFFFFB74D)
+    val lofiCream = Color(0xFFFFF8E7)
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) lofiAmber else Color(0xFF231A24))
+            .border(
+                width = 1.dp,
+                color = if (selected) lofiAmber else Color(0xFF523C35),
+                shape = RoundedCornerShape(50)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+            color = if (selected) Color(0xFF1A1108) else lofiCream
+        )
+    }
+}
+
+@Composable
+private fun LofiBentoFeatureCard(
+    title: String,
+    subtitle: String,
+    isActive: Boolean,
+    badgeContent: @Composable () -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val lofiAmber = Color(0xFFFFB74D)
+    val lofiCream = Color(0xFFFFF8E7)
+    Card(
+        modifier = modifier
+            .height(94.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFF1E1620)
+        ),
+        border = BorderStroke(
+            width = if (isActive) 1.8.dp else 1.2.dp,
+            color = if (isActive) lofiAmber else lofiAmber.copy(alpha = 0.55f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            badgeContent()
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = title,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    lineHeight = 17.sp,
+                    color = lofiCream,
+                    maxLines = 2
+                )
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text = subtitle,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 10.sp,
+                    color = if (isActive) lofiAmber else lofiCream.copy(alpha = 0.55f),
+                    maxLines = 1
                 )
             }
         }
@@ -6999,129 +7722,68 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
 
     var nowWall by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(goalTargetMs) {
-        while (goalTargetMs > 0L) {
+        while (true) {
             kotlinx.coroutines.delay(1000L)
             nowWall = System.currentTimeMillis()
         }
     }
 
-    val remainingMs = max(0L, goalTargetMs - nowWall)
+    val effectiveTitle = if (goalTitle.isNotBlank()) goalTitle.uppercase() else "TARGET EXAM"
+    val effectiveTargetMs = if (goalTargetMs > nowWall) {
+        goalTargetMs
+    } else {
+        // Default 45 Days 12 Hrs 30 Mins preview until user taps to set their exact exam date
+        nowWall + (45L * 24 * 3600 + 12L * 3600 + 30L * 60) * 1000L
+    }
+
+    val remainingMs = max(0L, effectiveTargetMs - nowWall)
     val totalSecs = remainingMs / 1000L
     val days = totalSecs / (24 * 3600)
     val hours = (totalSecs % (24 * 3600)) / 3600
     val minutes = (totalSecs % 3600) / 60
-    val seconds = totalSecs % 60
+
+    val lofiAmber = Color(0xFFFFB74D)
+    val lofiCoral = Color(0xFFFF8A65)
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { showConfigDialog = true },
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+            containerColor = Color(0xFF281C24)
         ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
+        border = BorderStroke(1.5.dp, lofiAmber.copy(alpha = 0.85f))
     ) {
-        if (goalTitle.isBlank() || goalTargetMs <= 0L) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Flag,
-                        contentDescription = "Goal Countdown",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Column {
-                        Text(
-                            text = "Set Exam / Goal Countdown",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Pin JEE, NEET, Semester Exam or your target date at the top",
-                            fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.6f)
-                        )
-                    }
-                }
-                Text(
-                    text = "SET",
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        } else {
-            val targetDateStr = remember(goalTargetMs) {
-                SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(goalTargetMs))
-            }
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Flag,
-                            contentDescription = "Target Exam",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = goalTitle.uppercase(),
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            letterSpacing = 1.2.sp
-                        )
-                    }
-                    Text(
-                        text = "$targetDateStr · EDIT",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White.copy(alpha = 0.5f)
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CountdownUnitBox(value = String.format(Locale.US, "%02d", days), label = "DAYS", modifier = Modifier.weight(1f))
-                    CountdownUnitBox(value = String.format(Locale.US, "%02d", hours), label = "HOURS", modifier = Modifier.weight(1f))
-                    CountdownUnitBox(value = String.format(Locale.US, "%02d", minutes), label = "MINS", modifier = Modifier.weight(1f))
-                    CountdownUnitBox(value = String.format(Locale.US, "%02d", seconds), label = "SECS", modifier = Modifier.weight(1f))
-                }
-            }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "$effectiveTitle • ",
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 14.sp,
+                color = lofiCoral,
+                letterSpacing = 0.5.sp
+            )
+            Text(
+                text = "${days} Days : ${hours} Hrs : ${minutes} Mins",
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                color = lofiAmber
+            )
         }
     }
 
     if (showConfigDialog) {
-        var titleInput by remember { mutableStateOf(if (goalTitle.isNotBlank()) goalTitle else "JEE / Target Exam") }
+        var titleInput by remember { mutableStateOf(if (goalTitle.isNotBlank()) goalTitle else "TARGET EXAM") }
         val defaultTarget = if (goalTargetMs > System.currentTimeMillis()) {
             goalTargetMs
         } else {
-            System.currentTimeMillis() + 60L * 24 * 3600 * 1000L
+            System.currentTimeMillis() + 45L * 24 * 3600 * 1000L
         }
         var selectedDateMs by remember { mutableLongStateOf(defaultTarget) }
         val dateStr = remember(selectedDateMs) {
@@ -7147,7 +7809,7 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf("JEE Mains", "NEET UG", "Semester Exam", "UPSC / GATE").forEach { preset ->
+                        listOf("TARGET EXAM", "JEE Mains", "NEET UG", "Semester Exam", "UPSC / GATE").forEach { preset ->
                             AssistChip(
                                 onClick = { titleInput = preset },
                                 label = { Text(preset, fontSize = 11.sp) }
@@ -7206,7 +7868,7 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
                                 showConfigDialog = false
                             }
                         ) {
-                            Text("Clear", color = MaterialTheme.colorScheme.error)
+                            Text("Reset", color = MaterialTheme.colorScheme.error)
                         }
                     }
                     TextButton(onClick = { showConfigDialog = false }) {
@@ -7214,31 +7876,6 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
                     }
                 }
             }
-        )
-    }
-}
-
-@Composable
-private fun CountdownUnitBox(value: String, label: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
-            .padding(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = value,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Black,
-            fontFamily = FontFamily.Monospace,
-            color = Color.White
-        )
-        Text(
-            text = label,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White.copy(alpha = 0.5f),
-            letterSpacing = 1.sp
         )
     }
 }

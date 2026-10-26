@@ -107,7 +107,7 @@ fun StrictPasswordGate(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF121212))
+            .background(Color(0xFF171219))
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -115,7 +115,7 @@ fun StrictPasswordGate(
         Card(
             modifier = Modifier.fillMaxWidth().testTag("strict_password_gate_card"),
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF241B26)),
             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
         ) {
             Column(
@@ -126,7 +126,7 @@ fun StrictPasswordGate(
                 Icon(
                     imageVector = Icons.Default.Lock,
                     contentDescription = "Locked",
-                    tint = Color(0xFF3DFFC4),
+                    tint = Color(0xFFFFB74D),
                     modifier = Modifier.size(56.dp)
                 )
                 Text(
@@ -171,7 +171,7 @@ fun StrictPasswordGate(
                         }
                     },
                     modifier = Modifier.fillMaxWidth().height(48.dp).testTag("strict_password_unlock_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3DFFC4), contentColor = Color.Black),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB74D), contentColor = Color.Black),
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("Unlock", fontWeight = FontWeight.Bold)
@@ -199,7 +199,7 @@ fun LaunchEnforcementGate(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF121212))
+            .background(Color(0xFF171219))
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -208,7 +208,7 @@ fun LaunchEnforcementGate(
             modifier = Modifier.fillMaxWidth().testTag("launch_gate_card"),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
-                containerColor = Color(0xFF1E1E1E)
+                containerColor = Color(0xFF241B26)
             ),
             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
         ) {
@@ -220,7 +220,7 @@ fun LaunchEnforcementGate(
                 Icon(
                     imageVector = Icons.Default.Delete, // visual lock / shield
                     contentDescription = "Lock Icon",
-                    tint = Color(0xFF3DFFC4),
+                    tint = Color(0xFFFFB74D),
                     modifier = Modifier.size(64.dp)
                 )
 
@@ -311,7 +311,7 @@ fun PermissionRow(
                 text = if (isGranted) "Status: ACTIVE" else "Status: INACTIVE",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (isGranted) Color(0xFF3DFFC4) else Color(0xFFFF5252)
+                color = if (isGranted) Color(0xFFFFB74D) else Color(0xFFFF5252)
             )
         }
         Spacer(modifier = Modifier.width(8.dp))
@@ -319,7 +319,7 @@ fun PermissionRow(
             onClick = onGrant,
             enabled = !isGranted,
             colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF3DFFC4),
+                containerColor = Color(0xFFFFB74D),
                 contentColor = Color.Black,
                 disabledContainerColor = Color.White.copy(alpha = 0.1f),
                 disabledContentColor = Color.White.copy(alpha = 0.3f)
@@ -491,11 +491,11 @@ class MainActivity : ComponentActivity() {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color(0xFF121212)),
+                        .background(Color(0xFF171219)),
                     contentAlignment = Alignment.Center
                 ) {
                     androidx.compose.material3.CircularProgressIndicator(
-                        color = Color(0xFF3DFFC4)
+                        color = Color(0xFFFFB74D)
                     )
                 }
             } else {

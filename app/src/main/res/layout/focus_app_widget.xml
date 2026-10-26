@@ -19,8 +19,8 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:letterSpacing="0.08"
-            android:text="FOCUSS BUDDY"
-            android:textColor="#FF3DFFC4"
+            android:text="FOCUSS BUDDY 🦉"
+            android:textColor="#FFFFB74D"
             android:textSize="10sp"
             android:textStyle="bold" />
 
@@ -42,7 +42,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="🔥 0d"
-                    android:textColor="#FFFFA630"
+                    android:textColor="#FFFFB74D"
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
@@ -50,7 +50,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="STREAK"
-                    android:textColor="#99FFFFFF"
+                    android:textColor="#B3FFF8E7"
                     android:textSize="9sp" />
             </LinearLayout>
 
@@ -64,15 +64,15 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0m"
-                    android:textColor="#FFFFFFFF"
+                    android:textColor="#FFFF8A65"
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="TODAY'S FOCUS"
-                    android:textColor="#99FFFFFF"
+                    android:text="STUDIED TODAY"
+                    android:textColor="#B3FFF8E7"
                     android:textSize="9sp" />
             </LinearLayout>
         </LinearLayout>
@@ -89,7 +89,7 @@
         android:paddingRight="14dp"
         android:paddingBottom="10dp"
         android:text="+ START FOCUS"
-        android:textColor="#FF0A0E16"
+        android:textColor="#FF1A1108"
         android:textSize="11sp"
         android:textStyle="bold" />
 

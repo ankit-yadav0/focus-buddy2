@@ -208,9 +208,9 @@ fun MindfulBreathingGateScreen(
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF0A141D),
-                        Color(0xFF0E1B26),
-                        Color(0xFF070B10)
+                        Color(0xFF171219),
+                        Color(0xFF221824),
+                        Color(0xFF120E14)
                     )
                 )
             )
@@ -224,7 +224,7 @@ fun MindfulBreathingGateScreen(
             modifier = Modifier
                 .padding(top = 16.dp)
                 .clip(RoundedCornerShape(50))
-                .background(Color(0xFF3DFFC4).copy(alpha = 0.15f))
+                .background(Color(0xFFFFB74D).copy(alpha = 0.15f))
                 .padding(horizontal = 24.dp, vertical = 10.dp)
         ) {
             Row(
@@ -234,12 +234,12 @@ fun MindfulBreathingGateScreen(
                 Icon(
                     imageVector = Icons.Default.SelfImprovement,
                     contentDescription = "Mindful Pause",
-                    tint = Color(0xFF3DFFC4),
+                    tint = Color(0xFFFFB74D),
                     modifier = Modifier.size(18.dp)
                 )
                 Text(
                     text = "MINDFUL LAUNCH GATE · 7s PAUSE",
-                    color = Color(0xFF3DFFC4),
+                    color = Color(0xFFFFB74D),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = 1.4.sp
@@ -256,13 +256,13 @@ fun MindfulBreathingGateScreen(
                 modifier = Modifier
                     .size(120.dp)
                     .clip(RoundedCornerShape(60.dp))
-                    .background(Color(0xFF3DFFC4).copy(alpha = if (isReady) 0.22f else 0.10f)),
+                    .background(Color(0xFFFFB74D).copy(alpha = if (isReady) 0.22f else 0.10f)),
                 contentAlignment = Alignment.Center
             ) {
                 if (!isReady) {
                     Text(
                         text = "${secondsLeft}s",
-                        color = Color(0xFF3DFFC4),
+                        color = Color(0xFFFFB74D),
                         fontSize = 40.sp,
                         fontWeight = FontWeight.Black,
                         fontFamily = FontFamily.Monospace
@@ -271,7 +271,7 @@ fun MindfulBreathingGateScreen(
                     Icon(
                         imageVector = Icons.Default.SelfImprovement,
                         contentDescription = "Ready",
-                        tint = Color(0xFF3DFFC4),
+                        tint = Color(0xFFFFB74D),
                         modifier = Modifier.size(56.dp)
                     )
                 }
@@ -319,8 +319,8 @@ fun MindfulBreathingGateScreen(
                             onClick = { onProceedWithReason("Study / Work") },
                             modifier = Modifier.weight(1f).height(50.dp),
                             shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, Color(0xFF3DFFC4).copy(alpha = 0.6f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF3DFFC4))
+                            border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.6f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB74D))
                         ) {
                             Text("📚 Study / Work", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
@@ -341,7 +341,7 @@ fun MindfulBreathingGateScreen(
         Button(
             onClick = onCancelToHome,
             colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF3DFFC4),
+                containerColor = Color(0xFFFFB74D),
                 contentColor = Color(0xFF071510)
             ),
             shape = RoundedCornerShape(16.dp),
@@ -414,9 +414,9 @@ fun BlockScreenContent(
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF0F0C20), // Deep rich space theme background
-                        Color(0xFF15102A),
-                        Color(0xFF0A0714)
+                        Color(0xFF171219), // Deep rich space theme background
+                        Color(0xFF221824),
+                        Color(0xFF120E14)
                     )
                 )
             )
@@ -769,9 +769,9 @@ fun ContentBlockedScreen(
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF0F0C20),
-                        Color(0xFF15102A),
-                        Color(0xFF0A0714)
+                        Color(0xFF171219),
+                        Color(0xFF221824),
+                        Color(0xFF120E14)
                     )
                 )
             )
