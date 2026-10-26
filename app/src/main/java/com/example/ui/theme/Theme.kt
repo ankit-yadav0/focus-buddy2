@@ -37,19 +37,21 @@ private val InstrumentDarkColors = darkColorScheme(
 // Deeper late-night espresso variant used when Smart Night Mode is active (10 PM - 6 AM).
 private val InstrumentNightColors = darkColorScheme(
     primary = Phosphor,
-    onPrimary = Color(0xFF140C04),
+    onPrimary = Color(0xFF1A1108),
     secondary = Amber,
-    onSecondary = Color(0xFF140C04),
+    onSecondary = Color(0xFF1A1108),
     tertiary = Color(0xFFFFCC80),
-    background = Color(0xFF110D13),
+    onTertiary = Color(0xFF1A1108),
+    background = Void,
     onBackground = TextPrimary,
-    surface = Color(0xFF1B141E),
+    surface = Panel,
     onSurface = TextPrimary,
-    surfaceVariant = Color(0xFF251B28),
+    surfaceVariant = PanelElevated,
     onSurfaceVariant = TextSecondary,
     outline = Hairline,
+    outlineVariant = Hairline,
     error = Alert,
-    onError = Color.Black,
+    onError = TextPrimary,
     errorContainer = AlertDim,
     onErrorContainer = Alert
 )

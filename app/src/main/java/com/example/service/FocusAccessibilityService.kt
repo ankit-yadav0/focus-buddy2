@@ -2,41 +2,40 @@ package com.example.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.PixelFormat
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
+import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.example.BlockActivity
-import com.example.MainActivity
 import com.example.FocusApplication
+import com.example.MainActivity
 import com.example.R
 import com.example.TimeUtils
 import com.example.TrustedClock
 import com.example.data.LongTermBlock
 import com.example.data.WebsiteBlock
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import android.provider.Settings
-import android.view.WindowManager
-import android.view.View
-import android.widget.TextView
-import android.view.Gravity
-import android.graphics.Color
-import android.graphics.PixelFormat
-import android.view.ViewGroup
 import java.util.Calendar
 import java.util.concurrent.ConcurrentHashMap
 
@@ -61,10 +60,9 @@ class FocusAccessibilityService : AccessibilityService() {
         // BlockActivity never calls dismissInstantOverlay() (e.g. it fails to launch).
         private const val OVERLAY_SAFETY_TIMEOUT_MS = 4_000L
 
-        // Colour of the text-less backdrop shown while BlockActivity / the PIN screen
-        // loads (same as BlockActivity's top gradient colour).
+        // Colour of the text-less backdrop shown while BlockActivity / the PIN screen loads.
         private const val USE_APP_BACKDROP = true
-        private const val BACKDROP_COLOR = 0xFF0F0C20.toInt()
+        private const val BACKDROP_COLOR = 0xFF171219.toInt()
 
         private const val SETTINGS_CONTENT_THROTTLE_MS = 50L
 
@@ -100,8 +98,7 @@ class FocusAccessibilityService : AccessibilityService() {
             "com.android.settings", "com.android.packageinstaller", "com.google.android.packageinstaller"
         )
 
-        // Windows that pop over a locked app without the user actually leaving it (Play services
-        // dialogs, file / photo pickers, the share sheet).
+        // Windows that pop over a locked app without the user actually leaving it.
         private val EXTRA_TRANSIENT_PACKAGES = setOf(
             "com.google.android.gms", "com.android.documentsui", "com.google.android.documentsui",
             "com.android.intentresolver", "com.android.providers.media.module",
@@ -129,7 +126,6 @@ class FocusAccessibilityService : AccessibilityService() {
     private var blockedPackages = setOf<String>()
     private var restrictSettingsFullyEnabled = false
     private var restrictUninstallEnabled = false
-    // Banking Pause (see BankingPause.kt): chosen banking apps switch this service off while open.
     private var bankingPauseEnabled = false
     private var bankingPackages: Set<String> = emptySet()
     private var longTermBlocks = listOf<LongTermBlock>()
@@ -142,7 +138,13 @@ class FocusAccessibilityService : AccessibilityService() {
     private val mindfulPassUntilMs = ConcurrentHashMap<String, Long>()
     private var blockedKeywordsList: List<String> = emptyList()
     private var morningLockEnabled = false
-    private var maturedSessionsList = listOf<com.example.data.FocusSession>()
+
+    private var lastYouTubeSearchAutoClickMs = 0L
+    private var lastYouTubeFullscreenClickMs = 0L
+    private var lastYouTubeSearchActiveMs = 0L
+    private var lastYouTubeVideoOpenMs = 0L
+    private var lastMorningSessionAutoStartMs = 0L
+    private var youtubeFullscreenHelperJob: Job? = null
 
     // App Lock (PIN-gated apps)
     private var lockedPackages = setOf<String>()
@@ -159,7 +161,6 @@ class FocusAccessibilityService : AccessibilityService() {
     private val quotaPersistMutex = Mutex()
     private val quotaAccountedUntil = HashMap<Int, Long>()
 
-    // Drops App Lock's unlock grant (and stops quota tracking) when the screen turns off.
     private var screenOffReceiverRegistered = false
     private val screenOffReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: Intent?) {
@@ -172,7 +173,6 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
-    // Debounce so the foreground heartbeat doesn't re-fire a block while the previous one is still loading.
     private var lastBlockTriggerAtMs = 0L
 
     private var overlayView: View? = null
@@ -290,15 +290,13 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Observe Morning "First Task" Lock setting & matured sessions
+            // Observe Morning "First Task" Lock (Daily 5:00 AM - 9:00 AM Strict Mode)
             serviceScope.launch {
                 repository.getSettingFlow("morning_lock_enabled").collectLatest { value ->
                     morningLockEnabled = value?.toBoolean() ?: false
-                }
-            }
-            serviceScope.launch {
-                repository.maturedSessions.collectLatest { sessions ->
-                    maturedSessionsList = sessions
+                    if (morningLockEnabled) {
+                        ensureMorningStrictSessionIfInWindow(TrustedClock.now())
+                    }
                 }
             }
 
@@ -473,7 +471,6 @@ class FocusAccessibilityService : AccessibilityService() {
             @Suppress("DEPRECATION")
             sendBroadcast(Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
         } catch (e: Exception) {
-            // SecurityException on Android 12+, ignore
         }
         try {
             performGlobalAction(GLOBAL_ACTION_BACK)
@@ -537,32 +534,18 @@ class FocusAccessibilityService : AccessibilityService() {
         mindfulPassUntilMs[packageName] = TrustedClock.now() + durationMs
     }
 
-    /** Returns how many minutes of Focus Sessions have been completed today (local timezone). */
-    private fun getTodayCompletedFocusMinutes(now: Long): Int {
-        val todayDay = TimeUtils.localEpochDay(now)
-        var totalMinutes = 0
-        for (session in maturedSessionsList) {
-            val refTime = if (session.actualEndTime > 0L) session.actualEndTime else session.endTime
-            if (TimeUtils.localEpochDay(refTime) == todayDay) {
-                val mins = (session.actualDurationSeconds / 60L).toInt().coerceAtLeast(session.durationMinutes)
-                totalMinutes += mins
-            }
-        }
-        return totalMinutes
-    }
-
-    private var lastYouTubeSearchAutoClickMs = 0L
-
-    /** Returns true if local trusted time is between 5:00 AM and 8:59:59 AM and the user hasn't finished 25m of focus today. */
-    private fun isMorningFirstTaskLockActive(now: Long): Boolean {
+    /**
+     * Morning Lock (5:00 AM – 9:00 AM Daily Automatic Strict Mode):
+     * Returns true when Morning Lock is enabled and current trusted time is between 5:00 AM and 8:59:59 AM.
+     */
+    private fun isMorningStrictWindowActive(now: Long): Boolean {
         if (!morningLockEnabled) return false
         val cal = Calendar.getInstance().apply { timeInMillis = now }
         val hour = cal.get(Calendar.HOUR_OF_DAY)
-        if (hour !in 5..8) return false
-        return getTodayCompletedFocusMinutes(now) < 25
+        return hour in 5..8
     }
 
-    private fun getTodayNineAmWallOrTrustedMillis(now: Long): Long {
+    private fun getTodayNineAmTrustedMillis(now: Long): Long {
         val cal = Calendar.getInstance().apply {
             timeInMillis = now
             set(Calendar.HOUR_OF_DAY, 9)
@@ -573,6 +556,32 @@ class FocusAccessibilityService : AccessibilityService() {
         return cal.timeInMillis.coerceAtLeast(now + 60_000L)
     }
 
+    /**
+     * Automatically starts a real Strict Mode Focus Session running until 9:00 AM if
+     * Morning Lock is enabled and current time is inside 5:00 AM – 9:00 AM.
+     */
+    private fun ensureMorningStrictSessionIfInWindow(now: Long) {
+        if (!isMorningStrictWindowActive(now)) return
+        if (isSessionActive && isSessionStrict && sessionEndTime >= getTodayNineAmTrustedMillis(now) - 60_000L) return
+        if (now - lastMorningSessionAutoStartMs < 15_000L) return
+        lastMorningSessionAutoStartMs = now
+        val nineAm = getTodayNineAmTrustedMillis(now)
+        val remainingMs = (nineAm - now).coerceAtLeast(60_000L)
+        val remainingMinutes = ((remainingMs + 59_999L) / 60_000L).toInt().coerceAtLeast(1)
+        serviceScope.launch {
+            try {
+                (application as FocusApplication).repository.startFocusSession(
+                    durationMinutes = remainingMinutes,
+                    isStrict = true,
+                    totalMs = remainingMs,
+                    origin = "MORNING_LOCK"
+                )
+            } catch (e: Exception) {
+                Log.e("FocusService", "Failed to auto-start Morning Strict Session", e)
+            }
+        }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val eventType = event.eventType
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && 
@@ -581,7 +590,11 @@ class FocusAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
 
         val now = TrustedClock.now()
-        val isStrictModeActive = isSessionActive && now < sessionEndTime && isSessionStrict
+        val morningStrictActive = isMorningStrictWindowActive(now)
+        if (morningStrictActive && (!isSessionActive || !isSessionStrict)) {
+            ensureMorningStrictSessionIfInWindow(now)
+        }
+        val isStrictModeActive = (isSessionActive && now < sessionEndTime && isSessionStrict) || morningStrictActive
 
         // Strict Mode: block the Power-off / Restart menu (runs before every throttle).
         if (isStrictModeActive &&
@@ -658,10 +671,21 @@ class FocusAccessibilityService : AccessibilityService() {
         }
 
         val isBrowser = BROWSER_PACKAGES.contains(packageName)
-        val hasKeywordBlockingForPkg = blockedKeywordsList.isNotEmpty() &&
+        // Keyword Blocker ONLY runs when a Focus Session is actively running!
+        val isAnyFocusSessionRunning = (isSessionActive && now < sessionEndTime) || morningStrictActive
+        val hasKeywordBlockingForPkg = isAnyFocusSessionRunning &&
+            blockedKeywordsList.isNotEmpty() &&
             (isBrowser || packageName == "com.google.android.youtube")
+
+        val prefs = getSharedPreferences("focuss_buddy_settings", MODE_PRIVATE)
+        val ytStudyModeOn = packageName == "com.google.android.youtube" && prefs.getBoolean("youtube_study_mode", false)
+        val waChatOnlyOn = (WHATSAPP_PACKAGES.contains(packageName) || TELEGRAM_PACKAGES.contains(packageName)) &&
+            prefs.getBoolean("whatsapp_block_status", false)
+
         val readsScreenText = SYSTEM_GUARD_PACKAGES.contains(packageName) ||
             (isStrictModeActive && isContentBlockEnabled(packageName)) ||
+            ytStudyModeOn ||
+            waChatOnlyOn ||
             hasKeywordBlockingForPkg
         val needsTree = isBrowser || readsScreenText
         val rootNode = if (needsTree) (try { rootInActiveWindow } catch (e: Exception) { null }) else null
@@ -679,6 +703,13 @@ class FocusAccessibilityService : AccessibilityService() {
             if (packageName == ourPackage) return
 
             val appName = applicationContext.getString(R.string.app_name)
+            val effectiveSessionEndTime = if (isSessionActive && now < sessionEndTime) {
+                sessionEndTime
+            } else if (morningStrictActive) {
+                getTodayNineAmTrustedMillis(now)
+            } else {
+                0L
+            }
 
             // Strict-Mode Guard
             if (isStrictModeActive) {
@@ -692,7 +723,7 @@ class FocusAccessibilityService : AccessibilityService() {
                             packageName,
                             isLongTerm = false,
                             reason = "Uninstalling apps is blocked in Strict Mode.",
-                            endDate = sessionEndTime
+                            endDate = effectiveSessionEndTime
                         )
                     }
                     return
@@ -742,7 +773,6 @@ class FocusAccessibilityService : AccessibilityService() {
                         return
                     }
                 } else if (isSessionActive && now >= sessionEndTime) {
-                    // Expired focus session
                     serviceScope.launch {
                         try {
                             repository.stopActiveSession("Expired")
@@ -752,19 +782,20 @@ class FocusAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                // 1b. Morning "First Task" Lock (5:00 AM - 9:00 AM until 25 min Focus Session completed today)
-                if (isMorningFirstTaskLockActive(now)) {
+                // 1b. Morning "First Task" Lock (5:00 AM - 9:00 AM Daily Automatic Strict Mode)
+                if (morningStrictActive) {
                     val isMorningLockedApp = blockedPackages.contains(packageName) ||
                         mindfulDelayPackages.contains(packageName) ||
                         DEFAULT_MORNING_DISTRACTION_PACKAGES.contains(packageName)
-                    if (isMorningLockedApp && !isHomeLauncherPackage(packageName) && !isTransientSystemPackage(packageName)) {
-                        val doneMins = getTodayCompletedFocusMinutes(now)
-                        Log.d("FocusService", "Blocking app due to Morning First-Task Lock: $packageName ($doneMins/25 min)")
+                    // If YouTube Study Mode is enabled, allow YouTube to open in Lecture-Only Study Mode instead of hard-blocking the whole app
+                    val allowYouTubeForStudyMode = packageName == "com.google.android.youtube" && ytStudyModeOn
+                    if (isMorningLockedApp && !allowYouTubeForStudyMode && !isHomeLauncherPackage(packageName) && !isTransientSystemPackage(packageName)) {
+                        Log.d("FocusService", "Blocking app due to Morning 5-9 AM Strict Mode: $packageName")
                         triggerBlockActivity(
                             packageName,
                             isLongTerm = false,
-                            reason = "Morning First-Task Lock (5 AM – 9 AM): Complete 25 minutes of Focus today ($doneMins/25 min completed) to unlock distracting apps.",
-                            endDate = getTodayNineAmWallOrTrustedMillis(now)
+                            reason = "Morning Strict Mode (5:00 AM – 9:00 AM) is active until 9:00 AM.",
+                            endDate = getTodayNineAmTrustedMillis(now)
                         )
                         return
                     }
@@ -849,89 +880,119 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 3b. Keyword & Topic Blocker (Browser + YouTube)
+            // 3b. Keyword & Topic Blocker (Browser + YouTube) — ONLY during an active Focus Session!
             if (hasKeywordBlockingForPkg && nodeToUse != null) {
-                val matchedKeyword = findMatchedBlockedKeyword(nodeToUse, screenTexts, isBrowser)
+                val matchedKeyword = findMatchedBlockedKeyword(nodeToUse, isBrowser)
                 if (matchedKeyword != null) {
                     Log.d("FocusService", "Keyword Blocker triggered for '$matchedKeyword' in $packageName")
-                    val fallbackEnd = if (isSessionActive && now < sessionEndTime) sessionEndTime else (now + 15 * 60 * 1000L)
                     triggerContentBlockActivity(
                         packageName,
                         "Blocked Keyword: \"$matchedKeyword\"",
-                        fallbackEnd
+                        effectiveSessionEndTime
                     )
                     return
                 }
             }
 
-            // 4. Content-Level Blocking (YouTube Shorts, YouTube Study Mode, Instagram Reels, Snapchat Spotlight, WhatsApp/Telegram Status & Channels)
-            // Content-Level Blocking must only be active during Strict Mode.
-            if (isStrictModeActive) {
-                val prefs = getSharedPreferences("focuss_buddy_settings", MODE_PRIVATE)
-                val ytShortsBlocked = prefs.getBoolean("youtube_block_shorts", false)
-                val ytStudyMode = prefs.getBoolean("youtube_study_mode", false)
+            // 4. Content-Level Blocking & Study Mode
+            val ytShortsBlocked = isStrictModeActive && prefs.getBoolean("youtube_block_shorts", false)
+            val ytStudyMode = prefs.getBoolean("youtube_study_mode", false)
 
-                if (packageName == "com.google.android.youtube" && (ytShortsBlocked || ytStudyMode)) {
-                    val hasShortsText = screenTexts.any { it.contains("Shorts", ignoreCase = true) }
-                    val hasShortsClass = event.className?.toString()?.lowercase()?.contains("shorts") == true ||
-                                         event.className?.toString()?.lowercase()?.contains("reel") == true
-                    val hasShortsId = checkNodeForShortsSpecifics(nodeToUse)
-                    val hasShortsDescription = screenTexts.any { it.contains("shorts player", ignoreCase = true) || it.contains("reel player", ignoreCase = true) }
-                    val hasRemixAction = screenTexts.any { it.equals("Remix", ignoreCase = true) }
+            if (packageName == "com.google.android.youtube" && (ytShortsBlocked || ytStudyMode)) {
+                val hasShortsText = screenTexts.any { it.contains("Shorts", ignoreCase = true) }
+                val hasShortsClass = event.className?.toString()?.lowercase()?.contains("shorts") == true ||
+                                     event.className?.toString()?.lowercase()?.contains("reel") == true
+                val hasShortsId = checkNodeForShortsSpecifics(nodeToUse)
+                val hasShortsDescription = screenTexts.any { it.contains("shorts player", ignoreCase = true) || it.contains("reel player", ignoreCase = true) }
+                val hasRemixAction = screenTexts.any { it.equals("Remix", ignoreCase = true) }
 
-                    val signalCount = listOf(hasShortsClass, hasShortsId, hasShortsDescription, hasRemixAction).count { it }
-                    val isShortsDetected = hasShortsDescription || signalCount >= 2 || (hasShortsText && signalCount >= 1)
+                val signalCount = listOf(hasShortsClass, hasShortsId, hasShortsDescription, hasRemixAction).count { it }
+                val isShortsDetected = hasShortsDescription || signalCount >= 2 || (hasShortsText && signalCount >= 1)
 
-                    if (isShortsDetected) {
-                        Log.d("FocusService", "Content-Level Block: YouTube Shorts detected")
-                        triggerContentBlockActivity(packageName, "YouTube Shorts")
+                if (isShortsDetected) {
+                    Log.d("FocusService", "Content-Level Block: YouTube Shorts detected")
+                    triggerContentBlockActivity(packageName, "YouTube Shorts", effectiveSessionEndTime)
+                    return
+                }
+
+                if (ytStudyMode && nodeToUse != null) {
+                    val searchFilterChips = setOf("unwatched", "watched", "recently uploaded", "search filters", "channels", "playlists")
+                    val isSearching = checkNodeForIdKeyword(nodeToUse, "search_edit_text") ||
+                        checkNodeForIdKeyword(nodeToUse, "search_box") ||
+                        checkNodeForIdKeyword(nodeToUse, "search_query") ||
+                        checkNodeForIdKeyword(nodeToUse, "search_type_icon") ||
+                        hasFocusedEditText(nodeToUse) ||
+                        screenTexts.any { txt ->
+                            val clean = txt.trim().lowercase()
+                            clean.contains("search youtube") || searchFilterChips.contains(clean)
+                        }
+                    if (isSearching) {
+                        lastYouTubeSearchActiveMs = now
+                    }
+
+                    val isVideoPlayerOpen = checkNodeForIdKeyword(nodeToUse, "watch_next_results") ||
+                        checkNodeForIdKeyword(nodeToUse, "watch_player") ||
+                        checkNodeForIdKeyword(nodeToUse, "player_view") ||
+                        checkNodeForIdKeyword(nodeToUse, "player_fragment") ||
+                        checkNodeForIdKeyword(nodeToUse, "watch_while") ||
+                        checkNodeForIdKeyword(nodeToUse, "video_metadata") ||
+                        checkNodeForIdKeyword(nodeToUse, "channel_bar") ||
+                        checkNodeForIdKeyword(nodeToUse, "player_control") ||
+                        checkNodeForIdKeyword(nodeToUse, "fullscreen_button") ||
+                        checkNodeForIdKeyword(nodeToUse, "time_bar") ||
+                        screenTexts.any {
+                            it.equals("Subscribe", ignoreCase = true) ||
+                            it.equals("Subscribed", ignoreCase = true) ||
+                            it.equals("Enter full screen", ignoreCase = true) ||
+                            it.equals("Exit full screen", ignoreCase = true) ||
+                            it.equals("Download", ignoreCase = true) ||
+                            it.equals("Clip", ignoreCase = true)
+                        }
+
+                    if (isVideoPlayerOpen) {
+                        lastYouTubeVideoOpenMs = now
+                        // If the user explicitly opened the expanded Comments engagement panel, close that panel
+                        // without blocking the lecture video!
+                        closeYouTubeEngagementPanelIfOpen(nodeToUse, screenTexts)
+
+                        // If the phone is currently in portrait orientation while watching a lecture video,
+                        // automatically click YouTube's "Enter full screen" button so the lecture rotates to Full Screen!
+                        val isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+                        if (isPortrait && now - lastYouTubeFullscreenClickMs > 3200L) {
+                            if (clickYouTubeFullscreenButton(nodeToUse)) {
+                                lastYouTubeFullscreenClickMs = now
+                                Log.d("FocusService", "YouTube Study Mode: Auto-rotated lecture to Full Screen")
+                            } else {
+                                // Player controls might be hidden; tap the player surface once to reveal controls, then click Full Screen
+                                lastYouTubeFullscreenClickMs = now
+                                revealYouTubeControlsAndEnterFullscreen()
+                            }
+                        }
                         return
                     }
 
-                    if (ytStudyMode && nodeToUse != null) {
-                        // Block comments panel inside video player
-                        val isCommentsPanelOpen = screenTexts.any {
-                            it.equals("Comments", ignoreCase = true) || it.startsWith("Comments ", ignoreCase = true)
-                        } && (checkNodeForIdKeyword(nodeToUse, "comment") || checkNodeForIdKeyword(nodeToUse, "engagement_panel"))
-
-                        if (isCommentsPanelOpen) {
-                            Log.d("FocusService", "YouTube Study Mode: Comments panel blocked")
-                            triggerContentBlockActivity(packageName, "YouTube Comments (Study Mode)")
+                    val inSearchOrVideoTransition = (now - lastYouTubeSearchActiveMs < 15_000L) ||
+                        (now - lastYouTubeVideoOpenMs < 8_000L)
+                    if (!isSearching && !inSearchOrVideoTransition && isYouTubeHomeFeedActive(nodeToUse, screenTexts)) {
+                        // First try to auto-open YouTube Search so the student lands directly on lecture search
+                        if (now - lastYouTubeSearchAutoClickMs > 2500L && clickYouTubeSearchButton(nodeToUse)) {
+                            lastYouTubeSearchAutoClickMs = now
+                            lastYouTubeSearchActiveMs = now
+                            Log.d("FocusService", "YouTube Study Mode: Auto-opened YouTube Search from Home feed")
                             return
                         }
-
-                        // Allow Search & Lecture Video Player, block Home Feed recommendations
-                        val isSearching = checkNodeForIdKeyword(nodeToUse, "search_edit_text") ||
-                            checkNodeForIdKeyword(nodeToUse, "search_box") ||
-                            checkNodeForIdKeyword(nodeToUse, "search_query") ||
-                            hasFocusedEditText(nodeToUse) ||
-                            screenTexts.any {
-                                it.contains("Search YouTube", ignoreCase = true) ||
-                                it.equals("Search filters", ignoreCase = true)
-                            }
-                        val isVideoPlayerExpanded = checkNodeForIdKeyword(nodeToUse, "watch_next_results") ||
-                            screenTexts.any {
-                                it.equals("Subscribe", ignoreCase = true) ||
-                                it.equals("Subscribed", ignoreCase = true) ||
-                                it.equals("Remix", ignoreCase = true) ||
-                                it.equals("Download", ignoreCase = true) ||
-                                it.equals("Clip", ignoreCase = true)
-                            }
-
-                        if (!isSearching && !isVideoPlayerExpanded && isYouTubeHomeFeedActive(nodeToUse, screenTexts)) {
-                            // First try to auto-open YouTube Search so the student lands directly on lecture search
-                            if (now - lastYouTubeSearchAutoClickMs > 2500L && clickYouTubeSearchButton(nodeToUse)) {
-                                lastYouTubeSearchAutoClickMs = now
-                                Log.d("FocusService", "YouTube Study Mode: Auto-opened YouTube Search from Home feed")
-                                return
-                            }
-                            Log.d("FocusService", "YouTube Study Mode: Home feed recommendations blocked")
-                            triggerContentBlockActivity(packageName, "YouTube Home Feed (Study Mode — Use Search for Lectures)")
-                            return
-                        }
+                        Log.d("FocusService", "YouTube Study Mode: Home feed recommendations blocked")
+                        triggerContentBlockActivity(
+                            packageName,
+                            "YouTube Home Feed (Study Mode — Use Search for Lectures)",
+                            effectiveSessionEndTime
+                        )
+                        return
                     }
                 }
+            }
 
+            if (isStrictModeActive) {
                 if (packageName == "com.instagram.android" && prefs.getBoolean("instagram_block_reels", false)) {
                     val isReels = event.className?.toString()?.lowercase()?.contains("clips") == true ||
                             event.className?.toString()?.lowercase()?.contains("reels") == true ||
@@ -940,7 +1001,7 @@ class FocusAccessibilityService : AccessibilityService() {
                             checkNodeForReelsSpecifics(nodeToUse)
                     if (isReels) {
                         Log.d("FocusService", "Content-Level Block: Instagram Reels detected")
-                        triggerContentBlockActivity(packageName, "Instagram Reels")
+                        triggerContentBlockActivity(packageName, "Instagram Reels", effectiveSessionEndTime)
                         return
                     }
                 }
@@ -951,53 +1012,61 @@ class FocusAccessibilityService : AccessibilityService() {
                             checkNodeForSpotlightSpecifics(nodeToUse)
                     if (isSpotlight) {
                         Log.d("FocusService", "Content-Level Block: Snapchat Spotlight detected")
-                        triggerContentBlockActivity(packageName, "Snapchat Spotlight")
+                        triggerContentBlockActivity(packageName, "Snapchat Spotlight", effectiveSessionEndTime)
                         return
                     }
                 }
+            }
 
-                // Feature 2: WhatsApp / Telegram "Chat-Only Mode" (Status, Stories & Channels Block)
-                if (prefs.getBoolean("whatsapp_block_status", false)) {
-                    if (WHATSAPP_PACKAGES.contains(packageName)) {
-                        val cls = event.className?.toString()?.lowercase() ?: ""
-                        val isStatusPlayback = cls.contains("statusplayback") ||
-                            cls.contains("newsletter") ||
-                            checkNodeForIdKeyword(nodeToUse, "status_playback") ||
-                            checkNodeForIdKeyword(nodeToUse, "status_container")
-                        val isInsideDirectChat = checkNodeForIdKeyword(nodeToUse, "entry") ||
-                            checkNodeForIdKeyword(nodeToUse, "conversation_contact") ||
-                            screenTexts.any { it.contains("Type a message", ignoreCase = true) || it.equals("Message", ignoreCase = true) }
-                        val isUpdatesTabScreen = !isInsideDirectChat && (
-                            (screenTexts.any { it.equals("Status", ignoreCase = true) } &&
-                                screenTexts.any {
-                                    it.equals("Channels", ignoreCase = true) ||
-                                    it.equals("Find channels", ignoreCase = true) ||
-                                    it.equals("Recent updates", ignoreCase = true) ||
-                                    it.equals("Viewed updates", ignoreCase = true) ||
-                                    it.equals("Add status", ignoreCase = true) ||
-                                    it.equals("My status", ignoreCase = true)
-                                }) ||
-                            isWhatsAppUpdatesTabSelected(nodeToUse)
-                        )
-                        if (isStatusPlayback || isUpdatesTabScreen) {
-                            Log.d("FocusService", "Content-Level Block: WhatsApp Status/Channels detected")
-                            triggerContentBlockActivity(packageName, "WhatsApp Status & Channels (Chat-Only Mode)")
-                            return
-                        }
-                    } else if (TELEGRAM_PACKAGES.contains(packageName)) {
-                        val cls = event.className?.toString()?.lowercase() ?: ""
-                        val isTelegramStoriesOrChannels = cls.contains("stories") ||
-                            cls.contains("storyviewer") ||
+            // WhatsApp / Telegram "Chat-Only Mode" (Status, Stories & Channels Block)
+            if (waChatOnlyOn) {
+                if (WHATSAPP_PACKAGES.contains(packageName)) {
+                    val cls = event.className?.toString()?.lowercase() ?: ""
+                    val isStatusPlayback = cls.contains("statusplayback") ||
+                        cls.contains("newsletter") ||
+                        checkNodeForIdKeyword(nodeToUse, "status_playback") ||
+                        checkNodeForIdKeyword(nodeToUse, "status_container")
+                    val isInsideDirectChat = checkNodeForIdKeyword(nodeToUse, "entry") ||
+                        checkNodeForIdKeyword(nodeToUse, "conversation_contact") ||
+                        screenTexts.any { it.contains("Type a message", ignoreCase = true) || it.equals("Message", ignoreCase = true) }
+                    val isUpdatesTabScreen = !isInsideDirectChat && (
+                        (screenTexts.any { it.equals("Status", ignoreCase = true) } &&
                             screenTexts.any {
-                                it.equals("Hidden stories", ignoreCase = true) ||
-                                it.equals("My Stories", ignoreCase = true) ||
-                                it.equals("Similar Channels", ignoreCase = true)
-                            }
-                        if (isTelegramStoriesOrChannels) {
-                            Log.d("FocusService", "Content-Level Block: Telegram Stories/Channels detected")
-                            triggerContentBlockActivity(packageName, "Telegram Stories & Channels (Chat-Only Mode)")
-                            return
+                                it.equals("Channels", ignoreCase = true) ||
+                                it.equals("Find channels", ignoreCase = true) ||
+                                it.equals("Recent updates", ignoreCase = true) ||
+                                it.equals("Viewed updates", ignoreCase = true) ||
+                                it.equals("Add status", ignoreCase = true) ||
+                                it.equals("My status", ignoreCase = true)
+                            }) ||
+                        isWhatsAppUpdatesTabSelected(nodeToUse)
+                    )
+                    if (isStatusPlayback || isUpdatesTabScreen) {
+                        Log.d("FocusService", "Content-Level Block: WhatsApp Status/Channels detected")
+                        triggerContentBlockActivity(
+                            packageName,
+                            "WhatsApp Status & Channels (Chat-Only Mode)",
+                            effectiveSessionEndTime
+                        )
+                        return
+                    }
+                } else if (TELEGRAM_PACKAGES.contains(packageName)) {
+                    val cls = event.className?.toString()?.lowercase() ?: ""
+                    val isTelegramStoriesOrChannels = cls.contains("stories") ||
+                        cls.contains("storyviewer") ||
+                        screenTexts.any {
+                            it.equals("Hidden stories", ignoreCase = true) ||
+                            it.equals("My Stories", ignoreCase = true) ||
+                            it.equals("Similar Channels", ignoreCase = true)
                         }
+                    if (isTelegramStoriesOrChannels) {
+                        Log.d("FocusService", "Content-Level Block: Telegram Stories/Channels detected")
+                        triggerContentBlockActivity(
+                            packageName,
+                            "Telegram Stories & Channels (Chat-Only Mode)",
+                            effectiveSessionEndTime
+                        )
+                        return
                     }
                 }
             }
@@ -1031,7 +1100,6 @@ class FocusAccessibilityService : AccessibilityService() {
     private fun isYouTubeHomeFeedActive(root: AccessibilityNodeInfo?, screenTexts: List<String>): Boolean {
         if (root == null) return false
         if (isSelectedTabMatching(root, "Home")) return true
-        // Fallback signal: typical YouTube home feed filter chips when Home tab is visible
         val homeChips = setOf("all", "new to you", "mixes", "gaming", "live", "music")
         val chipMatches = screenTexts.count { homeChips.contains(it.trim().lowercase()) }
         return chipMatches >= 2 && checkNodeForIdKeyword(root, "results")
@@ -1044,7 +1112,7 @@ class FocusAccessibilityService : AccessibilityService() {
 
     private fun isSelectedTabMatching(node: AccessibilityNodeInfo?, tabKeyword: String): Boolean {
         if (node == null) return false
-        if (node.isSelected) {
+        if (node.isSelected && node.isVisibleToUser) {
             val text = node.text?.toString() ?: ""
             val desc = node.contentDescription?.toString() ?: ""
             if (text.contains(tabKeyword, ignoreCase = true) || desc.contains(tabKeyword, ignoreCase = true)) {
@@ -1060,12 +1128,19 @@ class FocusAccessibilityService : AccessibilityService() {
         return false
     }
 
+    /**
+     * Strict, zero-false-positive Keyword & Topic Blocker:
+     * - In Browsers: checks the URL/address bar (when not focused) and visible webpage headings.
+     * - In YouTube: ONLY checks the user's committed search query node (`search_query` / `search_edit_text`)
+     *   and visible video title nodes (`title`), NEVER scanning navigation tabs, category chips, or hidden nodes.
+     */
     private fun findMatchedBlockedKeyword(
         root: AccessibilityNodeInfo,
-        screenTexts: List<String>,
         isBrowser: Boolean
     ): String? {
         if (blockedKeywordsList.isEmpty()) return null
+        if (hasFocusedEditText(root)) return null
+
         if (isBrowser) {
             val urlNode = findUrlBarNode(root)
             try {
@@ -1083,15 +1158,14 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
             }
         }
-        // Check visible titles / headings (skip while an EditText is actively focused so user can type)
-        if (hasFocusedEditText(root)) return null
-        val defaultFilterChips = setOf("all", "gaming", "movies", "music", "live", "mixes", "news", "sports", "new to you")
-        for (txt in screenTexts) {
-            val trimmed = txt.trim().lowercase()
-            // Ignore standalone category filter chip labels on YouTube home/search bar
-            if (defaultFilterChips.contains(trimmed)) continue
+
+        val candidateTexts = mutableListOf<String>()
+        collectTargetedKeywordTexts(root, isBrowser, candidateTexts, 0)
+        for (txt in candidateTexts) {
+            val lower = txt.trim().lowercase()
+            if (lower.length < 3) continue
             for (kw in blockedKeywordsList) {
-                if (kw.isNotEmpty() && containsKeywordAsWordOrPhrase(trimmed, kw)) {
+                if (kw.isNotEmpty() && containsKeywordAsWordOrPhrase(lower, kw)) {
                     return kw
                 }
             }
@@ -1099,18 +1173,207 @@ class FocusAccessibilityService : AccessibilityService() {
         return null
     }
 
+    private fun collectTargetedKeywordTexts(
+        node: AccessibilityNodeInfo?,
+        isBrowser: Boolean,
+        out: MutableList<String>,
+        depth: Int
+    ) {
+        if (node == null || depth > 45) return
+        if (node.isVisibleToUser) {
+            val id = node.viewIdResourceName?.lowercase() ?: ""
+            val text = node.text?.toString()?.trim() ?: ""
+            if (text.length >= 4) {
+                if (isBrowser) {
+                    // In browser WebView, check visible headings/titles (longer than 5 chars, not browser chrome buttons)
+                    if (!id.contains("button") && !id.contains("tab") && !id.contains("menu") && text.length >= 6) {
+                        out.add(text)
+                    }
+                } else {
+                    // In YouTube, only check search query box or video title views
+                    val isSearchOrTitle = id.contains("search_query") ||
+                        id.contains("search_edit_text") ||
+                        id.contains("video_title") ||
+                        id.endsWith("/title") ||
+                        id.contains("player_video_title")
+                    if (isSearchOrTitle) {
+                        out.add(text)
+                    }
+                }
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectTargetedKeywordTexts(child, isBrowser, out, depth + 1)
+            child.recycle()
+        }
+    }
+
     private fun clickYouTubeSearchButton(node: AccessibilityNodeInfo?): Boolean {
         if (node == null) return false
         val desc = node.contentDescription?.toString() ?: ""
         val id = node.viewIdResourceName?.lowercase() ?: ""
         if ((desc.equals("Search", ignoreCase = true) || id.endsWith("menu_item_search") || id.endsWith("search_button")) &&
-            node.isClickable
+            node.isClickable && node.isVisibleToUser
         ) {
             return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             val clicked = clickYouTubeSearchButton(child)
+            child.recycle()
+            if (clicked) return true
+        }
+        return false
+    }
+
+    /** Clicks YouTube's "Enter full screen" button if present in the player tree. */
+    private fun clickYouTubeFullscreenButton(node: AccessibilityNodeInfo?, requireVisible: Boolean = true): Boolean {
+        if (node == null) return false
+        val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
+        val id = node.viewIdResourceName?.lowercase() ?: ""
+        val isFullscreenBtn = id.contains("fullscreen_button") ||
+            desc.contains("enter full screen") ||
+            desc.contains("enter fullscreen") ||
+            desc == "full screen" ||
+            desc.contains("फ़ुल स्क्रीन")
+        if (isFullscreenBtn && (!requireVisible || node.isVisibleToUser)) {
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return true
+            }
+            var parent = node.parent
+            var hops = 0
+            while (parent != null && hops < 3) {
+                val p = parent
+                parent = null
+                try {
+                    if (p.isClickable && p.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        return true
+                    }
+                    parent = p.parent
+                } finally {
+                    p.recycle()
+                }
+                hops++
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val clicked = clickYouTubeFullscreenButton(child, requireVisible)
+            child.recycle()
+            if (clicked) return true
+        }
+        return false
+    }
+
+    /**
+     * When a lecture video just opened in portrait mode, YouTube's player control overlay may be
+     * hidden. Taps the video player container once to reveal the controls, clicks Full Screen,
+     * and falls back to YouTube's native upward fullscreen swipe gesture on the player box.
+     */
+    private fun revealYouTubeControlsAndEnterFullscreen() {
+        youtubeFullscreenHelperJob?.cancel()
+        youtubeFullscreenHelperJob = serviceScope.launch {
+            try {
+                delay(240L)
+                val root1 = try { rootInActiveWindow } catch (e: Exception) { null } ?: return@launch
+                try {
+                    if (resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT) return@launch
+                    if (clickYouTubeFullscreenButton(root1, requireVisible = true)) return@launch
+                    if (clickYouTubeFullscreenButton(root1, requireVisible = false)) return@launch
+                    clickYouTubePlayerSurface(root1)
+                } finally {
+                    root1.recycle()
+                }
+                delay(300L)
+                val root2 = try { rootInActiveWindow } catch (e: Exception) { null } ?: return@launch
+                var clickedSecondPass = false
+                try {
+                    if (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT) {
+                        clickedSecondPass = clickYouTubeFullscreenButton(root2, requireVisible = true) ||
+                            clickYouTubeFullscreenButton(root2, requireVisible = false)
+                    }
+                } finally {
+                    root2.recycle()
+                }
+                if (!clickedSecondPass && resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT) {
+                    delay(200L)
+                    if (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT) {
+                        dispatchYouTubeFullscreenSwipeGesture()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("FocusService", "Failed to auto-enter YouTube fullscreen", e)
+            }
+        }
+    }
+
+    /**
+     * Dispatches YouTube's native "Swipe Up on Player to Enter Fullscreen" gesture on the top 16:9
+     * video player region if the Accessibility node click was absorbed by hidden controls.
+     */
+    private fun dispatchYouTubeFullscreenSwipeGesture() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        try {
+            val dm = resources.displayMetrics
+            val cx = dm.widthPixels * 0.5f
+            val startY = (dm.widthPixels * 9f / 16f) * 0.78f
+            val endY = (dm.widthPixels * 9f / 16f) * 0.22f
+            if (startY <= endY || startY <= 50f) return
+            val swipePath = android.graphics.Path().apply {
+                moveTo(cx, startY)
+                lineTo(cx, endY)
+            }
+            val stroke = GestureDescription.StrokeDescription(swipePath, 0L, 180L)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            dispatchGesture(gesture, null, null)
+            Log.d("FocusService", "YouTube Study Mode: Dispatched upward fullscreen swipe gesture")
+        } catch (e: Exception) {
+            Log.e("FocusService", "Error dispatching YouTube fullscreen gesture", e)
+        }
+    }
+
+    private fun clickYouTubePlayerSurface(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val id = node.viewIdResourceName?.lowercase() ?: ""
+        if ((id.endsWith("player_view") || id.endsWith("watch_player") || id.contains("player_control_overlay")) &&
+            node.isClickable && node.isVisibleToUser
+        ) {
+            return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val clicked = clickYouTubePlayerSurface(child)
+            child.recycle()
+            if (clicked) return true
+        }
+        return false
+    }
+
+    /**
+     * If the user explicitly tapped the Comments row to open the expanded Comments engagement sheet,
+     * clicks its "Close" button so the sheet closes without interrupting the lecture video.
+     */
+    private fun closeYouTubeEngagementPanelIfOpen(node: AccessibilityNodeInfo?, screenTexts: List<String>) {
+        if (node == null) return
+        val hasCommentsHeader = screenTexts.any { it.equals("Comments", ignoreCase = true) }
+        if (!hasCommentsHeader) return
+        if (!checkNodeForIdKeyword(node, "engagement_panel")) return
+        clickCloseEngagementButton(node)
+    }
+
+    private fun clickCloseEngagementButton(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val desc = node.contentDescription?.toString() ?: ""
+        val id = node.viewIdResourceName?.lowercase() ?: ""
+        if ((desc.equals("Close", ignoreCase = true) || id.contains("engagement_panel_close")) &&
+            node.isClickable && node.isVisibleToUser
+        ) {
+            return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val clicked = clickCloseEngagementButton(child)
             child.recycle()
             if (clicked) return true
         }
@@ -1205,10 +1468,14 @@ class FocusAccessibilityService : AccessibilityService() {
                         (application as FocusApplication).repository.stopActiveSession("Expired")
                     }
 
+                    val morningStrictActive = isMorningStrictWindowActive(now)
+                    if (morningStrictActive && (!isSessionActive || !isSessionStrict)) {
+                        ensureMorningStrictSessionIfInWindow(now)
+                    }
+
                     val sessionBlocking = isSessionActive && now < sessionEndTime && blockedPackages.isNotEmpty()
                     val hasAppBlocks = longTermBlocks.any { it.type == "APP" }
-                    val morningActive = isMorningFirstTaskLockActive(now)
-                    if (!sessionBlocking && !hasAppBlocks && !morningActive && quotaTrackingPackage == null) continue
+                    if (!sessionBlocking && !hasAppBlocks && !morningStrictActive && quotaTrackingPackage == null) continue
 
                     val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: continue
                     val fgPackage = root.packageName?.toString()
@@ -1229,18 +1496,19 @@ class FocusAccessibilityService : AccessibilityService() {
                         continue
                     }
 
-                    // 1b. Morning First-Task Lock
-                    if (morningActive) {
+                    // 1b. Morning 5:00 AM - 9:00 AM Daily Strict Mode Lock
+                    if (morningStrictActive) {
+                        val prefs = getSharedPreferences("focuss_buddy_settings", MODE_PRIVATE)
+                        val allowYtStudy = fgPackage == "com.google.android.youtube" && prefs.getBoolean("youtube_study_mode", false)
                         val isMorningLockedApp = blockedPackages.contains(fgPackage) ||
                             mindfulDelayPackages.contains(fgPackage) ||
                             DEFAULT_MORNING_DISTRACTION_PACKAGES.contains(fgPackage)
-                        if (isMorningLockedApp && !isHomeLauncherPackage(fgPackage) && !isTransientSystemPackage(fgPackage)) {
-                            val doneMins = getTodayCompletedFocusMinutes(now)
+                        if (isMorningLockedApp && !allowYtStudy && !isHomeLauncherPackage(fgPackage) && !isTransientSystemPackage(fgPackage)) {
                             triggerBlockActivity(
                                 fgPackage,
                                 isLongTerm = false,
-                                reason = "Morning First-Task Lock (5 AM – 9 AM): Complete 25 minutes of Focus today ($doneMins/25 min completed) to unlock distracting apps.",
-                                endDate = getTodayNineAmWallOrTrustedMillis(now)
+                                reason = "Morning Strict Mode (5:00 AM – 9:00 AM) is active until 9:00 AM.",
+                                endDate = getTodayNineAmTrustedMillis(now)
                             )
                             continue
                         }
@@ -1646,12 +1914,15 @@ class FocusAccessibilityService : AccessibilityService() {
         startActivity(intent)
     }
 
+    /** Only collects text from visible nodes so off-screen cached views never cause false positives. */
     private fun collectScreenText(node: AccessibilityNodeInfo?, list: MutableList<String>, depth: Int) {
         if (node == null || depth > 50) return
-        val text = node.text?.toString()
-        if (!text.isNullOrEmpty()) list.add(text)
-        val desc = node.contentDescription?.toString()
-        if (!desc.isNullOrEmpty()) list.add(desc)
+        if (node.isVisibleToUser) {
+            val text = node.text?.toString()
+            if (!text.isNullOrEmpty()) list.add(text)
+            val desc = node.contentDescription?.toString()
+            if (!desc.isNullOrEmpty()) list.add(desc)
+        }
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue

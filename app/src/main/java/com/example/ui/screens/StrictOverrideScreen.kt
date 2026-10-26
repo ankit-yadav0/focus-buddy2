@@ -110,7 +110,7 @@ fun StrictOverrideScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        containerColor = Color(0xFF0D0D12),
+        containerColor = Color(0xFF171219),
         topBar = {
             TopAppBar(
                 title = { Text("Extreme Override", color = Color.White) },
@@ -119,7 +119,7 @@ fun StrictOverrideScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0D0D12))
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF171219))
             )
         }
     ) { padding ->

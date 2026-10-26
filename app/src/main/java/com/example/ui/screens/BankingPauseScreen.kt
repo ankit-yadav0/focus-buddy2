@@ -99,7 +99,7 @@ fun BankingPauseScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Banking Pause", fontWeight = FontWeight.Bold) },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Banking Mode (Pause)", fontWeight = FontWeight.Black, color = Color(0xFFFFF8E7)); Text("🦉", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")

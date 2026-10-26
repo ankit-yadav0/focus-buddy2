@@ -260,11 +260,55 @@ class FocusViewModel(
 
     fun setMorningLockEnabled(enabled: Boolean) {
         viewModelScope.launch {
-            if (!enabled && isRulesEditingLocked()) {
-                actionBlockedMessage.tryEmit("Can't disable Morning First-Task Lock while Strict Mode is active.")
+            val now = TrustedClock.now()
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = now }
+            val inMorningWindow = cal.get(java.util.Calendar.HOUR_OF_DAY) in 5..8
+            if (!enabled && (isRulesEditingLocked() || (morningLockEnabled.value && inMorningWindow))) {
+                actionBlockedMessage.tryEmit("Can't disable Morning 5 AM – 9 AM Strict Lock while Strict Mode is active.")
                 return@launch
             }
             repository.saveSetting("morning_lock_enabled", enabled.toString())
+
+            val morningLabel = "Morning First-Task Lock (5 AM - 9 AM)"
+            val existing = allSchedules.value.firstOrNull {
+                it.label == morningLabel || (it.startHour == 5 && it.startMinute == 0 && it.endHour == 9 && it.endMinute == 0)
+            }
+            if (enabled) {
+                val savedSchedule = if (existing != null) {
+                    val updated = existing.copy(
+                        label = morningLabel,
+                        startHour = 5,
+                        startMinute = 0,
+                        endHour = 9,
+                        endMinute = 0,
+                        daysOfWeek = "1,2,3,4,5,6,7",
+                        isEnabled = true
+                    )
+                    repository.updateSchedule(updated)
+                    updated
+                } else {
+                    val fresh = StrictSchedule(
+                        label = morningLabel,
+                        startHour = 5,
+                        startMinute = 0,
+                        endHour = 9,
+                        endMinute = 0,
+                        daysOfWeek = "1,2,3,4,5,6,7",
+                        isEnabled = true
+                    )
+                    val newId = repository.addSchedule(fresh)
+                    fresh.copy(id = newId.toInt())
+                }
+                AlarmScheduler.cancelWindow(context, savedSchedule.id)
+                AlarmScheduler.scheduleWindow(context, savedSchedule)
+                val remainingMin = AlarmScheduler.getRemainingMinutesInCurrentWindow(savedSchedule, now)
+                if (remainingMin != null && remainingMin > 0) {
+                    repository.startScheduledStrictSession(savedSchedule.id, remainingMin)
+                }
+            } else if (existing != null) {
+                AlarmScheduler.cancelWindow(context, existing.id)
+                repository.updateSchedule(existing.copy(isEnabled = false))
+            }
         }
     }
 
@@ -817,6 +861,15 @@ class FocusViewModel(
             accentTheme.value = savedAccentTheme
 
             _isInitialized.value = true
+
+            // Ensure Morning 5 AM - 9 AM Strict Schedule is armed if Morning Lock is enabled
+            try {
+                if (repository.getSetting("morning_lock_enabled") == "true") {
+                    setMorningLockEnabled(true)
+                }
+            } catch (e: Exception) {
+                Log.e("FocusViewModel", "Error syncing morning lock schedule on init", e)
+            }
 
             var wasStrictModeActive = prefs.getBoolean("was_strict_mode_active", false)
             activeSession.collect { session ->

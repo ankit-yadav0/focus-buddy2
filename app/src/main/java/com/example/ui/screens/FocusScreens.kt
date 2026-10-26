@@ -110,6 +110,8 @@ fun HomeScreen(
     val context = LocalContext.current
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
     val blockedApps by viewModel.blockedApps.collectAsStateWithLifecycle()
+    val lockedApps by viewModel.lockedApps.collectAsStateWithLifecycle()
+    val bankingApps by viewModel.bankingPackages.collectAsStateWithLifecycle()
     val dailyAnalytics by viewModel.dailyAnalytics.collectAsStateWithLifecycle()
     val advancedAnalytics by viewModel.advancedAnalytics.collectAsStateWithLifecycle()
     val currentSoundMode by viewModel.focusSoundMode.collectAsStateWithLifecycle()
@@ -211,20 +213,24 @@ fun HomeScreen(
                         fontWeight = FontWeight.Black,
                         fontSize = 22.sp,
                         color = lofiCream,
-                        letterSpacing = 0.5.sp
+                        letterSpacing = 0.5.sp,
+                        maxLines = 1,
+                        softWrap = false
                     )
                     Text(text = "🦉", fontSize = 20.sp)
                 }
                 Text(
-                    text = "Cozy Lofi Study & Protection Settings",
+                    text = "Tools, App Locks & Study Settings",
                     fontSize = 12.sp,
-                    color = lofiAmber.copy(alpha = 0.8f),
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+                    color = lofiAmber.copy(alpha = 0.85f),
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                    maxLines = 1,
+                    softWrap = false
                 )
 
                 HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 16.dp, horizontal = 24.dp),
-                    color = lofiAmber.copy(alpha = 0.18f)
+                    modifier = Modifier.padding(vertical = 14.dp, horizontal = 24.dp),
+                    color = lofiAmber.copy(alpha = 0.22f)
                 )
 
                 Column(
@@ -232,8 +238,70 @@ fun HomeScreen(
                         .fillMaxSize()
                         .padding(horizontal = 16.dp)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    Text(
+                        text = "APP & SECURITY CONTROLS",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = lofiAmber,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+
+                    // 1. Blocked Apps inside Side Drawer
+                    LofiDrawerNavigationItem(
+                        title = "App Blocking",
+                        subtitle = "${blockedApps.size} apps blocked during Focus",
+                        icon = Icons.Default.AppBlocking,
+                        testTag = "view_blocked_apps_button",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToAppSelection()
+                        }
+                    )
+
+                    // 2. App Lock inside Side Drawer
+                    LofiDrawerNavigationItem(
+                        title = "App Locking (PIN Gate)",
+                        subtitle = "${lockedApps.size} apps protected with PIN",
+                        icon = Icons.Default.Lock,
+                        testTag = "app_lock_button",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToAppLock()
+                        }
+                    )
+
+                    // 3. Banking Mode / Pause inside Side Drawer
+                    LofiDrawerNavigationItem(
+                        title = "Banking Mode (Pause)",
+                        subtitle = "${bankingApps.size} banking/UPI apps configured",
+                        icon = Icons.Default.Shield,
+                        testTag = "banking_pause_button",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToBankingPause()
+                        }
+                    )
+
+                    // 4. Custom Timer & Daily Schedules inside Side Drawer
+                    LofiDrawerNavigationItem(
+                        title = "Custom Timer & Schedules",
+                        subtitle = "Set exact D/H/M/S & recurring Strict windows",
+                        icon = Icons.Default.Timer,
+                        testTag = "drawer_custom_timer_button",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToTimer()
+                        }
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = lofiAmber.copy(alpha = 0.15f)
+                    )
+
                     WallpaperSettingsDrawerCard(
                         onPickWallpaper = {
                             scope.launch { drawerState.close() }
@@ -251,8 +319,6 @@ fun HomeScreen(
                     )
 
                     AccentThemeCard(viewModel = viewModel)
-
-                    Spacer(modifier = Modifier.height(8.dp))
 
                     UninstallDrawerCard(
                         onUninstallClick = {
@@ -287,12 +353,12 @@ fun HomeScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 20.dp)
+                        .padding(horizontal = 18.dp)
                         .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     // Top Header matching Design 6: "Focuss Buddy" in glowing warm cream + Night Owl badge
                     Row(
@@ -302,7 +368,8 @@ fun HomeScreen(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             IconButton(
                                 onClick = { scope.launch { drawerState.open() } },
@@ -319,8 +386,11 @@ fun HomeScreen(
                             Text(
                                 text = "Focuss Buddy",
                                 fontWeight = FontWeight.Black,
-                                fontSize = 28.sp,
+                                fontSize = 26.sp,
                                 color = lofiCream,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 style = TextStyle(
                                     shadow = Shadow(
                                         color = lofiAmber.copy(alpha = 0.45f),
@@ -332,14 +402,14 @@ fun HomeScreen(
                         }
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
+                                .size(46.dp)
                                 .clip(CircleShape)
                                 .background(lofiCardBg)
-                                .border(1.dp, lofiAmber.copy(alpha = 0.35f), CircleShape)
-                                .clickable { onNavigateToTimer() },
+                                .border(1.dp, lofiAmber.copy(alpha = 0.4f), CircleShape)
+                                .clickable { scope.launch { drawerState.open() } },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(text = "🦉", fontSize = 26.sp)
+                            Text(text = "🦉", fontSize = 25.sp)
                         }
                     }
 
@@ -354,34 +424,46 @@ fun HomeScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Left Stat Card: Streak
+                        // Left Stat Card: Streak (2-line symmetrical layout matching Studied Today)
                         Card(
                             modifier = Modifier
                                 .weight(1f)
-                                .height(72.dp),
+                                .height(68.dp),
                             shape = RoundedCornerShape(18.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF332623)),
-                            border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.22f))
+                            border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.25f))
                         ) {
-                            Box(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
-                                contentAlignment = Alignment.Center
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
-                                    Text(text = "🔥", fontSize = 20.sp)
+                                    Text(text = "🔥", fontSize = 16.sp)
                                     Text(
-                                        text = "${advancedAnalytics.currentStreak} Day Streak",
+                                        text = "${advancedAnalytics.currentStreak} ${if (advancedAnalytics.currentStreak == 1) "Day" else "Days"}",
                                         fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 16.sp,
+                                        fontSize = 15.sp,
                                         color = lofiAmber,
-                                        maxLines = 1
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
+                                Text(
+                                    text = "Focus Streak",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp,
+                                    color = lofiCream.copy(alpha = 0.9f),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                             }
                         }
 
@@ -389,34 +471,39 @@ fun HomeScreen(
                         Card(
                             modifier = Modifier
                                 .weight(1f)
-                                .height(72.dp),
+                                .height(68.dp),
                             shape = RoundedCornerShape(18.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF352229)),
-                            border = BorderStroke(1.dp, lofiCoral.copy(alpha = 0.22f))
+                            border = BorderStroke(1.dp, lofiCoral.copy(alpha = 0.25f))
                         ) {
                             Column(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 10.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
-                                    Text(text = "☕", fontSize = 18.sp)
+                                    Text(text = "☕", fontSize = 16.sp)
                                     Text(
                                         text = todayTimeFormatted,
                                         fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 17.sp,
+                                        fontSize = 15.sp,
                                         color = lofiCoral,
-                                        maxLines = 1
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                                 Text(
                                     text = "Studied Today",
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 12.sp,
-                                    color = lofiCream.copy(alpha = 0.9f)
+                                    fontSize = 11.sp,
+                                    color = lofiCream.copy(alpha = 0.9f),
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -448,13 +535,18 @@ fun HomeScreen(
                     LofiAmberFocusCenterpiece(
                         activeSession = activeSession,
                         selectedMinutes = selectedQuickMinutes,
-                        onSessionExpired = { viewModel.stopActiveSession() }
+                        onSessionExpired = { viewModel.stopActiveSession() },
+                        onRingClick = {
+                            if (!isSessionRunning) onNavigateToTimer()
+                        }
                     )
 
                     // 4. Duration & Mode Pill Selector Row ("15m", "25m", "60m", "Strict") — Exact Design 6
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         listOf(15, 25, 60).forEach { mins ->
@@ -490,7 +582,7 @@ fun HomeScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         FocusSoundGenerator.SoundMode.entries.forEach { mode ->
@@ -498,6 +590,7 @@ fun HomeScreen(
                             LofiSelectablePill(
                                 text = mode.displayName,
                                 selected = isSelected,
+                                horizontalPad = 14.dp,
                                 onClick = { viewModel.setFocusSoundMode(mode) }
                             )
                         }
@@ -515,9 +608,9 @@ fun HomeScreen(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(56.dp)
+                                .height(54.dp)
                                 .testTag("start_focus_session_button"),
-                            shape = RoundedCornerShape(28.dp),
+                            shape = RoundedCornerShape(27.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = lofiAmber,
                                 contentColor = Color(0xFF1A1108)
@@ -526,20 +619,10 @@ fun HomeScreen(
                         ) {
                             Text(
                                 text = "Start Focus Session",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        }
-
-                        TextButton(
-                            onClick = onNavigateToTimer,
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = "Custom Timer & Schedules →",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = lofiAmber.copy(alpha = 0.85f)
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     } else {
@@ -564,7 +647,13 @@ fun HomeScreen(
                                 ) {
                                     Icon(Icons.Default.Stop, contentDescription = "Stop")
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Stop Focus Session", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                                    Text(
+                                        text = "Stop Focus Session",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 15.sp,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
                                 }
                             } else {
                                 Button(
@@ -589,44 +678,47 @@ fun HomeScreen(
                                     Text(
                                         text = if (deactivationMethod == "EXTREME_OVERRIDE") "Strict Mode Active • Override" else "Strict Mode Locked",
                                         fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 15.sp
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
                         }
                     }
 
-                    // 7. Exact Design 6 2x2 Bento Grid with Golden-Amber Borders
+                    // 7. Exact Design 6 2x2 Bento Grid with Golden-Amber Borders (Zero mid-word wrapping!)
                     Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             // Top-Left: YouTube Study Mode
                             LofiBentoFeatureCard(
-                                title = "YouTube\nStudy Mode",
-                                subtitle = if (youtubeStudyEnabled) "ON • Lecture Only" else "Tap to enable",
+                                titleLine1 = "YouTube",
+                                titleLine2 = "Study Mode",
+                                statusText = if (youtubeStudyEnabled) "● ON • Lecture" else "○ Tap to enable",
                                 isActive = youtubeStudyEnabled,
                                 badgeContent = {
                                     Box(
                                         modifier = Modifier
-                                            .size(52.dp)
-                                            .clip(RoundedCornerShape(14.dp))
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(10.dp))
                                             .background(
                                                 Brush.verticalGradient(
                                                     listOf(Color(0xFF1A243B), Color(0xFF0F1523))
                                                 )
                                             )
-                                            .border(1.dp, lofiAmber.copy(alpha = 0.35f), RoundedCornerShape(14.dp)),
+                                            .border(1.dp, lofiAmber.copy(alpha = 0.35f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(width = 32.dp, height = 22.dp)
-                                                .clip(RoundedCornerShape(6.dp))
+                                                .size(width = 24.dp, height = 17.dp)
+                                                .clip(RoundedCornerShape(5.dp))
                                                 .background(Color(0xFFE53935)),
                                             contentAlignment = Alignment.Center
                                         ) {
@@ -634,7 +726,7 @@ fun HomeScreen(
                                                 imageVector = Icons.Default.PlayArrow,
                                                 contentDescription = null,
                                                 tint = Color.White,
-                                                modifier = Modifier.size(15.dp)
+                                                modifier = Modifier.size(12.dp)
                                             )
                                         }
                                     }
@@ -651,21 +743,22 @@ fun HomeScreen(
 
                             // Top-Right: WhatsApp Chat-Only
                             LofiBentoFeatureCard(
-                                title = "WhatsApp\nChat-Only",
-                                subtitle = if (whatsappStatusEnabled) "ON • No Status" else "Tap to enable",
+                                titleLine1 = "WhatsApp",
+                                titleLine2 = "Chat-Only",
+                                statusText = if (whatsappStatusEnabled) "● ON • Chats" else "○ Tap to enable",
                                 isActive = whatsappStatusEnabled,
                                 badgeContent = {
                                     Box(
                                         modifier = Modifier
-                                            .size(52.dp)
-                                            .clip(RoundedCornerShape(14.dp))
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(10.dp))
                                             .background(Color(0xFF332625))
-                                            .border(1.dp, lofiAmber.copy(alpha = 0.35f), RoundedCornerShape(14.dp)),
+                                            .border(1.dp, lofiAmber.copy(alpha = 0.35f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(34.dp)
+                                                .size(26.dp)
                                                 .clip(CircleShape)
                                                 .background(Color(0xFFF3C68F)),
                                             contentAlignment = Alignment.Center
@@ -674,7 +767,7 @@ fun HomeScreen(
                                                 imageVector = Icons.Default.Chat,
                                                 contentDescription = null,
                                                 tint = Color(0xFF281C18),
-                                                modifier = Modifier.size(18.dp)
+                                                modifier = Modifier.size(14.dp)
                                             )
                                         }
                                     }
@@ -692,31 +785,32 @@ fun HomeScreen(
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             // Bottom-Left: 7s Mindful Gate
                             LofiBentoFeatureCard(
-                                title = "7s Mindful\nGate",
-                                subtitle = if (mindfulEnabled) "ON • ${mindfulPkgs.size} Apps" else "Tap to configure",
+                                titleLine1 = "7s Mindful",
+                                titleLine2 = "Breath Gate",
+                                statusText = if (mindfulEnabled) "● ON (${mindfulPkgs.size})" else "○ Tap to set",
                                 isActive = mindfulEnabled,
                                 badgeContent = {
                                     Box(
                                         modifier = Modifier
-                                            .size(52.dp)
-                                            .clip(RoundedCornerShape(14.dp))
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(10.dp))
                                             .background(
                                                 Brush.verticalGradient(
                                                     listOf(Color(0xFF253C46), Color(0xFF3A5F56))
                                                 )
                                             )
-                                            .border(1.dp, lofiAmber.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
+                                            .border(1.dp, lofiAmber.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.SelfImprovement,
                                             contentDescription = null,
                                             tint = lofiCream,
-                                            modifier = Modifier.size(28.dp)
+                                            modifier = Modifier.size(22.dp)
                                         )
                                     }
                                 },
@@ -726,23 +820,24 @@ fun HomeScreen(
 
                             // Bottom-Right: Keyword Blocker
                             LofiBentoFeatureCard(
-                                title = "Keyword\nBlocker",
-                                subtitle = if (blockedKeywords.isNotEmpty()) "${blockedKeywords.size} Topics Active" else "Tap to add words",
+                                titleLine1 = "Keyword",
+                                titleLine2 = "Blocker",
+                                statusText = if (blockedKeywords.isNotEmpty()) "● ${blockedKeywords.size} Blocked" else "○ Tap to add",
                                 isActive = blockedKeywords.isNotEmpty(),
                                 badgeContent = {
                                     Box(
                                         modifier = Modifier
-                                            .size(52.dp)
-                                            .clip(RoundedCornerShape(14.dp))
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(10.dp))
                                             .background(Color(0xFF332328))
-                                            .border(1.dp, lofiAmber.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
+                                            .border(1.dp, lofiAmber.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Shield,
                                             contentDescription = null,
                                             tint = lofiAmber,
-                                            modifier = Modifier.size(30.dp)
+                                            modifier = Modifier.size(22.dp)
                                         )
                                     }
                                 },
@@ -752,62 +847,7 @@ fun HomeScreen(
                         }
                     }
 
-                    // 8. Secondary Protection Controls & Quick Actions (Scrollable below the Design 6 hero screen)
-                    MorningFirstTaskLockCard(viewModel = viewModel)
-
-                    ContentLevelBlockingCard(viewModel = viewModel)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = onNavigateToAppSelection,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                                .testTag("view_blocked_apps_button"),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.55f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = lofiCream)
-                        ) {
-                            Icon(Icons.Default.AppBlocking, contentDescription = null, tint = lofiAmber, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Apps (${blockedApps.size})", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
-                        }
-
-                        OutlinedButton(
-                            onClick = onNavigateToAppLock,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                                .testTag("app_lock_button"),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.55f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = lofiCream)
-                        ) {
-                            Icon(Icons.Default.Lock, contentDescription = null, tint = lofiAmber, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("App Lock", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
-                        }
-
-                        OutlinedButton(
-                            onClick = onNavigateToBankingPause,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                                .testTag("banking_pause_button"),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.55f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = lofiCream)
-                        ) {
-                            Icon(Icons.Default.Shield, contentDescription = null, tint = lofiAmber, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Banking", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(90.dp))
+                    Spacer(modifier = Modifier.height(80.dp))
                 }
 
                 // Single-Step Interactive Dialog for 7s Mindful Gate from Bento Grid
@@ -880,7 +920,9 @@ fun HomeScreen(
                                                 color = lofiCream,
                                                 fontSize = 14.sp,
                                                 fontWeight = if (app.isMindfulDelay) FontWeight.Bold else FontWeight.Normal,
-                                                modifier = Modifier.weight(1f)
+                                                modifier = Modifier.weight(1f),
+                                                maxLines = 1,
+                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                             )
                                             Checkbox(
                                                 checked = app.isMindfulDelay,
@@ -1016,10 +1058,79 @@ fun HomeScreen(
 }
 
 @Composable
+private fun LofiDrawerNavigationItem(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    val lofiAmber = Color(0xFFFFB74D)
+    val lofiCream = Color(0xFFFFF8E7)
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag(testTag),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF281E29)),
+        border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.35f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(lofiAmber.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = lofiAmber,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = lofiCream,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                Text(
+                    text = subtitle,
+                    fontSize = 11.sp,
+                    color = lofiCream.copy(alpha = 0.65f),
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowRight,
+                contentDescription = null,
+                tint = lofiAmber
+            )
+        }
+    }
+}
+
+@Composable
 fun LofiAmberFocusCenterpiece(
     activeSession: FocusSession?,
     selectedMinutes: Int,
-    onSessionExpired: () -> Unit
+    onSessionExpired: () -> Unit,
+    onRingClick: () -> Unit = {}
 ) {
     val isRunning = activeSession != null && activeSession.isActive
     val startTime = activeSession?.startTime ?: 0L
@@ -1046,7 +1157,7 @@ fun LofiAmberFocusCenterpiece(
 
     val ringProgress = remember(timeRemainingMs, totalDurationMs, isRunning) {
         if (!isRunning) {
-            0.78f // Aesthetic golden-amber arc when idle, matching Design 6
+            0.78f
         } else {
             val elapsed = (totalDurationMs - timeRemainingMs).coerceIn(0L, totalDurationMs)
             (elapsed.toFloat() / totalDurationMs.toFloat()).coerceIn(0.05f, 1f)
@@ -1081,16 +1192,15 @@ fun LofiAmberFocusCenterpiece(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(250.dp),
+            .height(240.dp)
+            .clickable(enabled = !isRunning, onClick = onRingClick),
         contentAlignment = Alignment.Center
     ) {
-        // Background starfield + glowing golden-amber circular ring
         Canvas(modifier = Modifier.fillMaxSize()) {
             val cx = size.width / 2f
             val cy = size.height / 2f
             val ringRadius = size.minDimension * 0.41f
 
-            // Subtle twinkling golden starfield particles around the ring (Design 6 signature detail)
             val starOffsets = listOf(
                 Triple(-1.35f, -0.78f, 3.5f),
                 Triple(1.28f, -0.72f, 3.2f),
@@ -1112,7 +1222,6 @@ fun LofiAmberFocusCenterpiece(
                 )
             }
 
-            // Soft radial amber halo behind the ring
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
@@ -1127,7 +1236,6 @@ fun LofiAmberFocusCenterpiece(
                 center = Offset(cx, cy)
             )
 
-            // Dark warm espresso inner disc
             drawCircle(
                 color = Color(0xFF1B141D),
                 radius = ringRadius * 0.92f,
@@ -1138,7 +1246,6 @@ fun LofiAmberFocusCenterpiece(
             val arcSize = Size(ringRadius * 2f, ringRadius * 2f)
             val topLeft = Offset(cx - ringRadius, cy - ringRadius)
 
-            // Dim warm amber track ring
             drawArc(
                 color = Color(0xFF4A3325),
                 startAngle = 0f,
@@ -1149,7 +1256,6 @@ fun LofiAmberFocusCenterpiece(
                 style = Stroke(width = strokePx, cap = StrokeCap.Round)
             )
 
-            // Outer soft glow on active progress arc
             drawArc(
                 color = Color(0xFFFFB74D).copy(alpha = 0.32f * glowPulse),
                 startAngle = -90f,
@@ -1160,7 +1266,6 @@ fun LofiAmberFocusCenterpiece(
                 style = Stroke(width = strokePx * 1.9f, cap = StrokeCap.Round)
             )
 
-            // Main Golden-Amber progress arc
             drawArc(
                 brush = Brush.sweepGradient(
                     colors = listOf(
@@ -1179,18 +1284,19 @@ fun LofiAmberFocusCenterpiece(
             )
         }
 
-        // Center content: Large "25:00" digits + Glowing Bonsai Tree
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(top = 12.dp)
+            modifier = Modifier.padding(top = 10.dp)
         ) {
             Text(
                 text = formattedTimer,
-                fontSize = if (formattedTimer.length > 5) 36.sp else 50.sp,
+                fontSize = if (formattedTimer.length > 5) 34.sp else 48.sp,
                 fontWeight = FontWeight.Black,
                 color = Color(0xFFFFF8E7),
-                letterSpacing = 1.sp
+                letterSpacing = 1.sp,
+                maxLines = 1,
+                softWrap = false
             )
             Spacer(modifier = Modifier.height(2.dp))
             val dynamicStage = when {
@@ -1200,21 +1306,23 @@ fun LofiAmberFocusCenterpiece(
                 else -> GrowthStage.SEED
             }
             Box(
-                modifier = Modifier.size(64.dp),
+                modifier = Modifier.size(60.dp),
                 contentAlignment = Alignment.Center
             ) {
                 PlantVisual(
                     stage = dynamicStage,
-                    size = 64.dp
+                    size = 60.dp
                 )
             }
             if (isRunning) {
                 Text(
-                    text = if (activeSession?.isStrict == true) "🔒 STRICT FOCUS • ${(ringProgress * 100).toInt()}%" else "FOCUS ACTIVE • ${(ringProgress * 100).toInt()}%",
+                    text = if (activeSession?.isStrict == true) "🔒 STRICT • ${(ringProgress * 100).toInt()}%" else "FOCUS • ${(ringProgress * 100).toInt()}%",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFFFFB74D),
-                    letterSpacing = 0.8.sp
+                    letterSpacing = 0.8.sp,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -1225,6 +1333,7 @@ fun LofiAmberFocusCenterpiece(
 private fun LofiSelectablePill(
     text: String,
     selected: Boolean,
+    horizontalPad: Dp = 16.dp,
     onClick: () -> Unit
 ) {
     val lofiAmber = Color(0xFFFFB74D)
@@ -1239,22 +1348,25 @@ private fun LofiSelectablePill(
                 shape = RoundedCornerShape(50)
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 9.dp),
+            .padding(horizontal = horizontalPad, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
-            color = if (selected) Color(0xFF1A1108) else lofiCream
+            color = if (selected) Color(0xFF1A1108) else lofiCream,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
 
 @Composable
 private fun LofiBentoFeatureCard(
-    title: String,
-    subtitle: String,
+    titleLine1: String,
+    titleLine2: String,
+    statusText: String,
     isActive: Boolean,
     badgeContent: @Composable () -> Unit,
     onClick: () -> Unit,
@@ -1264,11 +1376,11 @@ private fun LofiBentoFeatureCard(
     val lofiCream = Color(0xFFFFF8E7)
     Card(
         modifier = modifier
-            .height(94.dp)
+            .height(84.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E1620)
+            containerColor = Color(0xF01E1620)
         ),
         border = BorderStroke(
             width = if (isActive) 1.8.dp else 1.2.dp,
@@ -1278,9 +1390,9 @@ private fun LofiBentoFeatureCard(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 9.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
             badgeContent()
             Column(
@@ -1288,20 +1400,34 @@ private fun LofiBentoFeatureCard(
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = title,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    lineHeight = 17.sp,
+                    text = titleLine1,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 12.sp,
+                    lineHeight = 14.sp,
+                    letterSpacing = (-0.2).sp,
                     color = lofiCream,
-                    maxLines = 2
+                    maxLines = 1,
+                    softWrap = false
                 )
-                Spacer(modifier = Modifier.height(3.dp))
                 Text(
-                    text = subtitle,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 10.sp,
+                    text = titleLine2,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.5.sp,
+                    lineHeight = 13.5.sp,
+                    letterSpacing = (-0.2).sp,
+                    color = lofiCream.copy(alpha = 0.92f),
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = statusText,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 9.5.sp,
+                    lineHeight = 11.sp,
                     color = if (isActive) lofiAmber else lofiCream.copy(alpha = 0.55f),
-                    maxLines = 1
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -1846,7 +1972,7 @@ fun ActiveSessionWidget(
         modifier = Modifier.fillMaxWidth().testTag("active_session_widget_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0x1F26A69A),
+            containerColor = Color(0xFF281E29),
             contentColor = Color.White
         )
     ) {
@@ -2279,13 +2405,13 @@ fun LongTermBlockSection(
                                             modifier = Modifier
                                                 .size(36.dp)
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0x1F3DFFC4)),
+                                                .background(Color(0x26FFB74D)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.AppBlocking,
                                                 contentDescription = "App block icon",
-                                                tint = Color(0xFF3DFFC4),
+                                                tint = Color(0xFFFFB74D),
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -2674,8 +2800,9 @@ fun AnalyticsCard(
         modifier = Modifier.fillMaxWidth().testTag("analytics_dashboard_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-        )
+            containerColor = Color(0xEB221824)
+        ),
+        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -2735,7 +2862,7 @@ fun AnalyticsCard(
                     ) {
                         Text(
                             text = tab,
-                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
+                            color = if (isSelected) Color(0xFF1A1108) else Color(0xFFFFF8E7).copy(alpha = 0.65f),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -2849,7 +2976,7 @@ fun AnalyticsCard(
                                                 color = Color(0xFFFF9800)
                                             )
                                             Text(
-                                                text = "Current Streak",
+                                                text = "Current Streak", maxLines = 1, softWrap = false,
                                                 fontSize = 10.sp,
                                                 color = Color.White.copy(alpha = 0.5f)
                                             )
@@ -2869,7 +2996,7 @@ fun AnalyticsCard(
                                                 color = Color(0xFF4CAF50)
                                             )
                                             Text(
-                                                text = "Longest Streak",
+                                                text = "Best Streak", maxLines = 1, softWrap = false,
                                                 fontSize = 10.sp,
                                                 color = Color.White.copy(alpha = 0.5f)
                                             )
@@ -2889,7 +3016,7 @@ fun AnalyticsCard(
                                                 color = MaterialTheme.colorScheme.primary
                                             )
                                             Text(
-                                                text = "Total Days",
+                                                text = "Total Days", maxLines = 1, softWrap = false,
                                                 fontSize = 10.sp,
                                                 color = Color.White.copy(alpha = 0.5f)
                                             )
@@ -2951,7 +3078,7 @@ fun AnalyticsCard(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "Today's Focus Time",
+                                            text = "Focus Time", maxLines = 1, softWrap = false,
                                             fontSize = 9.sp,
                                             color = Color.White.copy(alpha = 0.6f),
                                             textAlign = TextAlign.Center
@@ -2982,7 +3109,7 @@ fun AnalyticsCard(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "Completed Sessions",
+                                            text = "Completed", maxLines = 1, softWrap = false,
                                             fontSize = 9.sp,
                                             color = Color.White.copy(alpha = 0.6f),
                                             textAlign = TextAlign.Center
@@ -3013,7 +3140,7 @@ fun AnalyticsCard(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "Ended Early",
+                                            text = "Ended Early", maxLines = 1, softWrap = false,
                                             fontSize = 9.sp,
                                             color = Color.White.copy(alpha = 0.6f),
                                             textAlign = TextAlign.Center
@@ -3058,7 +3185,7 @@ fun AnalyticsCard(
                                         color = Color.White
                                     )
                                     Text(
-                                        text = "Weekly Focus Hours",
+                                        text = "Weekly Hours", maxLines = 1, softWrap = false,
                                         fontSize = 9.sp,
                                         color = Color.White.copy(alpha = 0.5f)
                                     )
@@ -3085,7 +3212,7 @@ fun AnalyticsCard(
                                         color = Color.White
                                     )
                                     Text(
-                                        text = "Weekly Sessions",
+                                        text = "Sessions", maxLines = 1, softWrap = false,
                                         fontSize = 9.sp,
                                         color = Color.White.copy(alpha = 0.5f)
                                     )
@@ -3112,7 +3239,7 @@ fun AnalyticsCard(
                                         color = Color.White
                                     )
                                     Text(
-                                        text = "Success Rate",
+                                        text = "Success Rate", maxLines = 1, softWrap = false,
                                         fontSize = 9.sp,
                                         color = Color.White.copy(alpha = 0.5f)
                                     )
@@ -3150,7 +3277,7 @@ fun AnalyticsCard(
                                     ) {
                                         Text(
                                             text = tabOption,
-                                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
+                                            color = if (isSelected) Color(0xFF1A1108) else Color(0xFFFFF8E7).copy(alpha = 0.65f),
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -3189,7 +3316,7 @@ fun AnalyticsCard(
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Text(
-                                        text = "Monthly Hours",
+                                        text = "Monthly Hours", maxLines = 1, softWrap = false,
                                         fontSize = 9.sp,
                                         color = Color.White.copy(alpha = 0.5f),
                                         textAlign = TextAlign.Center
@@ -3210,7 +3337,7 @@ fun AnalyticsCard(
                                         color = Color(0xFF4CAF50)
                                     )
                                     Text(
-                                        text = "Longest Session",
+                                        text = "Best Session", maxLines = 1, softWrap = false,
                                         fontSize = 9.sp,
                                         color = Color.White.copy(alpha = 0.5f),
                                         textAlign = TextAlign.Center
@@ -3231,7 +3358,7 @@ fun AnalyticsCard(
                                         color = Color(0xFFFF9800)
                                     )
                                     Text(
-                                        text = "Longest Streak",
+                                        text = "Best Streak", maxLines = 1, softWrap = false,
                                         fontSize = 9.sp,
                                         color = Color.White.copy(alpha = 0.5f),
                                         textAlign = TextAlign.Center
@@ -3363,7 +3490,7 @@ fun AnalyticsCard(
                                         .verticalScroll(rememberScrollState()),
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy 'at' h:mm a", Locale.getDefault()) }
+                                    val dateFormat = remember { SimpleDateFormat("dd MMM yyyy • hh:mm a", Locale.getDefault()) }
                                     
                                     allSessions.sortedByDescending { it.startTime }.forEach { session ->
                                         val formattedDate = remember(session.startTime) {
@@ -3388,8 +3515,11 @@ fun AnalyticsCard(
                                                     Text(
                                                         text = formattedDate,
                                                         fontWeight = FontWeight.Bold,
-                                                        fontSize = 11.sp,
-                                                        color = Color.White
+                                                        fontSize = 11.5.sp,
+                                                        color = Color(0xFFFFF8E7),
+                                                        maxLines = 1,
+                                                        softWrap = false,
+                                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                                     )
                                                     Spacer(modifier = Modifier.height(4.dp))
                                                     Row(
@@ -3413,11 +3543,11 @@ fun AnalyticsCard(
                                                     }
                                                 }
 
-                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Spacer(modifier = Modifier.width(8.dp))
 
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                Column(
+                                                    horizontalAlignment = Alignment.End,
+                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
                                                 ) {
                                                     Box(
                                                         modifier = Modifier
@@ -4163,7 +4293,7 @@ fun FocusTimerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Configure Focus", fontWeight = FontWeight.Bold) },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Configure Focus", fontWeight = FontWeight.Black, color = Color(0xFFFFF8E7)); Text("🦉", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -4809,7 +4939,7 @@ fun AppSelectionScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Block Distractions", fontWeight = FontWeight.Bold) },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Block Distractions", fontWeight = FontWeight.Black, color = Color(0xFFFFF8E7)); Text("🦉", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -5052,7 +5182,7 @@ fun AppLockScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("App Lock", fontWeight = FontWeight.Bold) },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("App Lock (PIN Gate)", fontWeight = FontWeight.Black, color = Color(0xFFFFF8E7)); Text("🦉", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -5407,14 +5537,14 @@ fun BlockDetailsScreen(
                         .size(80.dp)
                         .clip(RoundedCornerShape(20.dp))
                         .background(
-                            if (blockInfo.type == "WEBSITE") Color(0x1FFFA630) else Color(0x1F3DFFC4)
+                            if (blockInfo.type == "WEBSITE") Color(0x1FFFA630) else Color(0x26FFB74D)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (blockInfo.type == "WEBSITE") Icons.Default.Language else Icons.Default.AppBlocking,
                         contentDescription = "Block type",
-                        tint = if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFF3DFFC4),
+                        tint = if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFFFFB74D),
                         modifier = Modifier.size(40.dp)
                     )
                 }
@@ -5431,7 +5561,7 @@ fun BlockDetailsScreen(
                     text = if (blockInfo.type == "WEBSITE") "WEBSITE BLOCK" else "APP BLOCK",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = (if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFF3DFFC4)),
+                    color = (if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFFFFB74D)),
                     letterSpacing = 1.5.sp
                 )
 
@@ -5520,7 +5650,7 @@ fun BlockDetailsScreen(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                         contentColor = Color.White,
-                        disabledContainerColor = Color(0x1F26A69A).copy(alpha = 0.1f),
+                        disabledContainerColor = Color(0xFF281E29).copy(alpha = 0.1f),
                         disabledContentColor = Color.White.copy(alpha = 0.3f)
                     ),
                     shape = RoundedCornerShape(16.dp),
@@ -5607,7 +5737,7 @@ fun DailyDashboardCard(
             .testTag("daily_dashboard_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            containerColor = Color(0xEB221824)
         ),
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
     ) {
@@ -5740,8 +5870,9 @@ fun ContentLevelBlockingCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-        )
+            containerColor = Color(0xEB221824)
+        ),
+        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -5918,7 +6049,9 @@ fun ContentLevelBlockingCard(viewModel: FocusViewModel) {
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "YouTube \"Study Mode\" (Lecture Only)",
+                            text = "YouTube Study Mode (Lecture)",
+                            maxLines = 1,
+                            softWrap = false,
                             fontWeight = FontWeight.Bold,
                             color = if (isStrictActive) Color.White.copy(alpha = 0.6f) else Color.White,
                             fontSize = 15.sp
@@ -5962,7 +6095,9 @@ fun ContentLevelBlockingCard(viewModel: FocusViewModel) {
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "WhatsApp / Telegram \"Chat-Only Mode\"",
+                            text = "WhatsApp / Telegram Chat-Only",
+                            maxLines = 1,
+                            softWrap = false,
                             fontWeight = FontWeight.Bold,
                             color = if (isStrictActive) Color.White.copy(alpha = 0.6f) else Color.White,
                             fontSize = 15.sp
@@ -6005,8 +6140,9 @@ fun AccentThemeCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth().testTag("accent_theme_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-        )
+            containerColor = Color(0xEB221824)
+        ),
+        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -6115,9 +6251,11 @@ fun AccentThemeCard(viewModel: FocusViewModel) {
                         
                         Text(
                             text = theme.displayName,
-                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
+                            color = if (isSelected) Color(0xFFFFB74D) else Color(0xFFFFF8E7).copy(alpha = 0.65f),
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            fontSize = 11.sp
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -6139,8 +6277,9 @@ fun WallpaperSettingsDrawerCard(
             .testTag("wallpaper_settings_card"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
+            containerColor = Color(0xEB221824)
+        ),
+        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -6270,29 +6409,29 @@ fun WeeklyInsightsBarChart(
             .padding(14.dp)
             .testTag("weekly_insights_bar_chart")
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
                 text = "Past 7 Days Focus Distribution",
                 fontWeight = FontWeight.Bold,
-                fontSize = 12.sp,
-                color = Color.White.copy(alpha = 0.8f)
+                fontSize = 13.sp,
+                color = Color(0xFFFFF8E7),
+                maxLines = 1,
+                softWrap = false
             )
-            
             Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Box(modifier = Modifier.size(8.dp).background(Color(0xFF4CAF50), RoundedCornerShape(2.dp)))
-                    Text("Completed", fontSize = 9.sp, color = Color.White.copy(alpha = 0.6f))
+                    Text("Completed", fontSize = 10.sp, color = Color(0xFFFFF8E7).copy(alpha = 0.75f), maxLines = 1, softWrap = false)
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Box(modifier = Modifier.size(8.dp).background(Color(0xFFFF5722), RoundedCornerShape(2.dp)))
-                    Text("Early/Missed", fontSize = 9.sp, color = Color.White.copy(alpha = 0.6f))
+                    Text("Early / Missed", fontSize = 10.sp, color = Color(0xFFFFF8E7).copy(alpha = 0.75f), maxLines = 1, softWrap = false)
                 }
             }
         }
@@ -6440,9 +6579,10 @@ fun MyForestGalleryCard(
             .testTag("my_forest_gallery_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
-            contentColor = Color.White
-        )
+            containerColor = Color(0xEB221824),
+            contentColor = Color(0xFFFFF8E7)
+        ),
+        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -6710,7 +6850,7 @@ fun GlitchCountdownText(
     var isGlitching by remember { mutableStateOf(false) }
     var glitchOffsetX by remember { mutableStateOf(0f) }
     var glitchOffsetY by remember { mutableStateOf(0f) }
-    var glitchColor1 by remember { mutableStateOf(Color(0xFF3DFFC4)) }
+    var glitchColor1 by remember { mutableStateOf(Color(0xFFFFB74D)) }
     var glitchColor2 by remember { mutableStateOf(Color(0xFFFFA630)) }
 
     // Execute glitch effect on minute boundary change (seconds == 0) and random 30-second intervals
@@ -6723,11 +6863,11 @@ fun GlitchCountdownText(
                 glitchOffsetY = (-4..4).random().toFloat()
                 // Randomly swap foreground layers
                 if ((0..1).random() == 0) {
-                    glitchColor1 = Color(0xFF3DFFC4)
+                    glitchColor1 = Color(0xFFFFB74D)
                     glitchColor2 = Color(0xFFFFA630)
                 } else {
                     glitchColor1 = Color(0xFFFFA630)
-                    glitchColor2 = Color(0xFF3DFFC4)
+                    glitchColor2 = Color(0xFFFFB74D)
                 }
                 kotlinx.coroutines.delay(30L)
             }
@@ -6747,7 +6887,7 @@ fun GlitchCountdownText(
 
         // High fidelity glow effect for the retro-futuristic digital clock
         val neonGlowShadow = Shadow(
-            color = if (isHyperFocus) Color(0xFFFF5252).copy(alpha = 0.85f) else Color(0xFF3DFFC4).copy(alpha = 0.85f),
+            color = if (isHyperFocus) Color(0xFFFF5252).copy(alpha = 0.85f) else Color(0xFFFFB74D).copy(alpha = 0.85f),
             offset = Offset(0f, 0f),
             blurRadius = 14f
         )
@@ -6897,8 +7037,8 @@ fun StrictShieldHexagonVisual(
                 val vignetteGradient = Brush.radialGradient(
                     colors = listOf(
                         Color.Transparent,
-                        Color(0xFF3DFFC4).copy(alpha = 0.05f),
-                        Color(0xFF3DFFC4).copy(alpha = 0.25f)
+                        Color(0xFFFFB74D).copy(alpha = 0.05f),
+                        Color(0xFFFFB74D).copy(alpha = 0.25f)
                     ),
                     center = Offset(width / 2f, height / 2f),
                     radius = Math.max(width, height) / 1.1f
@@ -6934,18 +7074,11 @@ fun StrictShieldHexagonVisual(
                     }
                 }
 
-                // Outer neon cyan glow path layer
+                // Subtle Lofi golden-amber ambient glow (no distracting lines over text/cards)
                 drawPath(
                     path = path,
-                    color = Color(0xFF3DFFC4).copy(alpha = 0.2f),
-                    style = Stroke(width = 4.dp.toPx())
-                )
-
-                // High definition inner sharp grid line layer
-                drawPath(
-                    path = path,
-                    color = Color(0xFF3DFFC4).copy(alpha = 0.5f),
-                    style = Stroke(width = 1.2.dp.toPx())
+                    color = Color(0xFFFFB74D).copy(alpha = 0.04f),
+                    style = Stroke(width = 0.8.dp.toPx())
                 )
             }
         }
@@ -6984,7 +7117,7 @@ fun StrictScheduleManagerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Recurring Schedules", fontWeight = FontWeight.Bold) },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Recurring Schedules", fontWeight = FontWeight.Black, color = Color(0xFFFFF8E7)); Text("🦉", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -7765,15 +7898,21 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
             Text(
                 text = "$effectiveTitle • ",
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 14.sp,
+                fontSize = 13.5.sp,
                 color = lofiCoral,
-                letterSpacing = 0.5.sp
+                letterSpacing = 0.5.sp,
+                maxLines = 1,
+                softWrap = false,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
             )
             Text(
-                text = "${days} Days : ${hours} Hrs : ${minutes} Mins",
+                text = "${days}d : ${hours}h : ${minutes}m",
                 fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
-                color = lofiAmber
+                fontSize = 13.5.sp,
+                color = lofiAmber,
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
@@ -7883,16 +8022,20 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
 @Composable
 fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
     val enabled by viewModel.morningLockEnabled.collectAsStateWithLifecycle()
-    val completedMins by viewModel.todayCompletedFocusMinutes.collectAsStateWithLifecycle()
     val isStrictActive by viewModel.isStrictModeActive.collectAsStateWithLifecycle()
-    val unlockedToday = completedMins >= 25
+    val now = TrustedClock.now()
+    val currentHour = remember(now) {
+        Calendar.getInstance().apply { timeInMillis = now }.get(Calendar.HOUR_OF_DAY)
+    }
+    val isCurrentlyInMorningWindow = enabled && currentHour in 5..8
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-        )
+            containerColor = Color(0xFF281E29)
+        ),
+        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -7914,31 +8057,38 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                         tint = Color(0xFFFFB74D),
                         modifier = Modifier.size(24.dp)
                     )
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Morning \"First Task\" Lock",
+                            text = "Morning 5–9 AM Strict Lock",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            color = Color.White
+                            fontSize = 16.sp,
+                            color = Color(0xFFFFF8E7),
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "5:00 AM – 9:00 AM · No Morning Doomscrolling",
-                            fontSize = 12.sp,
-                            color = Color(0xFFFFB74D)
+                            text = "Daily 5:00 AM – 9:00 AM Auto Strict Mode",
+                            fontSize = 11.5.sp,
+                            color = Color(0xFFFFB74D),
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 Switch(
                     checked = enabled,
-                    enabled = !(enabled && isStrictActive),
+                    enabled = !(enabled && (isStrictActive || isCurrentlyInMorningWindow)),
                     onCheckedChange = { viewModel.setMorningLockEnabled(it) }
                 )
             }
 
             Text(
-                text = "Locks social & entertainment apps between 5:00 AM and 9:00 AM until you complete your first 25-minute Focus Session of the day.",
+                text = "Automatically turns ON Strict Mode every morning from 5:00 AM to 9:00 AM with a live countdown timer so you start your day focused without morning doomscrolling.",
                 fontSize = 13.sp,
-                color = Color.White.copy(alpha = 0.65f),
+                color = Color(0xFFFFF8E7).copy(alpha = 0.72f),
                 lineHeight = 18.sp
             )
 
@@ -7951,16 +8101,27 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Today's First-Task Progress",
+                    text = "Daily 5 AM – 9 AM Schedule",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color.White.copy(alpha = 0.75f)
+                    color = Color(0xFFFFF8E7).copy(alpha = 0.8f),
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (unlockedToday) "✓ $completedMins / 25 min (Unlocked)" else "$completedMins / 25 min completed",
-                    fontSize = 12.sp,
+                    text = when {
+                        isCurrentlyInMorningWindow -> "🔒 ACTIVE UNTIL 9 AM"
+                        enabled -> "✓ ARMED DAILY"
+                        else -> "OFF"
+                    },
+                    fontSize = 11.5.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = if (unlockedToday) Color(0xFF3DFFC4) else Color(0xFFFFB74D)
+                    color = if (enabled) Color(0xFFFFB74D) else Color.White.copy(alpha = 0.45f),
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -7979,8 +8140,9 @@ fun MindfulLaunchDelayCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-        )
+            containerColor = Color(0xEB221824)
+        ),
+        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -8004,15 +8166,19 @@ fun MindfulLaunchDelayCard(viewModel: FocusViewModel) {
                     )
                     Column {
                         Text(
-                            text = "Mindful Launch Delay (7s Gate)",
+                            text = "7s Mindful Launch Gate",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            color = Color.White
+                            fontSize = 16.sp,
+                            color = Color(0xFFFFF8E7),
+                            maxLines = 1,
+                            softWrap = false
                         )
                         Text(
-                            text = "\"Rukiye! Kya ye abhi zaroori hai?\"",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.primary
+                            text = "\"Rukiye! Kya ye zaroori hai?\"",
+                            fontSize = 11.5.sp,
+                            color = Color(0xFFFFB74D),
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -8118,8 +8284,9 @@ fun KeywordTopicBlockerCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-        )
+            containerColor = Color(0xEB221824)
+        ),
+        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),

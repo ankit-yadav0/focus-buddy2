@@ -96,11 +96,11 @@ fun UninstallReflectionScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF1A1A1A)
+                    containerColor = Color(0xFF241B26)
                 )
             )
         },
-        containerColor = Color(0xFF121212)
+        containerColor = Color(0xFF171219)
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -152,7 +152,7 @@ fun UninstallReflectionScreen(
                 text = "Live Word Count: $wordCount / 600 words",
                 fontWeight = FontWeight.Bold,
                 fontSize = 15.sp,
-                color = if (isReady) Color(0xFF3DFFC4) else MaterialTheme.colorScheme.error
+                color = if (isReady) Color(0xFFFFB74D) else MaterialTheme.colorScheme.error
             )
 
             LinearProgressIndicator(
@@ -161,7 +161,7 @@ fun UninstallReflectionScreen(
                     .fillMaxWidth()
                     .height(6.dp)
                     .testTag("word_count_progress"),
-                color = if (isReady) Color(0xFF3DFFC4) else MaterialTheme.colorScheme.error,
+                color = if (isReady) Color(0xFFFFB74D) else MaterialTheme.colorScheme.error,
                 trackColor = Color.White.copy(alpha = 0.1f)
             )
 
@@ -224,7 +224,7 @@ fun UninstallReflectionScreen(
                                 .testTag("reactivate_protection_button"),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF3DFFC4),
+                                containerColor = Color(0xFFFFB74D),
                                 contentColor = Color.Black
                             )
                         ) {
@@ -264,10 +264,10 @@ fun UninstallReflectionScreen(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White,
-                        focusedBorderColor = if (isReady) Color(0xFF3DFFC4) else Color.White.copy(alpha = 0.3f),
+                        focusedBorderColor = if (isReady) Color(0xFFFFB74D) else Color.White.copy(alpha = 0.3f),
                         unfocusedBorderColor = Color.White.copy(alpha = 0.15f),
-                        focusedContainerColor = Color(0xFF1E1E1E),
-                        unfocusedContainerColor = Color(0xFF1E1E1E)
+                        focusedContainerColor = Color(0xFF281E29),
+                        unfocusedContainerColor = Color(0xFF281E29)
                     ),
                     shape = RoundedCornerShape(12.dp)
                 )

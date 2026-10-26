@@ -372,16 +372,24 @@ fun BlockScreenContent(
 ) {
     val endTime = activeSession?.endTime ?: fallbackEndTime
     val actualEndTime = if (isLongTerm) longTermEndDate else endTime
-    val startTime = activeSession?.startTime ?: (actualEndTime - 15 * 60 * 1000L) // fallback to 15 min session
-    val durationMinutes = activeSession?.durationMinutes ?: 15
+    val nowInitial = remember(actualEndTime) { TrustedClock.now() }
+    val computedDurationMin = remember(actualEndTime, nowInitial) {
+        if (actualEndTime > nowInitial) {
+            ((actualEndTime - nowInitial + 59_999L) / 60_000L).toInt().coerceAtLeast(1)
+        } else 0
+    }
+    val startTime = activeSession?.startTime ?: nowInitial
+    val durationMinutes = activeSession?.durationMinutes ?: computedDurationMin
 
     var timeRemaining by remember(actualEndTime) { mutableStateOf(max(0L, actualEndTime - TrustedClock.now())) }
 
     // Tick the countdown every second for active block/session
     LaunchedEffect(actualEndTime) {
-        while (timeRemaining > 0) {
-            kotlinx.coroutines.delay(1000L)
-            timeRemaining = max(0L, actualEndTime - TrustedClock.now())
+        if (actualEndTime > 0L) {
+            while (timeRemaining > 0) {
+                kotlinx.coroutines.delay(1000L)
+                timeRemaining = max(0L, actualEndTime - TrustedClock.now())
+            }
         }
     }
 
@@ -871,43 +879,45 @@ fun ContentBlockedScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            if (timeRemaining > 0L) {
+                Spacer(modifier = Modifier.height(8.dp))
 
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0x15FFFFFF),
-                    contentColor = Color.White
-                ),
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.padding(horizontal = 16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 32.dp, vertical = 20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0x15FFFFFF),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 ) {
-                    Text(
-                        text = "REMAINING TIME",
-                        color = Color.White.copy(alpha = 0.5f),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 2.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    BoxWithConstraints(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        val containerWidth = maxWidth
-                        val calculatedFontSize = (containerWidth.value / (timeString.length * 0.62f)).coerceIn(10f, 32f).sp
-                        val calculatedLineHeight = (calculatedFontSize.value * 1.3).sp
+                    Column(
+                        modifier = Modifier.padding(horizontal = 32.dp, vertical = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Text(
-                            text = timeString,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = calculatedFontSize,
-                            lineHeight = calculatedLineHeight,
-                            fontWeight = FontWeight.Black,
-                            fontFamily = FontFamily.Monospace,
-                            textAlign = TextAlign.Center,
-                            softWrap = false,
-                            maxLines = 1
+                            text = "REMAINING TIME",
+                            color = Color.White.copy(alpha = 0.5f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 2.sp
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        BoxWithConstraints(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            val containerWidth = maxWidth
+                            val calculatedFontSize = (containerWidth.value / (timeString.length * 0.62f)).coerceIn(10f, 32f).sp
+                            val calculatedLineHeight = (calculatedFontSize.value * 1.3).sp
+                            Text(
+                                text = timeString,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = calculatedFontSize,
+                                lineHeight = calculatedLineHeight,
+                                fontWeight = FontWeight.Black,
+                                fontFamily = FontFamily.Monospace,
+                                textAlign = TextAlign.Center,
+                                softWrap = false,
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
             }
