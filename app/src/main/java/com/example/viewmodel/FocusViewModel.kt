@@ -270,8 +270,17 @@ class FocusViewModel(
             repository.saveSetting("morning_lock_enabled", enabled.toString())
 
             val morningLabel = "Morning First-Task Lock (5 AM - 9 AM)"
-            val existing = allSchedules.value.firstOrNull {
+            val dbSchedules = repository.getAllSchedulesSync()
+            val matching = dbSchedules.filter {
                 it.label == morningLabel || (it.startHour == 5 && it.startMinute == 0 && it.endHour == 9 && it.endMinute == 0)
+            }
+            val existing = matching.firstOrNull()
+            // Clean up any duplicate morning schedules if present
+            if (matching.size > 1) {
+                for (dup in matching.drop(1)) {
+                    AlarmScheduler.cancelWindow(context, dup.id)
+                    repository.deleteSchedule(dup.id)
+                }
             }
             if (enabled) {
                 val savedSchedule = if (existing != null) {

@@ -40,6 +40,7 @@ object BankingPausePolicy {
     /** Apps whose blocking is the whole point (content-level blocking) plus system UI. Never pausable. */
     private val NEVER_PAUSE: Set<String> = setOf(
         "com.google.android.youtube", "com.instagram.android", "com.snapchat.android",
+        "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger", "org.telegram.messenger.web",
         "com.android.settings", "com.android.systemui", "android",
         "com.android.packageinstaller", "com.google.android.packageinstaller"
     )

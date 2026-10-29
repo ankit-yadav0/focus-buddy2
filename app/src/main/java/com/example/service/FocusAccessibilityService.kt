@@ -143,6 +143,8 @@ class FocusAccessibilityService : AccessibilityService() {
     private var lastYouTubeFullscreenClickMs = 0L
     private var lastYouTubeSearchActiveMs = 0L
     private var lastYouTubeVideoOpenMs = 0L
+    private var lastYouTubeFullScreenActiveMs = 0L
+    private var lastAutoRotatedVideoTitle: String = ""
     private var lastMorningSessionAutoStartMs = 0L
     private var youtubeFullscreenHelperJob: Job? = null
 
@@ -562,7 +564,7 @@ class FocusAccessibilityService : AccessibilityService() {
      */
     private fun ensureMorningStrictSessionIfInWindow(now: Long) {
         if (!isMorningStrictWindowActive(now)) return
-        if (isSessionActive && isSessionStrict && sessionEndTime >= getTodayNineAmTrustedMillis(now) - 60_000L) return
+        if (isSessionActive && isSessionStrict && now < sessionEndTime) return
         if (now - lastMorningSessionAutoStartMs < 15_000L) return
         lastMorningSessionAutoStartMs = now
         val nineAm = getTodayNineAmTrustedMillis(now)
@@ -899,15 +901,13 @@ class FocusAccessibilityService : AccessibilityService() {
             val ytStudyMode = prefs.getBoolean("youtube_study_mode", false)
 
             if (packageName == "com.google.android.youtube" && (ytShortsBlocked || ytStudyMode)) {
-                val hasShortsText = screenTexts.any { it.contains("Shorts", ignoreCase = true) }
                 val hasShortsClass = event.className?.toString()?.lowercase()?.contains("shorts") == true ||
                                      event.className?.toString()?.lowercase()?.contains("reel") == true
                 val hasShortsId = checkNodeForShortsSpecifics(nodeToUse)
-                val hasShortsDescription = screenTexts.any { it.contains("shorts player", ignoreCase = true) || it.contains("reel player", ignoreCase = true) }
-                val hasRemixAction = screenTexts.any { it.equals("Remix", ignoreCase = true) }
-
-                val signalCount = listOf(hasShortsClass, hasShortsId, hasShortsDescription, hasRemixAction).count { it }
-                val isShortsDetected = hasShortsDescription || signalCount >= 2 || (hasShortsText && signalCount >= 1)
+                val hasShortsDescription = screenTexts.any {
+                    it.contains("shorts player", ignoreCase = true) || it.contains("reel player", ignoreCase = true)
+                }
+                val isShortsDetected = hasShortsDescription || hasShortsId || hasShortsClass
 
                 if (isShortsDetected) {
                     Log.d("FocusService", "Content-Level Block: YouTube Shorts detected")
@@ -916,11 +916,55 @@ class FocusAccessibilityService : AccessibilityService() {
                 }
 
                 if (ytStudyMode && nodeToUse != null) {
+                    // 1. Never interfere while the user has YouTube's Quality / Playback Speed / Settings dialog open
+                    if (isYouTubeSettingsOrSheetOpen(screenTexts)) {
+                        return
+                    }
+
+                    // 2. Check if the video player is ALREADY in Full Screen (Landscape) mode FIRST.
+                    // Note: Service.resources.configuration.orientation stays PORTRAIT when system Auto-Rotate is OFF,
+                    // so we check Full-Screen-only nodes and full-screen player bounds!
+                    val isAlreadyFullScreen = isYouTubeAlreadyInFullScreen(nodeToUse, screenTexts)
+                    if (isAlreadyFullScreen) {
+                        lastYouTubeVideoOpenMs = now
+                        lastYouTubeFullScreenActiveMs = now
+                        // Do NOT click fullscreen_button (which is "Exit full screen" in landscape!)
+                        // and do NOT tap or swipe the player surface! Let the student watch & adjust quality/speed in peace.
+                        return
+                    }
+
+                    // 3. Check if a real lecture video is open in Portrait Watch Mode (even if opened on top of Search Results!)
+                    val isPortraitWatchOpen = isYouTubePortraitWatchScreen(nodeToUse, screenTexts)
+                    if (isPortraitWatchOpen) {
+                        lastYouTubeVideoOpenMs = now
+                        closeYouTubeEngagementPanelIfOpen(nodeToUse, screenTexts)
+
+                        val currentTitle = findPortraitWatchVideoTitle(screenTexts)
+                        val isNewVideo = currentTitle.isNotEmpty() && currentTitle != lastAutoRotatedVideoTitle
+                        val recentlyExitedFullScreenOnSameVideo = !isNewVideo && (now - lastYouTubeFullScreenActiveMs < 8_000L)
+
+                        if (!recentlyExitedFullScreenOnSameVideo && now - lastYouTubeFullscreenClickMs > 2800L) {
+                            // Only click "Enter full screen" if the button is currently visible on screen;
+                            // if controls are hidden, schedulePortraitToFullscreenCheck() taps the portrait player once to reveal it.
+                            if (clickYouTubeEnterFullscreenOnly(nodeToUse, requireVisible = true)) {
+                                lastYouTubeFullscreenClickMs = now
+                                if (currentTitle.isNotEmpty()) lastAutoRotatedVideoTitle = currentTitle
+                                Log.d("FocusService", "YouTube Study Mode: Auto-rotated portrait lecture to Full Screen")
+                            } else {
+                                lastYouTubeFullscreenClickMs = now
+                                if (currentTitle.isNotEmpty()) lastAutoRotatedVideoTitle = currentTitle
+                                schedulePortraitToFullscreenCheck()
+                            }
+                        }
+                        return
+                    }
+
+                    // 4. Check if the student is actively searching or browsing Search Results (using visible nodes only)
                     val searchFilterChips = setOf("unwatched", "watched", "recently uploaded", "search filters", "channels", "playlists")
-                    val isSearching = checkNodeForIdKeyword(nodeToUse, "search_edit_text") ||
-                        checkNodeForIdKeyword(nodeToUse, "search_box") ||
-                        checkNodeForIdKeyword(nodeToUse, "search_query") ||
-                        checkNodeForIdKeyword(nodeToUse, "search_type_icon") ||
+                    val isSearching = checkVisibleNodeForIdKeyword(nodeToUse, "search_edit_text") ||
+                        checkVisibleNodeForIdKeyword(nodeToUse, "search_box") ||
+                        checkVisibleNodeForIdKeyword(nodeToUse, "search_query") ||
+                        checkVisibleNodeForIdKeyword(nodeToUse, "search_type_icon") ||
                         hasFocusedEditText(nodeToUse) ||
                         screenTexts.any { txt ->
                             val clean = txt.trim().lowercase()
@@ -928,54 +972,14 @@ class FocusAccessibilityService : AccessibilityService() {
                         }
                     if (isSearching) {
                         lastYouTubeSearchActiveMs = now
-                    }
-
-                    val isVideoPlayerOpen = checkNodeForIdKeyword(nodeToUse, "watch_next_results") ||
-                        checkNodeForIdKeyword(nodeToUse, "watch_player") ||
-                        checkNodeForIdKeyword(nodeToUse, "player_view") ||
-                        checkNodeForIdKeyword(nodeToUse, "player_fragment") ||
-                        checkNodeForIdKeyword(nodeToUse, "watch_while") ||
-                        checkNodeForIdKeyword(nodeToUse, "video_metadata") ||
-                        checkNodeForIdKeyword(nodeToUse, "channel_bar") ||
-                        checkNodeForIdKeyword(nodeToUse, "player_control") ||
-                        checkNodeForIdKeyword(nodeToUse, "fullscreen_button") ||
-                        checkNodeForIdKeyword(nodeToUse, "time_bar") ||
-                        screenTexts.any {
-                            it.equals("Subscribe", ignoreCase = true) ||
-                            it.equals("Subscribed", ignoreCase = true) ||
-                            it.equals("Enter full screen", ignoreCase = true) ||
-                            it.equals("Exit full screen", ignoreCase = true) ||
-                            it.equals("Download", ignoreCase = true) ||
-                            it.equals("Clip", ignoreCase = true)
-                        }
-
-                    if (isVideoPlayerOpen) {
-                        lastYouTubeVideoOpenMs = now
-                        // If the user explicitly opened the expanded Comments engagement panel, close that panel
-                        // without blocking the lecture video!
-                        closeYouTubeEngagementPanelIfOpen(nodeToUse, screenTexts)
-
-                        // If the phone is currently in portrait orientation while watching a lecture video,
-                        // automatically click YouTube's "Enter full screen" button so the lecture rotates to Full Screen!
-                        val isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-                        if (isPortrait && now - lastYouTubeFullscreenClickMs > 3200L) {
-                            if (clickYouTubeFullscreenButton(nodeToUse)) {
-                                lastYouTubeFullscreenClickMs = now
-                                Log.d("FocusService", "YouTube Study Mode: Auto-rotated lecture to Full Screen")
-                            } else {
-                                // Player controls might be hidden; tap the player surface once to reveal controls, then click Full Screen
-                                lastYouTubeFullscreenClickMs = now
-                                revealYouTubeControlsAndEnterFullscreen()
-                            }
-                        }
                         return
                     }
 
-                    val inSearchOrVideoTransition = (now - lastYouTubeSearchActiveMs < 15_000L) ||
-                        (now - lastYouTubeVideoOpenMs < 8_000L)
-                    if (!isSearching && !inSearchOrVideoTransition && isYouTubeHomeFeedActive(nodeToUse, screenTexts)) {
+                    // 5. Block YouTube Home Feed recommendations (or auto-open Search)
+                    val inSearchTransition = (now - lastYouTubeSearchActiveMs < 10_000L)
+                    if (!inSearchTransition && isYouTubeHomeFeedActive(nodeToUse, screenTexts)) {
                         // First try to auto-open YouTube Search so the student lands directly on lecture search
-                        if (now - lastYouTubeSearchAutoClickMs > 2500L && clickYouTubeSearchButton(nodeToUse)) {
+                        if (now - lastYouTubeSearchAutoClickMs > 2200L && clickYouTubeSearchButton(nodeToUse)) {
                             lastYouTubeSearchAutoClickMs = now
                             lastYouTubeSearchActiveMs = now
                             Log.d("FocusService", "YouTube Study Mode: Auto-opened YouTube Search from Home feed")
@@ -1097,12 +1101,212 @@ class FocusAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun findPortraitWatchVideoTitle(screenTexts: List<String>): String {
+        val ignored = setOf(
+            "subscribe", "subscribed", "comments", "share", "download", "remix", "clip",
+            "save", "report", "all", "live", "home", "subs", "music", "more", "enter full screen"
+        )
+        for (txt in screenTexts) {
+            val clean = txt.trim()
+            if (clean.length >= 12 && !ignored.contains(clean.lowercase()) && !clean.startsWith("Comments", ignoreCase = true)) {
+                return clean
+            }
+        }
+        return ""
+    }
+
+    private fun isYouTubeSettingsOrSheetOpen(screenTexts: List<String>): Boolean {
+        var menuSignals = 0
+        for (txt in screenTexts) {
+            val clean = txt.trim().lowercase()
+            if (clean == "quality" ||
+                clean == "playback speed" ||
+                clean == "lock screen" ||
+                clean == "on-the-go" ||
+                clean.startsWith("quality for current video") ||
+                clean == "higher picture quality" ||
+                clean == "data saver" ||
+                clean.startsWith("auto speed")
+            ) {
+                menuSignals++
+                if (menuSignals >= 2 || clean.startsWith("quality for current video") || clean.startsWith("auto speed")) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /**
+     * Accurately detects when YouTube's video player is ALREADY in Landscape Full Screen,
+     * even when the phone's system Auto-Rotate is locked to Portrait.
+     */
+    private fun isYouTubeAlreadyInFullScreen(root: AccessibilityNodeInfo, screenTexts: List<String>): Boolean {
+        if (hasExitFullscreenNode(root)) return true
+        if (screenTexts.any {
+                it.equals("Exit full screen", ignoreCase = true) ||
+                it.equals("Exit fullscreen", ignoreCase = true) ||
+                it.equals("More videos", ignoreCase = true)
+            }
+        ) {
+            return true
+        }
+        // Check the actual screen bounds of the video player view:
+        // In Portrait Watch mode, the player is at the top of the screen (height < 48% of window height).
+        // In Full Screen mode (with controls hidden), the player fills the entire window (or width > height)
+        // and no Portrait watch metadata (Subscribe / Comments / watch_next_results) is visible below it.
+        val rootRect = android.graphics.Rect()
+        root.getBoundsInScreen(rootRect)
+        val playerRect = findVisiblePlayerBounds(root)
+        if (playerRect != null && rootRect.height() > 0) {
+            val fillsHeight = playerRect.height() >= rootRect.height() * 0.72f
+            val isLandscapeWindow = rootRect.width() > rootRect.height() && playerRect.width() >= rootRect.width() * 0.72f
+            if ((fillsHeight || isLandscapeWindow) && !hasPortraitMetadataBelowPlayer(root, screenTexts)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun hasPortraitMetadataBelowPlayer(root: AccessibilityNodeInfo, screenTexts: List<String>): Boolean {
+        val hasVisibleSubscribeBtn = screenTexts.any { txt ->
+            val c = txt.trim().lowercase()
+            c == "subscribe" || c == "subscribed" ||
+                c.startsWith("subscribe to ") || c.startsWith("subscribed to ") ||
+                c == "सदस्यता लें" || c == "सदस्यता ली गई"
+        }
+        val hasVisibleCommentsOrWatchActions = screenTexts.any { txt ->
+            val c = txt.trim().lowercase()
+            c.startsWith("comments") || c == "download" || c == "remix" || c == "clip"
+        } || checkVisibleNodeForIdKeyword(root, "watch_next_results") || checkVisibleNodeForIdKeyword(root, "video_metadata")
+        return hasVisibleSubscribeBtn || hasVisibleCommentsOrWatchActions
+    }
+
+    private fun findVisiblePlayerBounds(node: AccessibilityNodeInfo?): android.graphics.Rect? {
+        if (node == null) return null
+        if (node.isVisibleToUser) {
+            val id = node.viewIdResourceName?.lowercase() ?: ""
+            if (id.endsWith("player_view") || id.endsWith("watch_player") || id.contains("player_fragment_container")) {
+                val r = android.graphics.Rect()
+                node.getBoundsInScreen(r)
+                if (r.width() > 200 && r.height() > 150) {
+                    return r
+                }
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findVisiblePlayerBounds(child)
+            child.recycle()
+            if (found != null) return found
+        }
+        return null
+    }
+
+    /**
+     * Detects when a real video watch page is open in Portrait mode (and NOT Full Screen or an inline home-feed preview).
+     * In Portrait Watch mode, the "Subscribe"/"Subscribed" button and "Comments" preview / action row are visible
+     * below the player (or the top-third 16:9 player is open above watch_next_results), whereas in Full Screen they are hidden.
+     */
+    private fun isYouTubePortraitWatchScreen(root: AccessibilityNodeInfo, screenTexts: List<String>): Boolean {
+        if (hasExitFullscreenNode(root)) return false
+        if (screenTexts.any {
+                it.equals("Exit full screen", ignoreCase = true) ||
+                it.equals("Exit fullscreen", ignoreCase = true) ||
+                it.equals("More videos", ignoreCase = true)
+            }
+        ) {
+            return false
+        }
+        if (hasEnterFullscreenNode(root)) return true
+        val hasVisibleSubscribeBtn = screenTexts.any { txt ->
+            val c = txt.trim().lowercase()
+            c == "subscribe" || c == "subscribed" ||
+                c.startsWith("subscribe to ") || c.startsWith("subscribed to ") ||
+                c == "सदस्यता लें" || c == "सदस्यता ली गई"
+        }
+        val hasVisibleCommentsOrWatchActions = screenTexts.any { txt ->
+            val c = txt.trim().lowercase()
+            c.startsWith("comments") || c == "download" || c == "remix" || c == "clip"
+        } || checkVisibleNodeForIdKeyword(root, "watch_next_results")
+        if (hasVisibleSubscribeBtn && hasVisibleCommentsOrWatchActions) return true
+
+        // Also catch the first 1 second of Portrait video loading (when gray skeletons are shown below the top player)
+        val rootRect = android.graphics.Rect()
+        root.getBoundsInScreen(rootRect)
+        val playerRect = findVisiblePlayerBounds(root)
+        if (playerRect != null && rootRect.height() > rootRect.width()) {
+            val isTopPortraitPlayer = playerRect.top < rootRect.height() * 0.20f &&
+                playerRect.height() < rootRect.height() * 0.48f
+            if (isTopPortraitPlayer && (checkVisibleNodeForIdKeyword(root, "watch_next_results") || hasVisibleCommentsOrWatchActions)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun checkVisibleNodeForIdKeyword(node: AccessibilityNodeInfo?, keyword: String): Boolean {
+        if (node == null) return false
+        if (node.isVisibleToUser) {
+            val id = node.viewIdResourceName?.lowercase() ?: ""
+            if (id.contains(keyword)) return true
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = checkVisibleNodeForIdKeyword(child, keyword)
+            child.recycle()
+            if (found) return true
+        }
+        return false
+    }
+
+    private fun hasExitFullscreenNode(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        if (node.isVisibleToUser) {
+            val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
+            if (desc.contains("exit full screen") || desc.contains("exit fullscreen") || desc.contains("पूर्ण स्क्रीन से बाहर")) {
+                return true
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = hasExitFullscreenNode(child)
+            child.recycle()
+            if (found) return true
+        }
+        return false
+    }
+
+    private fun hasEnterFullscreenNode(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        if (node.isVisibleToUser) {
+            val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
+            if (desc == "enter full screen" || desc == "enter fullscreen" || desc.contains("फ़ुल स्क्रीन में देखें")) {
+                return true
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = hasEnterFullscreenNode(child)
+            child.recycle()
+            if (found) return true
+        }
+        return false
+    }
+
     private fun isYouTubeHomeFeedActive(root: AccessibilityNodeInfo?, screenTexts: List<String>): Boolean {
         if (root == null) return false
         if (isSelectedTabMatching(root, "Home")) return true
-        val homeChips = setOf("all", "new to you", "mixes", "gaming", "live", "music")
+        val homeChips = setOf("home", "subs", "all", "new to you", "mixes", "gaming", "live", "music", "more", "podcasts")
         val chipMatches = screenTexts.count { homeChips.contains(it.trim().lowercase()) }
-        return chipMatches >= 2 && checkNodeForIdKeyword(root, "results")
+        if (chipMatches >= 2) return true
+        val hasHomeShelves = screenTexts.any {
+            val c = it.trim().lowercase()
+            c == "youtube playables" || c == "continue watching"
+        }
+        if (hasHomeShelves) return true
+        val hasPivotBar = checkNodeForIdKeyword(root, "pivot_bar") || checkNodeForIdKeyword(root, "bottom_bar")
+        return hasPivotBar && checkNodeForIdKeyword(root, "results")
     }
 
     private fun isWhatsAppUpdatesTabSelected(root: AccessibilityNodeInfo?): Boolean {
@@ -1227,17 +1431,22 @@ class FocusAccessibilityService : AccessibilityService() {
         return false
     }
 
-    /** Clicks YouTube's "Enter full screen" button if present in the player tree. */
-    private fun clickYouTubeFullscreenButton(node: AccessibilityNodeInfo?, requireVisible: Boolean = true): Boolean {
+    /**
+     * Clicks YouTube's "Enter full screen" button ONLY when it is an Enter action (never "Exit full screen").
+     */
+    private fun clickYouTubeEnterFullscreenOnly(node: AccessibilityNodeInfo?, requireVisible: Boolean = true): Boolean {
         if (node == null) return false
         val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
         val id = node.viewIdResourceName?.lowercase() ?: ""
-        val isFullscreenBtn = id.contains("fullscreen_button") ||
-            desc.contains("enter full screen") ||
+        if (desc.contains("exit") || desc.contains("बाहर")) {
+            return false
+        }
+        val isEnterFullscreenBtn = desc.contains("enter full screen") ||
             desc.contains("enter fullscreen") ||
             desc == "full screen" ||
-            desc.contains("फ़ुल स्क्रीन")
-        if (isFullscreenBtn && (!requireVisible || node.isVisibleToUser)) {
+            desc.contains("फ़ुल स्क्रीन") ||
+            (id.endsWith("fullscreen_button") && !desc.contains("exit"))
+        if (isEnterFullscreenBtn && (!requireVisible || node.isVisibleToUser)) {
             if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                 return true
             }
@@ -1247,7 +1456,8 @@ class FocusAccessibilityService : AccessibilityService() {
                 val p = parent
                 parent = null
                 try {
-                    if (p.isClickable && p.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    val pDesc = p.contentDescription?.toString()?.trim()?.lowercase() ?: ""
+                    if (!pDesc.contains("exit") && p.isClickable && p.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                         return true
                     }
                     parent = p.parent
@@ -1259,7 +1469,7 @@ class FocusAccessibilityService : AccessibilityService() {
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val clicked = clickYouTubeFullscreenButton(child, requireVisible)
+            val clicked = clickYouTubeEnterFullscreenOnly(child, requireVisible)
             child.recycle()
             if (clicked) return true
         }
@@ -1267,69 +1477,50 @@ class FocusAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * When a lecture video just opened in portrait mode, YouTube's player control overlay may be
-     * hidden. Taps the video player container once to reveal the controls, clicks Full Screen,
-     * and falls back to YouTube's native upward fullscreen swipe gesture on the player box.
+     * Re-checks after 300ms and 650ms if the newly opened lecture is still in Portrait watch mode,
+     * and clicks "Enter full screen" without ever tapping the player surface or swiping in Full Screen.
      */
-    private fun revealYouTubeControlsAndEnterFullscreen() {
+    private fun schedulePortraitToFullscreenCheck() {
         youtubeFullscreenHelperJob?.cancel()
         youtubeFullscreenHelperJob = serviceScope.launch {
             try {
                 delay(240L)
                 val root1 = try { rootInActiveWindow } catch (e: Exception) { null } ?: return@launch
                 try {
-                    if (resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT) return@launch
-                    if (clickYouTubeFullscreenButton(root1, requireVisible = true)) return@launch
-                    if (clickYouTubeFullscreenButton(root1, requireVisible = false)) return@launch
+                    if (root1.packageName?.toString() != "com.google.android.youtube") return@launch
+                    val texts1 = mutableListOf<String>()
+                    collectScreenText(root1, texts1, 0)
+                    if (isYouTubeSettingsOrSheetOpen(texts1) || isYouTubeAlreadyInFullScreen(root1, texts1)) return@launch
+                    if (!isYouTubePortraitWatchScreen(root1, texts1)) return@launch
+                    if (clickYouTubeEnterFullscreenOnly(root1, requireVisible = true)) {
+                        lastYouTubeFullscreenClickMs = TrustedClock.now()
+                        return@launch
+                    }
+                    // ONLY tap the player surface when confirmed in Portrait Watch Mode (Subscribe + Comments visible below)
+                    // so the hidden "Enter full screen" button appears on the Portrait player.
                     clickYouTubePlayerSurface(root1)
                 } finally {
                     root1.recycle()
                 }
                 delay(300L)
                 val root2 = try { rootInActiveWindow } catch (e: Exception) { null } ?: return@launch
-                var clickedSecondPass = false
                 try {
-                    if (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT) {
-                        clickedSecondPass = clickYouTubeFullscreenButton(root2, requireVisible = true) ||
-                            clickYouTubeFullscreenButton(root2, requireVisible = false)
+                    if (root2.packageName?.toString() != "com.google.android.youtube") return@launch
+                    val texts2 = mutableListOf<String>()
+                    collectScreenText(root2, texts2, 0)
+                    if (isYouTubeSettingsOrSheetOpen(texts2) || isYouTubeAlreadyInFullScreen(root2, texts2)) return@launch
+                    if (isYouTubePortraitWatchScreen(root2, texts2)) {
+                        if (clickYouTubeEnterFullscreenOnly(root2, requireVisible = true)) {
+                            lastYouTubeFullscreenClickMs = TrustedClock.now()
+                            Log.d("FocusService", "YouTube Study Mode: Revealed controls & rotated Portrait lecture to Full Screen")
+                        }
                     }
                 } finally {
                     root2.recycle()
                 }
-                if (!clickedSecondPass && resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT) {
-                    delay(200L)
-                    if (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT) {
-                        dispatchYouTubeFullscreenSwipeGesture()
-                    }
-                }
             } catch (e: Exception) {
-                Log.e("FocusService", "Failed to auto-enter YouTube fullscreen", e)
+                Log.e("FocusService", "Failed deferred YouTube fullscreen check", e)
             }
-        }
-    }
-
-    /**
-     * Dispatches YouTube's native "Swipe Up on Player to Enter Fullscreen" gesture on the top 16:9
-     * video player region if the Accessibility node click was absorbed by hidden controls.
-     */
-    private fun dispatchYouTubeFullscreenSwipeGesture() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
-        try {
-            val dm = resources.displayMetrics
-            val cx = dm.widthPixels * 0.5f
-            val startY = (dm.widthPixels * 9f / 16f) * 0.78f
-            val endY = (dm.widthPixels * 9f / 16f) * 0.22f
-            if (startY <= endY || startY <= 50f) return
-            val swipePath = android.graphics.Path().apply {
-                moveTo(cx, startY)
-                lineTo(cx, endY)
-            }
-            val stroke = GestureDescription.StrokeDescription(swipePath, 0L, 180L)
-            val gesture = GestureDescription.Builder().addStroke(stroke).build()
-            dispatchGesture(gesture, null, null)
-            Log.d("FocusService", "YouTube Study Mode: Dispatched upward fullscreen swipe gesture")
-        } catch (e: Exception) {
-            Log.e("FocusService", "Error dispatching YouTube fullscreen gesture", e)
         }
     }
 
@@ -1933,9 +2124,11 @@ class FocusAccessibilityService : AccessibilityService() {
 
     private fun checkNodeForShortsSpecifics(node: AccessibilityNodeInfo?): Boolean {
         if (node == null) return false
-        val id = node.viewIdResourceName?.lowercase() ?: ""
-        if (id.contains("shorts_player") || id.contains("shorts_video") || id.contains("shorts_reel") || id.contains("reel_player")) {
-            return true
+        if (node.isVisibleToUser) {
+            val id = node.viewIdResourceName?.lowercase() ?: ""
+            if (id.contains("shorts_player") || id.contains("shorts_video") || id.contains("shorts_reel") || id.contains("reel_player")) {
+                return true
+            }
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue

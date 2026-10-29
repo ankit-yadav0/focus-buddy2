@@ -278,6 +278,11 @@ fun UninstallReflectionScreen(
                     if (isReady) {
                         scope.launch {
                             try {
+                                val active = (context.applicationContext as? com.example.FocusApplication)?.repository?.getActiveSessionSync()
+                                if (active != null && active.isActive && active.isStrict && com.example.TrustedClock.now() < active.endTime) {
+                                    Toast.makeText(context, "Cannot uninstall while a Strict Mode session is active!", Toast.LENGTH_LONG).show()
+                                    return@launch
+                                }
                                 com.example.service.FocusAccessibilityService.allowPendingUninstall()
                                 if (dpm.isAdminActive(adminComp)) {
                                     dpm.removeActiveAdmin(adminComp)

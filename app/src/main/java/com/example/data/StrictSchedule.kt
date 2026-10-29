@@ -26,6 +26,9 @@ interface StrictScheduleDao {
     @Query("SELECT * FROM strict_schedules ORDER BY startHour, startMinute")
     fun getAllSchedules(): Flow<List<StrictSchedule>>
 
+    @Query("SELECT * FROM strict_schedules ORDER BY startHour, startMinute")
+    suspend fun getAllSchedulesSync(): List<StrictSchedule>
+
     @Query("SELECT * FROM strict_schedules WHERE isEnabled = 1")
     suspend fun getEnabledSchedulesSync(): List<StrictSchedule>
 

@@ -44,6 +44,7 @@ class FocusRepository(
     val activeWebsiteBlocks: Flow<List<WebsiteBlock>> = websiteBlockDao.getActiveWebsiteBlocks()
     val analytics: Flow<Analytics?> = analyticsDao.getAnalytics()
     val allSchedules: Flow<List<StrictSchedule>> = strictScheduleDao.getAllSchedules()
+    suspend fun getAllSchedulesSync(): List<StrictSchedule> = strictScheduleDao.getAllSchedulesSync()
 
     suspend fun addSchedule(schedule: StrictSchedule): Long = strictScheduleDao.insertSchedule(schedule)
     suspend fun updateSchedule(schedule: StrictSchedule) = strictScheduleDao.updateSchedule(schedule)

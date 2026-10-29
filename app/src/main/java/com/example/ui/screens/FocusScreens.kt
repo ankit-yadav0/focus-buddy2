@@ -3878,7 +3878,7 @@ fun AddLongTermBlockDialog(
         }
     }
 
-    val dateFormatter = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()) }
+    val dateFormatter = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
     val startDateStr = remember(startDateMillis) { dateFormatter.format(Date(startDateMillis)) }
     val endDateStr = remember(endDateMillis) { dateFormatter.format(Date(endDateMillis)) }
 
@@ -4141,7 +4141,7 @@ fun AddLongTermBlockDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(imageVector = Icons.Default.CalendarToday, contentDescription = "Calendar Icon", modifier = Modifier.size(16.dp))
-                                Text(startDateStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                Text(startDateStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                             }
                         }
                     }
@@ -4175,7 +4175,7 @@ fun AddLongTermBlockDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(imageVector = Icons.Default.CalendarToday, contentDescription = "Calendar Icon", modifier = Modifier.size(16.dp))
-                                Text(endDateStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                Text(endDateStr, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                             }
                         }
                     }
@@ -4220,6 +4220,10 @@ fun AddLongTermBlockDialog(
                             }
                             if (endDateMillis <= startDateMillis) {
                                 validationError = "End Date must be after Start Date."
+                                return@Button
+                            }
+                            if (blockType == "APP" && quotaEnabled && (quotaHours * 3600L + quotaMinutes * 60L + quotaSeconds) <= 0L) {
+                                validationError = "Please set a daily time limit greater than 0 seconds."
                                 return@Button
                             }
 
