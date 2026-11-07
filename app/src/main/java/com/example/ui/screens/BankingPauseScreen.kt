@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +26,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,6 +38,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -57,14 +58,16 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.service.AccessibilityToggler
 import com.example.service.ForegroundProbe
+import com.example.ui.components.NeonLaserBackground
+import com.example.ui.components.NeonSubtleBorderBrush
+import com.example.ui.theme.NeonBlack
+import com.example.ui.theme.NeonCyan
+import com.example.ui.theme.NeonMagenta
+import com.example.ui.theme.NeonSurface
+import com.example.ui.theme.TextSecondary
 import com.example.viewmodel.FocusViewModel
 import kotlinx.coroutines.delay
 
-/**
- * Banking Pause: banking apps such as Navi refuse to run while a user-installed accessibility
- * service is on. With this on, Focuss Buddy switches itself off when a chosen app opens and back on
- * when it is left. Needs two permissions (see the status card); the list is frozen in Strict Mode.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BankingPauseScreen(
@@ -99,164 +102,180 @@ fun BankingPauseScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Banking Mode (Pause)", fontWeight = FontWeight.Black, color = Color(0xFFFFF8E7)); Text("🦉", fontSize = 18.sp) } },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Banking Mode (Pause)", fontWeight = FontWeight.ExtraBold, color = Color.White)
+                        Text("⚡", fontSize = 18.sp)
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
         },
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = NeonBlack,
         modifier = modifier
     ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(vertical = 16.dp)
-        ) {
-            item {
-                BankingInfoCard(
-                    "Banking apps like Navi refuse to run while an accessibility service is on. " +
-                        "With Banking Pause, Focuss Buddy switches itself off when you open a chosen app and " +
-                        "back on when you leave it (at the latest after 10 minutes). " +
-                        "The first open of a banking app may still show its error - just open it again."
-                )
-            }
-
-            if (strictActive) {
+        NeonLaserBackground(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(vertical = 16.dp)
+            ) {
                 item {
-                    BankingInfoCard("Strict Mode is running, so this list cannot be changed until it ends.", warning = true)
+                    BankingInfoCard(
+                        "Banking apps like Navi refuse to run while an accessibility service is on. " +
+                            "With Banking Pause, Focuss Buddy switches itself off when you open a chosen app and " +
+                            "back on when you leave it (at the latest after 10 minutes). " +
+                            "The first open of a banking app may still show its error - just open it again."
+                    )
                 }
-            }
 
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Setup", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
-
-                        BankingStatusRow("Usage access", hasUsage)
-                        if (!hasUsage) {
-                            OutlinedButton(
-                                onClick = {
-                                    val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
-                                        data = Uri.fromParts("package", context.packageName, null)
-                                    }
-                                    try {
-                                        context.startActivity(intent)
-                                    } catch (e: Exception) {
-                                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("Open Usage access settings") }
-                        }
-
-                        BankingStatusRow("Permission to switch protection back on", hasSecure)
-                        if (!hasSecure) {
-                            Text(
-                                "One-time setup over adb (Android 11: Developer options > Wireless debugging, then " +
-                                    "run this command from Termux or any adb shell on the phone). " +
-                                    "Turn Wireless debugging off again afterwards.",
-                                fontSize = 12.sp,
-                                color = Color.White.copy(alpha = 0.6f)
-                            )
-                            Text(
-                                adbCommand,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            OutlinedButton(
-                                onClick = {
-                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cm.setPrimaryClip(ClipData.newPlainText("adb", adbCommand))
-                                    Toast.makeText(context, "Command copied", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("Copy adb command") }
-                        }
+                if (strictActive) {
+                    item {
+                        BankingInfoCard("Strict Mode is running, so this list cannot be changed until it ends.", warning = true)
                     }
                 }
-            }
 
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Row(
+                item {
+                    Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .border(1.dp, NeonSubtleBorderBrush, RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = NeonSurface)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Enable Banking Pause", fontWeight = FontWeight.Bold, color = Color.White)
-                            Text(
-                                if (ready) "Chosen apps below pause protection while open."
-                                else "Finish the setup above first.",
-                                fontSize = 12.sp,
-                                color = Color.White.copy(alpha = 0.5f)
-                            )
-                        }
-                        Switch(
-                            checked = enabled,
-                            onCheckedChange = { viewModel.setBankingPauseEnabled(it) },
-                            enabled = !strictActive && (enabled || ready)
-                        )
-                    }
-                }
-            }
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Setup", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
 
-            item {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search installed apps...", color = Color.White.copy(alpha = 0.5f)) },
-                    leadingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = "Search icon") },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(imageVector = Icons.Default.Close, contentDescription = "Clear search")
+                            BankingStatusRow("Usage access", hasUsage)
+                            if (!hasUsage) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                                            data = Uri.fromParts("package", context.packageName, null)
+                                        }
+                                        try {
+                                            context.startActivity(intent)
+                                        } catch (e: Exception) {
+                                            context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text("Open Usage access settings", color = NeonCyan) }
+                            }
+
+                            BankingStatusRow("Permission to switch protection back on", hasSecure)
+                            if (!hasSecure) {
+                                Text(
+                                    "One-time setup over adb (Android 11: Developer options > Wireless debugging, then " +
+                                        "run this command from Termux or any adb shell on the phone). " +
+                                        "Turn Wireless debugging off again afterwards.",
+                                    fontSize = 12.sp,
+                                    color = TextSecondary
+                                )
+                                Text(
+                                    adbCommand,
+                                    fontSize = 12.sp,
+                                    color = NeonCyan
+                                )
+                                OutlinedButton(
+                                    onClick = {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText("adb", adbCommand))
+                                        Toast.makeText(context, "Command copied", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text("Copy adb command", color = NeonCyan) }
                             }
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.2f)
-                    )
-                )
-            }
-
-            if (isLoading) {
-                item {
-                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
                 }
-            } else {
-                items(filteredList, key = { it.packageName }) { app ->
-                    AppListItemRow(
-                        app = app,
-                        isReadOnly = strictActive,
-                        checked = app.isBankingPause,
-                        onToggle = { viewModel.toggleBankingApp(app) }
+
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, NeonSubtleBorderBrush, RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = NeonSurface)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Enable Banking Pause", fontWeight = FontWeight.Bold, color = Color.White)
+                                Text(
+                                    if (ready) "Chosen apps below pause protection while open."
+                                    else "Finish the setup above first.",
+                                    fontSize = 12.sp,
+                                    color = TextSecondary
+                                )
+                            }
+                            Switch(
+                                checked = enabled,
+                                onCheckedChange = { viewModel.setBankingPauseEnabled(it) },
+                                enabled = !strictActive && (enabled || ready),
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = NeonCyan
+                                )
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Search installed apps...", color = TextSecondary) },
+                        leadingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = "Search icon", tint = NeonCyan) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(imageVector = Icons.Default.Close, contentDescription = "Clear search", tint = TextSecondary)
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = NeonSurface,
+                            unfocusedContainerColor = NeonSurface,
+                            focusedBorderColor = NeonCyan,
+                            unfocusedBorderColor = Color(0xFF2E3248)
+                        )
                     )
+                }
+
+                if (isLoading) {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = NeonCyan)
+                        }
+                    }
+                } else {
+                    items(filteredList, key = { it.packageName }) { app ->
+                        AppListItemRow(
+                            app = app,
+                            isReadOnly = strictActive,
+                            checked = app.isBankingPause,
+                            onToggle = { viewModel.toggleBankingApp(app) }
+                        )
+                    }
                 }
             }
         }
@@ -266,18 +285,19 @@ fun BankingPauseScreen(
 @Composable
 private fun BankingInfoCard(text: String, warning: Boolean = false) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, NeonSubtleBorderBrush, RoundedCornerShape(16.dp)),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (warning) MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
-            else MaterialTheme.colorScheme.surface
+            containerColor = if (warning) NeonMagenta.copy(alpha = 0.14f) else NeonSurface
         )
     ) {
         Text(
             text = text,
             modifier = Modifier.padding(16.dp),
             fontSize = 13.sp,
-            color = Color.White.copy(alpha = 0.8f)
+            color = Color.White.copy(alpha = 0.85f)
         )
     }
 }
@@ -288,7 +308,7 @@ private fun BankingStatusRow(label: String, ok: Boolean) {
         Icon(
             imageVector = if (ok) Icons.Default.CheckCircle else Icons.Default.Warning,
             contentDescription = if (ok) "Done" else "Missing",
-            tint = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            tint = if (ok) NeonCyan else NeonMagenta,
             modifier = Modifier.size(20.dp)
         )
         Text(label, color = Color.White, fontSize = 14.sp)

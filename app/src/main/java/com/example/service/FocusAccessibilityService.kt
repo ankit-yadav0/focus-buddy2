@@ -62,7 +62,7 @@ class FocusAccessibilityService : AccessibilityService() {
 
         // Colour of the text-less backdrop shown while BlockActivity / the PIN screen loads.
         private const val USE_APP_BACKDROP = true
-        private const val BACKDROP_COLOR = 0xFF171219.toInt()
+        private const val BACKDROP_COLOR = 0xFF08080F.toInt()
 
         private const val SETTINGS_CONTENT_THROTTLE_MS = 50L
 

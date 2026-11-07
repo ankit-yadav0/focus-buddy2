@@ -1,18 +1,24 @@
 package com.example
 
+import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SelfImprovement
 import androidx.compose.material.icons.filled.Shield
@@ -23,16 +29,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.accessibilityservice.AccessibilityService
-import android.view.WindowManager
-import com.example.service.FocusAccessibilityService
 import com.example.data.FocusSession
+import com.example.service.FocusAccessibilityService
+import com.example.ui.components.NeonCardBorderBrush
+import com.example.ui.components.NeonCircularLockEmblem
+import com.example.ui.components.NeonLaserBackground
+import com.example.ui.components.NeonOutlinedPillButton
+import com.example.ui.components.NeonPrimaryGradientButton
+import com.example.ui.components.NeonSubtleBorderBrush
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.NeonBlack
+import com.example.ui.theme.NeonCyan
+import com.example.ui.theme.NeonMagenta
+import com.example.ui.theme.NeonSurface
+import com.example.ui.theme.NeonViolet
+import com.example.ui.theme.TextSecondary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -118,7 +137,6 @@ class BlockActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
-        // Back/gesture is absorbed: screen leaves only via its own button (or goes home during mindful delay).
         onBackPressedDispatcher.addCallback(this) {
             if (isMindfulDelayState) {
                 goHomeAndFinish()
@@ -128,10 +146,10 @@ class BlockActivity : ComponentActivity() {
         applyIntent(intent)
 
         setContent {
-            MyApplicationTheme(darkTheme = true) { // Force Dark Theme
+            MyApplicationTheme(darkTheme = true) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                    color = NeonBlack
                 ) {
                     val app = application as FocusApplication
                     val activeSession by app.repository.activeSession.collectAsState(initial = null)
@@ -202,163 +220,169 @@ fun MindfulBreathingGateScreen(
 
     val isReady = secondsLeft <= 0
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF171219),
-                        Color(0xFF221824),
-                        Color(0xFF120E14)
-                    )
-                )
-            )
-            .padding(24.dp)
-            .navigationBarsPadding()
-            .statusBarsPadding(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Box(
-            modifier = Modifier
-                .padding(top = 16.dp)
-                .clip(RoundedCornerShape(50))
-                .background(Color(0xFFFFB74D).copy(alpha = 0.15f))
-                .padding(horizontal = 24.dp, vertical = 10.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SelfImprovement,
-                    contentDescription = "Mindful Pause",
-                    tint = Color(0xFFFFB74D),
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = "MINDFUL LAUNCH GATE · 7s PAUSE",
-                    color = Color(0xFFFFB74D),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.4.sp
-                )
-            }
-        }
-
+    NeonLaserBackground(modifier = Modifier.fillMaxSize()) {
         Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp)
+                .navigationBarsPadding()
+                .statusBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-            modifier = Modifier.weight(1f).wrapContentHeight(Alignment.CenterVertically)
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
             Box(
                 modifier = Modifier
-                    .size(120.dp)
-                    .clip(RoundedCornerShape(60.dp))
-                    .background(Color(0xFFFFB74D).copy(alpha = if (isReady) 0.22f else 0.10f)),
-                contentAlignment = Alignment.Center
+                    .padding(top = 12.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(NeonSurface)
+                    .border(1.dp, NeonCardBorderBrush, RoundedCornerShape(50))
+                    .padding(horizontal = 22.dp, vertical = 9.dp)
             ) {
-                if (!isReady) {
-                    Text(
-                        text = "${secondsLeft}s",
-                        color = Color(0xFFFFB74D),
-                        fontSize = 40.sp,
-                        fontWeight = FontWeight.Black,
-                        fontFamily = FontFamily.Monospace
-                    )
-                } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Icon(
                         imageVector = Icons.Default.SelfImprovement,
-                        contentDescription = "Ready",
-                        tint = Color(0xFFFFB74D),
-                        modifier = Modifier.size(56.dp)
+                        contentDescription = "Mindful Pause",
+                        tint = NeonCyan,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = "MINDFUL LAUNCH GATE · 7s PAUSE",
+                        color = NeonCyan,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.2.sp
                     )
                 }
             }
 
-            Text(
-                text = "Rukiye! Kya $appName abhi zaroori hai?",
-                color = Color.White,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.ExtraBold,
-                textAlign = TextAlign.Center
-            )
-
-            Text(
-                text = if (!isReady) {
-                    "Take a deep breath for $secondsLeft second${if (secondsLeft != 1) "s" else ""}. Break muscle-memory scrolling before deciding."
-                } else {
-                    "If you still need to open $appName, tap your intention below (grants a 10-minute mindful pass)."
-                },
-                color = Color.White.copy(alpha = 0.78f),
-                fontSize = 14.sp,
-                textAlign = TextAlign.Center,
-                lineHeight = 20.sp,
-                modifier = Modifier.padding(horizontal = 12.dp)
-            )
-
-            if (isReady) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .wrapContentHeight(Alignment.CenterVertically)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(126.dp)
+                        .clip(CircleShape)
+                        .background(NeonSurface)
+                        .border(2.5.dp, NeonCardBorderBrush, CircleShape),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "SELECT REASON TO CONTINUE (10 MIN PASS)",
-                        color = Color.White.copy(alpha = 0.5f),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.5.sp,
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    if (!isReady) {
+                        Text(
+                            text = "${secondsLeft}s",
+                            color = NeonCyan,
+                            fontSize = 40.sp,
+                            fontWeight = FontWeight.Black,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.SelfImprovement,
+                            contentDescription = "Ready",
+                            tint = NeonMagenta,
+                            modifier = Modifier.size(56.dp)
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Rukiye! Kya $appName abhi zaroori hai?",
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = if (!isReady) {
+                        "Take a deep breath for $secondsLeft second${if (secondsLeft != 1) "s" else ""}. Break muscle-memory scrolling before deciding."
+                    } else {
+                        "If you still need to open $appName, tap your intention below (grants a 10-minute mindful pass)."
+                    },
+                    color = TextSecondary,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 20.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+
+                if (isReady) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = { onProceedWithReason("Study / Work") },
-                            modifier = Modifier.weight(1f).height(50.dp),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.6f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB74D))
+                        Text(
+                            text = "SELECT REASON TO CONTINUE (10 MIN PASS)",
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.4.sp,
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Text("📚 Study / Work", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                        OutlinedButton(
-                            onClick = { onProceedWithReason("Urgent Message") },
-                            modifier = Modifier.weight(1f).height(50.dp),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.6f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB74D))
-                        ) {
-                            Text("⚡ Urgent", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            OutlinedButton(
+                                onClick = { onProceedWithReason("Study / Work") },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(50.dp),
+                                shape = RoundedCornerShape(50),
+                                border = BorderStroke(1.2.dp, NeonCyan.copy(alpha = 0.7f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan)
+                            ) {
+                                Text("📚 Study / Work", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                            OutlinedButton(
+                                onClick = { onProceedWithReason("Urgent Message") },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(50.dp),
+                                shape = RoundedCornerShape(50),
+                                border = BorderStroke(1.2.dp, NeonMagenta.copy(alpha = 0.7f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonMagenta)
+                            ) {
+                                Text("⚡ Urgent", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
                         }
                     }
                 }
             }
-        }
 
-        Button(
-            onClick = onCancelToHome,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFFFFB74D),
-                contentColor = Color(0xFF071510)
-            ),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(bottom = 8.dp)
-        ) {
-            Text(
-                text = "Close & Stay Focused",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.ExtraBold
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                NeonPrimaryGradientButton(
+                    text = "Close & Stay Focused",
+                    onClick = onCancelToHome,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                NeonBetterFocusTagline()
+            }
         }
     }
 }
 
+/**
+ * Blocked Screen matching Panel 4 of `Neon Focus Buddy UI Theme Board.png`:
+ *   • Deep #08080F background with diagonal neon magenta & cyan laser beams
+ *   • Large glowing NeonCircularLockEmblem at top-center
+ *   • "Blocked" bold white headline + "You can't access this app right now. It's part of your focus plan."
+ *   • Dark #1A1A24 app card with neon gradient squircle icon, app title, limit/status reason, and timer
+ *   • Glowing neon gradient-bordered pill button "Go Back"
+ *   • "Better Focus. Brighter Future." tagline at the bottom
+ */
 @Composable
 fun BlockScreenContent(
     appName: String,
@@ -383,7 +407,6 @@ fun BlockScreenContent(
 
     var timeRemaining by remember(actualEndTime) { mutableStateOf(max(0L, actualEndTime - TrustedClock.now())) }
 
-    // Tick the countdown every second for active block/session
     LaunchedEffect(actualEndTime) {
         if (actualEndTime > 0L) {
             while (timeRemaining > 0) {
@@ -402,338 +425,199 @@ fun BlockScreenContent(
 
     val timeString = remember(days, hours, minutes, seconds) {
         val parts = mutableListOf<String>()
-        if (days > 0) parts.add("$days Day${if (days != 1L) "s" else ""}")
-        if (hours > 0 || days > 0) parts.add("$hours Hour${if (hours != 1L) "s" else ""}")
-        if (minutes > 0 || hours > 0 || days > 0) parts.add("$minutes Minute${if (minutes != 1L) "s" else ""}")
-        parts.add("$seconds Second${if (seconds != 1L) "s" else ""}")
-        parts.joinToString(", ")
+        if (days > 0) parts.add("${days}d")
+        if (hours > 0 || days > 0) parts.add("${hours}h")
+        if (minutes > 0 || hours > 0 || days > 0) parts.add("${minutes}m")
+        parts.add("${seconds}s")
+        parts.joinToString(" ")
     }
 
-    val timeFormatter = remember { SimpleDateFormat("hh:mm:ss a", Locale.getDefault()) }
+    val timeFormatter = remember { SimpleDateFormat("hh:mm a", Locale.getDefault()) }
     val startTimeString = remember(startTime) { timeFormatter.format(Date(startTime)) }
     val endTimeString = remember(actualEndTime) { timeFormatter.format(Date(actualEndTime)) }
-
-    val dateFormatter = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()) }
+    val dateFormatter = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
     val blockEndDateString = remember(actualEndTime) { dateFormatter.format(Date(actualEndTime)) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF171219), // Deep rich space theme background
-                        Color(0xFF221824),
-                        Color(0xFF120E14)
-                    )
-                )
-            )
-            .padding(24.dp)
-            .navigationBarsPadding()
-            .statusBarsPadding(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        // Status banner
-        Box(
-            modifier = Modifier
-                .padding(top = 16.dp)
-                .clip(RoundedCornerShape(50))
-                .background(
-                    if (isLongTerm) {
-                        MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
-                    } else {
-                        Color(0xFFE65100).copy(alpha = 0.2f)
-                    }
-                )
-                .padding(horizontal = 24.dp, vertical = 10.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = if (isLongTerm) Icons.Default.Shield else Icons.Default.Lock,
-                    contentDescription = "Shield Lock Icon",
-                    tint = if (isLongTerm) MaterialTheme.colorScheme.error else Color(0xFFFFB74D),
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = if (isLongTerm) "LONG-TERM BLOCK ACTIVE" else "FOCUS SESSION ACTIVE",
-                    color = if (isLongTerm) MaterialTheme.colorScheme.error else Color(0xFFFFB74D),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.5.sp,
-                    fontFamily = FontFamily.SansSerif
-                )
-            }
-        }
-
-        // Center Content
+    NeonLaserBackground(modifier = Modifier.fillMaxSize()) {
         Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 20.dp)
+                .navigationBarsPadding()
+                .statusBarsPadding()
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            modifier = Modifier.weight(1f).wrapContentHeight(Alignment.CenterVertically)
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Icon(
-                imageVector = if (isLongTerm) Icons.Default.Shield else Icons.Default.HourglassEmpty,
-                contentDescription = "Shield Icon",
-                tint = if (isLongTerm) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(72.dp)
-            )
-
-            Text(
-                text = if (isLongTerm && longTermType == "WEBSITE") "Website Blocked" else "App Blocked",
-                color = MaterialTheme.colorScheme.error,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 2.sp
-            )
-
-            Text(
-                text = if (isLongTerm) appName else "Take a Breath",
-                color = Color.White,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.ExtraBold,
-                textAlign = TextAlign.Center
-            )
-
-            Text(
-                text = if (isLongTerm) {
-                    if (longTermType == "WEBSITE") {
-                        "This website is currently blocked."
-                    } else {
-                        "This app is currently blocked."
-                    }
-                } else {
-                    "$appName is blocked while Focuss Buddy is shielding you from distractions."
-                },
-                color = Color.White.copy(alpha = 0.85f),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-
-            if (longTermReason.isNotEmpty()) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f),
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "WHY IT IS BLOCKED",
-                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.5.sp
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = longTermReason,
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 22.sp
-                        )
-                    }
-                }
-            } else {
-                val isStrict = activeSession?.isStrict ?: false
-                if (isStrict) {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f),
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        ),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "STRICT MODE ACTIVE",
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.5.sp
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "This app is shielded. You cannot open it or turn off the block until the timer ends.",
-                                color = Color.White.copy(alpha = 0.9f),
-                                fontSize = 14.sp,
-                                textAlign = TextAlign.Center,
-                                lineHeight = 20.sp
-                            )
-                        }
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.height(12.dp))
 
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0x15FFFFFF),
-                    contentColor = Color.White
-                ),
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.padding(horizontal = 16.dp)
+            // Centerpiece matching Panel 4 of the Neon Focus Buddy UI Theme Board
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 32.dp, vertical = 20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                NeonCircularLockEmblem(size = 152.dp)
+
+                Text(
+                    text = if (isLongTerm && longTermType == "WEBSITE") "Website Blocked" else "Blocked",
+                    color = Color.White,
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = "You can't access this app right now.\nIt's part of your focus plan.",
+                    color = TextSecondary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 22.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Main Blocked App Info Card (Exact Panel 4 layout: App Icon + Name + Limit/Status + Timer)
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = NeonSurface,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(22.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.2.dp, NeonSubtleBorderBrush, RoundedCornerShape(22.dp))
                 ) {
-                    Text(
-                        text = "REMAINING TIME",
-                        color = Color.White.copy(alpha = 0.5f),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 2.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    BoxWithConstraints(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        val containerWidth = maxWidth
-                        val calculatedFontSize = (containerWidth.value / (timeString.length * 0.62f)).coerceIn(10f, 32f).sp
-                        val calculatedLineHeight = (calculatedFontSize.value * 1.3).sp
-                        Text(
-                            text = timeString,
-                            color = if (isLongTerm) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                            fontSize = calculatedFontSize,
-                            lineHeight = calculatedLineHeight,
-                            fontWeight = FontWeight.Black,
-                            fontFamily = FontFamily.Monospace,
-                            textAlign = TextAlign.Center,
-                            softWrap = false,
-                            maxLines = 1
-                        )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // Neon gradient squircle app icon badge (Instagram / App style)
+                            Box(
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(RoundedCornerShape(15.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            colors = listOf(
+                                                NeonMagenta,
+                                                NeonViolet,
+                                                Color(0xFFFF7A00)
+                                            )
+                                        )
+                                    )
+                                    .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(15.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = appName.firstOrNull()?.uppercase() ?: "A",
+                                    color = Color.White,
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = appName.ifBlank { "Blocked App" },
+                                    color = Color.White,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = when {
+                                        longTermReason.isNotEmpty() -> longTermReason
+                                        isLongTerm -> "Long-term block active"
+                                        activeSession?.isStrict == true -> "Strict Mode • Daily focus plan"
+                                        else -> "Daily limit reached"
+                                    },
+                                    color = TextSecondary,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 2
+                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.padding(top = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccessTime,
+                                        contentDescription = null,
+                                        tint = NeonMagenta,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = if (timeRemaining > 0L) "$timeString remaining" else "0h 0m / ${durationMinutes}m",
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+
+                        // Compact session / block metadata row
+                        if (isLongTerm) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Unlocks On", color = TextSecondary, fontSize = 12.sp)
+                                Text(blockEndDateString, color = NeonCyan, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Session: $startTimeString – $endTimeString",
+                                    color = TextSecondary,
+                                    fontSize = 12.sp
+                                )
+                                Text(
+                                    text = "${durationMinutes}m plan",
+                                    color = NeonCyan,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Glowing Neon-Bordered "Go Back" Pill Button matching Panel 4
+                NeonOutlinedPillButton(
+                    text = "Go Back",
+                    onClick = onReturnHome,
+                    modifier = Modifier.fillMaxWidth(),
+                    height = 56.dp,
+                    fontSize = 17.sp
+                )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0x0AFFFFFF),
-                    contentColor = Color.White
-                ),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    if (isLongTerm) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Block End Date",
-                                color = Color.White.copy(alpha = 0.6f),
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                text = blockEndDateString,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Total Duration",
-                                color = Color.White.copy(alpha = 0.6f),
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                text = "$durationMinutes min",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Session Start",
-                                color = Color.White.copy(alpha = 0.6f),
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                text = startTimeString,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Session End",
-                                color = Color.White.copy(alpha = 0.6f),
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                text = endTimeString,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Bottom Button
-        Button(
-            onClick = onReturnHome,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            ),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(bottom = 16.dp)
-        ) {
-            Text(
-                text = "Return Back",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
+            NeonBetterFocusTagline()
         }
     }
 }
@@ -756,189 +640,147 @@ fun ContentBlockedScreen(
     }
 
     val totalSeconds = timeRemaining / 1000
-    val days = totalSeconds / (24 * 3600)
-    val remainingSecs = totalSeconds % (24 * 3600)
-    val hours = remainingSecs / 3600
-    val minutes = (remainingSecs % 3600) / 60
-    val seconds = remainingSecs % 60
-
-    val timeString = remember(days, hours, minutes, seconds) {
-        val parts = mutableListOf<String>()
-        if (days > 0) parts.add("$days Day${if (days != 1L) "s" else ""}")
-        if (hours > 0 || days > 0) parts.add("$hours Hour${if (hours != 1L) "s" else ""}")
-        if (minutes > 0 || hours > 0 || days > 0) parts.add("$minutes Minute${if (minutes != 1L) "s" else ""}")
-        parts.add("$seconds Second${if (seconds != 1L) "s" else ""}")
-        parts.joinToString(", ")
+    val hours = (totalSeconds % (24 * 3600)) / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    val timeString = remember(hours, minutes, seconds) {
+        if (hours > 0) "${hours}h ${minutes}m ${seconds}s" else "${minutes}m ${seconds}s"
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF171219),
-                        Color(0xFF221824),
-                        Color(0xFF120E14)
-                    )
-                )
-            )
-            .padding(24.dp)
-            .navigationBarsPadding()
-            .statusBarsPadding(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Box(
-            modifier = Modifier
-                .padding(top = 16.dp)
-                .clip(RoundedCornerShape(50))
-                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.2f))
-                .padding(horizontal = 24.dp, vertical = 10.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Shield,
-                    contentDescription = "Shield Icon",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = "STRICT MODE CONTENT BLOCK",
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.5.sp,
-                    fontFamily = FontFamily.SansSerif
-                )
-            }
-        }
-
+    NeonLaserBackground(modifier = Modifier.fillMaxSize()) {
         Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp)
+                .navigationBarsPadding()
+                .statusBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            modifier = Modifier.weight(1f).wrapContentHeight(Alignment.CenterVertically)
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Icon(
-                imageVector = Icons.Default.Block,
-                contentDescription = "Block Icon",
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(72.dp)
-            )
+            Spacer(modifier = Modifier.height(12.dp))
 
-            Text(
-                text = "Content Restricted",
-                color = Color.White,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.ExtraBold,
-                textAlign = TextAlign.Center
-            )
-
-            Text(
-                text = "$contentType access is restricted during your active focus session.",
-                color = Color.White.copy(alpha = 0.85f),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f),
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer
-                ),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "WHY IT IS BLOCKED",
-                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.5.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "You enabled the restriction for $contentType to block distractions in Strict Mode.",
-                        color = Color.White.copy(alpha = 0.9f),
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 20.sp
-                    )
-                }
-            }
+                NeonCircularLockEmblem(size = 148.dp)
 
-            if (timeRemaining > 0L) {
-                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Blocked",
+                    color = Color.White,
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = "You can't access $contentType right now.\nIt's part of your focus plan.",
+                    color = TextSecondary,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 22.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
 
                 Card(
                     colors = CardDefaults.cardColors(
-                        containerColor = Color(0x15FFFFFF),
+                        containerColor = NeonSurface,
                         contentColor = Color.White
                     ),
-                    shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    shape = RoundedCornerShape(22.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.2.dp, NeonSubtleBorderBrush, RoundedCornerShape(22.dp))
                 ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 32.dp, vertical = 20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Text(
-                            text = "REMAINING TIME",
-                            color = Color.White.copy(alpha = 0.5f),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 2.sp
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        BoxWithConstraints(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            val containerWidth = maxWidth
-                            val calculatedFontSize = (containerWidth.value / (timeString.length * 0.62f)).coerceIn(10f, 32f).sp
-                            val calculatedLineHeight = (calculatedFontSize.value * 1.3).sp
-                            Text(
-                                text = timeString,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = calculatedFontSize,
-                                lineHeight = calculatedLineHeight,
-                                fontWeight = FontWeight.Black,
-                                fontFamily = FontFamily.Monospace,
-                                textAlign = TextAlign.Center,
-                                softWrap = false,
-                                maxLines = 1
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    Brush.linearGradient(listOf(NeonMagenta, NeonViolet, NeonCyan))
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Block,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(26.dp)
                             )
+                        }
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = contentType.ifBlank { "Short-Form Content" },
+                                color = Color.White,
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "Content shield active in Strict Mode",
+                                color = TextSecondary,
+                                fontSize = 13.sp
+                            )
+                            if (timeRemaining > 0L) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccessTime,
+                                        contentDescription = null,
+                                        tint = NeonMagenta,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "$timeString left",
+                                        color = NeonCyan,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
 
-        Button(
-            onClick = onGoBack,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            ),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-        ) {
-            Text(
-                text = "Go Back",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                NeonOutlinedPillButton(
+                    text = "Go Back",
+                    onClick = onGoBack,
+                    modifier = Modifier.fillMaxWidth(),
+                    height = 56.dp,
+                    fontSize = 17.sp
+                )
+            }
+
+            NeonBetterFocusTagline()
         }
     }
+}
+
+@Composable
+private fun NeonBetterFocusTagline() {
+    Text(
+        text = buildAnnotatedString {
+            withStyle(SpanStyle(color = NeonCyan, fontWeight = FontWeight.SemiBold)) {
+                append("Better Focus. ")
+            }
+            withStyle(SpanStyle(color = NeonMagenta, fontWeight = FontWeight.SemiBold)) {
+                append("Brighter Future.")
+            }
+        },
+        fontSize = 13.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(bottom = 8.dp)
+    )
 }

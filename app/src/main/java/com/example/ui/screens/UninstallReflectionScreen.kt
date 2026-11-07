@@ -9,11 +9,9 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -22,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -30,11 +29,15 @@ import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.geometry.Rect
 import com.example.receiver.MyDeviceAdminReceiver
+import com.example.ui.components.NeonLaserBackground
+import com.example.ui.theme.NeonBlack
+import com.example.ui.theme.NeonCyan
+import com.example.ui.theme.NeonMagenta
+import com.example.ui.theme.NeonSurface
+import com.example.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -45,9 +48,7 @@ val noOpTextToolbar = object : TextToolbar {
         onPasteRequested: (() -> Unit)?,
         onCutRequested: (() -> Unit)?,
         onSelectAllRequested: (() -> Unit)?
-    ) {
-        // No-op: prevent standard Copy/Paste toolbar overlay
-    }
+    ) {}
     override fun hide() {}
     override val status: TextToolbarStatus get() = TextToolbarStatus.Hidden
 }
@@ -89,237 +90,242 @@ fun UninstallReflectionScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Security Reflection Gate", fontWeight = FontWeight.Bold, color = Color.White) },
+                title = { Text("Security Reflection Gate", fontWeight = FontWeight.ExtraBold, color = Color.White) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF241B26)
+                    containerColor = NeonSurface
                 )
             )
         },
-        containerColor = Color(0xFF171219)
+        containerColor = NeonBlack
     ) { paddingValues ->
-        Column(
+        NeonLaserBackground(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(20.dp)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f)
-                ),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Lock Icon",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(32.dp)
-                    )
-                    Column {
-                        Text(
-                            text = "A Moment of Reflection Required",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Please write a 600-word reflection explaining your decision to uninstall Focuss Buddy. Hasty deinstallation often ruins focus routines. Typing must be done manually — copy-paste is disabled.",
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                            color = Color.White.copy(alpha = 0.7f)
-                        )
-                    }
-                }
-            }
-
-            Text(
-                text = "Live Word Count: $wordCount / 600 words",
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
-                color = if (isReady) Color(0xFFFFB74D) else MaterialTheme.colorScheme.error
-            )
-
-            LinearProgressIndicator(
-                progress = { (wordCount.toFloat() / 600f).coerceAtMost(1f) },
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .testTag("word_count_progress"),
-                color = if (isReady) Color(0xFFFFB74D) else MaterialTheme.colorScheme.error,
-                trackColor = Color.White.copy(alpha = 0.1f)
-            )
-
-            errorMessage?.let {
-                Text(
-                    text = it,
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-            }
-
-            if (adminRemovedPendingUninstall) {
+                    .fillMaxSize()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("admin_cancelled_card"),
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f)
+                        containerColor = NeonSurface
                     ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
+                    border = BorderStroke(1.dp, NeonMagenta.copy(alpha = 0.5f))
                 ) {
-                    Column(
+                    Row(
                         modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Uninstall was cancelled",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = Color.White
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Lock Icon",
+                            tint = NeonMagenta,
+                            modifier = Modifier.size(32.dp)
                         )
-                        Text(
-                            text = "The app is still installed, but Device Admin protection was turned off as part of that attempt. Please reactivate protection to maintain your focus routines.",
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                            color = Color.White.copy(alpha = 0.7f)
-                        )
-                        Button(
-                            onClick = {
-                                try {
-                                    val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                                        putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComp)
-                                        putExtra(
-                                            DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                                            "Enabling Device Admin blocks uninstallation of Focuss Buddy."
-                                        )
-                                    }
-                                    context.startActivity(intent)
-                                    adminRemovedPendingUninstall = false
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Error enabling admin: ${e.message}", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(40.dp)
-                                .testTag("reactivate_protection_button"),
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFFFB74D),
-                                contentColor = Color.Black
+                        Column {
+                            Text(
+                                text = "A Moment of Reflection Required",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = Color.White
                             )
-                        ) {
-                            Text("Reactivate Protection", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Please write a 600-word reflection explaining your decision to uninstall Focuss Buddy. Hasty deinstallation often ruins focus routines. Typing must be done manually — copy-paste is disabled.",
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                color = TextSecondary
+                            )
                         }
                     }
                 }
-            }
 
-            CompositionLocalProvider(
-                LocalClipboardManager provides noOpClipboardManager,
-                LocalTextToolbar provides noOpTextToolbar
-            ) {
-                OutlinedTextField(
-                    value = textState,
-                    onValueChange = { newVal ->
-                        val delta = newVal.length - textState.length
-                        if (delta > 15) {
-                            errorMessage = "Copy/paste detected! Writing must be manual."
-                        } else {
-                            if (errorMessage != null && delta >= 0) {
-                                errorMessage = null
-                            }
-                            textState = newVal
-                        }
-                    },
+                Text(
+                    text = "Live Word Count: $wordCount / 600 words",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = if (isReady) NeonCyan else NeonMagenta
+                )
+
+                LinearProgressIndicator(
+                    progress = { (wordCount.toFloat() / 600f).coerceAtMost(1f) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(300.dp)
-                        .testTag("reflection_text_field"),
-                    placeholder = {
-                        Text(
-                            "Express your thoughts here...",
-                            color = Color.White.copy(alpha = 0.4f)
-                        )
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = if (isReady) Color(0xFFFFB74D) else Color.White.copy(alpha = 0.3f),
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.15f),
-                        focusedContainerColor = Color(0xFF281E29),
-                        unfocusedContainerColor = Color(0xFF281E29)
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+                        .height(6.dp)
+                        .testTag("word_count_progress"),
+                    color = if (isReady) NeonCyan else NeonMagenta,
+                    trackColor = NeonSurface
                 )
-            }
 
-            Button(
-                onClick = {
-                    if (isReady) {
-                        scope.launch {
-                            try {
-                                val active = (context.applicationContext as? com.example.FocusApplication)?.repository?.getActiveSessionSync()
-                                if (active != null && active.isActive && active.isStrict && com.example.TrustedClock.now() < active.endTime) {
-                                    Toast.makeText(context, "Cannot uninstall while a Strict Mode session is active!", Toast.LENGTH_LONG).show()
-                                    return@launch
-                                }
-                                com.example.service.FocusAccessibilityService.allowPendingUninstall()
-                                if (dpm.isAdminActive(adminComp)) {
-                                    dpm.removeActiveAdmin(adminComp)
-                                    var attempts = 0
-                                    while (dpm.isAdminActive(adminComp) && attempts < 10) {
-                                        delay(50L)
-                                        attempts++
+                errorMessage?.let {
+                    Text(
+                        text = it,
+                        color = NeonMagenta,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+
+                if (adminRemovedPendingUninstall) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_cancelled_card"),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = NeonSurface
+                        ),
+                        border = BorderStroke(1.dp, NeonMagenta.copy(alpha = 0.5f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Uninstall was cancelled",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "The app is still installed, but Device Admin protection was turned off as part of that attempt. Please reactivate protection to maintain your focus routines.",
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                color = TextSecondary
+                            )
+                            Button(
+                                onClick = {
+                                    try {
+                                        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                                            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComp)
+                                            putExtra(
+                                                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                                                "Enabling Device Admin blocks uninstallation of Focuss Buddy."
+                                            )
+                                        }
+                                        context.startActivity(intent)
+                                        adminRemovedPendingUninstall = false
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Error enabling admin: ${e.message}", Toast.LENGTH_SHORT).show()
                                     }
-                                }
-                                val uninstallIntent = Intent(Intent.ACTION_DELETE).apply {
-                                    data = Uri.parse("package:" + context.packageName)
-                                }
-                                uninstallLauncher.launch(uninstallIntent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Error executing uninstallation: ${e.message}", Toast.LENGTH_LONG).show()
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .testTag("reactivate_protection_button"),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NeonCyan,
+                                    contentColor = NeonBlack
+                                )
+                            ) {
+                                Text("Reactivate Protection", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             }
                         }
                     }
-                },
-                enabled = isReady,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .testTag("confirm_uninstall_button"),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = MaterialTheme.colorScheme.onError,
-                    disabledContainerColor = Color.White.copy(alpha = 0.08f),
-                    disabledContentColor = Color.White.copy(alpha = 0.3f)
-                )
-            ) {
-                Text(
-                    text = "Confirm Deactivation & Uninstall",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
-                )
+                }
+
+                CompositionLocalProvider(
+                    LocalClipboardManager provides noOpClipboardManager,
+                    LocalTextToolbar provides noOpTextToolbar
+                ) {
+                    OutlinedTextField(
+                        value = textState,
+                        onValueChange = { newVal ->
+                            val delta = newVal.length - textState.length
+                            if (delta > 15) {
+                                errorMessage = "Copy/paste detected! Writing must be manual."
+                            } else {
+                                if (errorMessage != null && delta >= 0) {
+                                    errorMessage = null
+                                }
+                                textState = newVal
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp)
+                            .testTag("reflection_text_field"),
+                        placeholder = {
+                            Text(
+                                "Express your thoughts here...",
+                                color = TextSecondary
+                            )
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = if (isReady) NeonCyan else Color(0xFF2E3248),
+                            unfocusedBorderColor = Color(0xFF2E3248),
+                            focusedContainerColor = NeonSurface,
+                            unfocusedContainerColor = NeonSurface
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        if (isReady) {
+                            scope.launch {
+                                try {
+                                    val active = (context.applicationContext as? com.example.FocusApplication)?.repository?.getActiveSessionSync()
+                                    if (active != null && active.isActive && active.isStrict && com.example.TrustedClock.now() < active.endTime) {
+                                        Toast.makeText(context, "Cannot uninstall while a Strict Mode session is active!", Toast.LENGTH_LONG).show()
+                                        return@launch
+                                    }
+                                    com.example.service.FocusAccessibilityService.allowPendingUninstall()
+                                    if (dpm.isAdminActive(adminComp)) {
+                                        dpm.removeActiveAdmin(adminComp)
+                                        var attempts = 0
+                                        while (dpm.isAdminActive(adminComp) && attempts < 10) {
+                                            delay(50L)
+                                            attempts++
+                                        }
+                                    }
+                                    val uninstallIntent = Intent(Intent.ACTION_DELETE).apply {
+                                        data = Uri.parse("package:" + context.packageName)
+                                    }
+                                    uninstallLauncher.launch(uninstallIntent)
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "Error executing uninstallation: ${e.message}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    },
+                    enabled = isReady,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .testTag("confirm_uninstall_button"),
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonMagenta,
+                        contentColor = Color.White,
+                        disabledContainerColor = NeonSurface,
+                        disabledContentColor = TextSecondary
+                    )
+                ) {
+                    Text(
+                        text = "Confirm Deactivation & Uninstall",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                }
             }
         }
     }

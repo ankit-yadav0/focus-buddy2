@@ -17,20 +17,27 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Park
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.NeonBlack
+import com.example.ui.theme.NeonCyan
+import com.example.ui.theme.NeonMagenta
+import com.example.ui.theme.NeonSurface
+import com.example.ui.theme.NeonViolet
 
 data class ControlDeckTab(
     val route: String,
@@ -38,19 +45,20 @@ data class ControlDeckTab(
     val icon: ImageVector
 )
 
-// Matches Design 6's exact 4 bottom navigation tabs: Home, Blocks, Stats, Forest
-// (Timer and Schedule Manager are also included for route matching and reachable from Home).
+// Matches the Neon Focus Buddy UI Theme Board bottom navigation bar while keeping
+// the core route IDs intact for seamless navigation and deep-linking:
+// Home ("home"), Stats ("insights"), Planner ("study_planner"), Blocks/More ("blocks_progress").
 val controlDeckTabs = listOf(
     ControlDeckTab("home", "Home", Icons.Default.Home),
-    ControlDeckTab("blocks_progress", "Blocks", Icons.Default.GridView),
     ControlDeckTab("insights", "Stats", Icons.Default.BarChart),
-    ControlDeckTab("forest_gallery", "Forest", Icons.Default.Park)
+    ControlDeckTab("study_planner", "Planner", Icons.Default.CalendarMonth),
+    ControlDeckTab("blocks_progress", "More", Icons.Default.MoreHoriz)
 )
 
 /**
- * Design 6 ("Cozy Lofi Night-Study") bottom navigation bar:
- * Deep warm espresso bar (#211822) with a warm bronze pill around the active icon
- * and golden-amber (#FFB74D) active icon/label.
+ * Neon Black Theme bottom navigation bar:
+ * Deep #08080F / #12121C surface with a glowing cyan/magenta top hairline and
+ * neon cyan (#00E5FF) active icon/label.
  */
 @Composable
 fun ControlDeckBottomNav(
@@ -58,14 +66,29 @@ fun ControlDeckBottomNav(
     onTabSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val amberAccent = Color(0xFFFFB74D)
-    val creamInactive = Color(0xFFEAE0D5)
+    val inactiveColor = Color(0xFF8E95B0)
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color(0xFF211822))
-            .border(width = 0.8.dp, color = Color(0x26FFB74D))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        NeonSurface.copy(alpha = 0.96f),
+                        NeonBlack
+                    )
+                )
+            )
+            .border(
+                width = 0.9.dp,
+                brush = Brush.horizontalGradient(
+                    colors = listOf(
+                        NeonCyan.copy(alpha = 0.45f),
+                        NeonViolet.copy(alpha = 0.30f),
+                        NeonMagenta.copy(alpha = 0.45f)
+                    )
+                )
+            )
             .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
@@ -80,8 +103,8 @@ fun ControlDeckBottomNav(
                 ControlDeckNavItem(
                     tab = tab,
                     isActive = isActive,
-                    activeColor = amberAccent,
-                    inactiveColor = creamInactive,
+                    activeColor = NeonCyan,
+                    inactiveColor = inactiveColor,
                     onClick = { onTabSelected(tab.route) },
                     modifier = Modifier.weight(1f)
                 )
@@ -111,23 +134,46 @@ private fun ControlDeckNavItem(
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
-                .background(if (isActive) Color(0xFF563B25) else Color.Transparent)
-                .padding(horizontal = 22.dp, vertical = 6.dp),
+                .background(
+                    if (isActive) {
+                        Brush.horizontalGradient(
+                            colors = listOf(
+                                NeonCyan.copy(alpha = 0.22f),
+                                NeonViolet.copy(alpha = 0.22f),
+                                NeonMagenta.copy(alpha = 0.18f)
+                            )
+                        )
+                    } else {
+                        Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+                    }
+                )
+                .border(
+                    width = if (isActive) 1.dp else 0.dp,
+                    brush = if (isActive) {
+                        Brush.horizontalGradient(
+                            listOf(NeonCyan.copy(alpha = 0.65f), NeonMagenta.copy(alpha = 0.55f))
+                        )
+                    } else {
+                        Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+                    },
+                    shape = RoundedCornerShape(50)
+                )
+                .padding(horizontal = 20.dp, vertical = 5.dp),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = tab.icon,
                 contentDescription = tab.label,
-                tint = if (isActive) activeColor else inactiveColor.copy(alpha = 0.85f),
-                modifier = Modifier.size(22.dp)
+                tint = if (isActive) activeColor else inactiveColor,
+                modifier = Modifier.size(21.dp)
             )
         }
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(3.dp))
         Text(
             text = tab.label,
-            color = if (isActive) activeColor else inactiveColor.copy(alpha = 0.80f),
-            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
-            fontSize = 12.sp
+            color = if (isActive) activeColor else inactiveColor,
+            fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Medium,
+            fontSize = 11.5.sp
         )
     }
 }

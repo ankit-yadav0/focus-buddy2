@@ -71,6 +71,22 @@ import com.example.data.LongTermBlock
 import com.example.viewmodel.AppInfo
 import com.example.viewmodel.FocusViewModel
 import com.example.ui.theme.AccentTheme
+import com.example.ui.theme.NeonBlack
+import com.example.ui.theme.NeonCyan
+import com.example.ui.theme.NeonMagenta
+import com.example.ui.theme.NeonSurface
+import com.example.ui.theme.NeonViolet
+import com.example.ui.theme.TextSecondary
+import com.example.ui.components.FocusBuddyNeonTitle
+import com.example.ui.components.NeonCardBorderBrush
+import com.example.ui.components.NeonDisciplineFooter
+import com.example.ui.components.NeonGradientProgressBar
+import com.example.ui.components.NeonHorizontalBrush
+import com.example.ui.components.NeonLaserBackground
+import com.example.ui.components.NeonOutlinedPillButton
+import com.example.ui.components.NeonPrimaryGradientButton
+import com.example.ui.components.NeonSubtleBorderBrush
+import com.example.ui.components.NeonTargetLightningLogo
 import com.example.viewmodel.DailyAnalytics
 import com.example.viewmodel.TrendPoint
 import com.example.viewmodel.AdvancedAnalytics
@@ -105,6 +121,7 @@ fun HomeScreen(
     onWallpaperOpacityChange: (Float) -> Unit = {},
     onNavigateToUninstall: () -> Unit = {},
     onNavigateToStrictOverride: () -> Unit = {},
+    onNavigateToRoute: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -130,6 +147,29 @@ fun HomeScreen(
     var showStrictWizardFromHome by remember { mutableStateOf(false) }
     var showMindfulDialogFromHome by remember { mutableStateOf(false) }
     var showKeywordDialogFromHome by remember { mutableStateOf(false) }
+
+    var currentWallMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(10_000L)
+            currentWallMillis = System.currentTimeMillis()
+        }
+    }
+
+    val greetingText = remember(currentWallMillis) {
+        val hr = Calendar.getInstance().apply { timeInMillis = currentWallMillis }.get(Calendar.HOUR_OF_DAY)
+        when {
+            hr < 12 -> "Good Morning,"
+            hr < 17 -> "Good Afternoon,"
+            else -> "Good Evening,"
+        }
+    }
+    val formattedDateStr = remember(currentWallMillis) {
+        SimpleDateFormat("EEE, dd MMM yyyy", Locale.US).format(Date(currentWallMillis))
+    }
+    val formattedClockStr = remember(currentWallMillis) {
+        SimpleDateFormat("hh:mm", Locale.US).format(Date(currentWallMillis))
+    }
 
     LaunchedEffect(Unit) {
         viewModel.actionBlockedMessage.collect { message ->
@@ -188,49 +228,37 @@ fun HomeScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
-    val lofiAmber = Color(0xFFFFB74D)
-    val lofiCoral = Color(0xFFFF8A65)
-    val lofiCream = Color(0xFFFFF8E7)
-    val lofiEspressoDark = Color(0xFF171219)
-    val lofiEspressoMid = Color(0xFF221824)
-    val lofiCardBg = Color(0xFF281E29)
-
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = Color(0xFF1E1620),
-                modifier = Modifier.width(320.dp)
+                drawerContainerColor = NeonBlack,
+                modifier = Modifier
+                    .width(325.dp)
+                    .border(1.dp, NeonSubtleBorderBrush)
             ) {
                 Spacer(modifier = Modifier.height(24.dp))
                 Row(
                     modifier = Modifier.padding(horizontal = 24.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        text = "Focuss Buddy",
-                        fontWeight = FontWeight.Black,
-                        fontSize = 22.sp,
-                        color = lofiCream,
-                        letterSpacing = 0.5.sp,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                    Text(text = "🦉", fontSize = 20.sp)
+                    NeonTargetLightningLogo(size = 38.dp)
+                    Column {
+                        FocusBuddyNeonTitle(fontSize = 22.sp, focusInCyan = true)
+                        Text(
+                            text = "Clean • Modern • Focused",
+                            fontSize = 11.5.sp,
+                            color = TextSecondary,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                 }
-                Text(
-                    text = "Tools, App Locks & Study Settings",
-                    fontSize = 12.sp,
-                    color = lofiAmber.copy(alpha = 0.85f),
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-                    maxLines = 1,
-                    softWrap = false
-                )
 
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = 14.dp, horizontal = 24.dp),
-                    color = lofiAmber.copy(alpha = 0.22f)
+                    color = NeonCyan.copy(alpha = 0.22f)
                 )
 
                 Column(
@@ -238,18 +266,17 @@ fun HomeScreen(
                         .fillMaxSize()
                         .padding(horizontal = 16.dp)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
                         text = "APP & SECURITY CONTROLS",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = lofiAmber,
+                        color = NeonCyan,
                         letterSpacing = 1.sp,
                         modifier = Modifier.padding(horizontal = 4.dp)
                     )
 
-                    // 1. Blocked Apps inside Side Drawer
                     LofiDrawerNavigationItem(
                         title = "App Blocking",
                         subtitle = "${blockedApps.size} apps blocked during Focus",
@@ -261,7 +288,6 @@ fun HomeScreen(
                         }
                     )
 
-                    // 2. App Lock inside Side Drawer
                     LofiDrawerNavigationItem(
                         title = "App Locking (PIN Gate)",
                         subtitle = "${lockedApps.size} apps protected with PIN",
@@ -273,7 +299,6 @@ fun HomeScreen(
                         }
                     )
 
-                    // 3. Banking Mode / Pause inside Side Drawer
                     LofiDrawerNavigationItem(
                         title = "Banking Mode (Pause)",
                         subtitle = "${bankingApps.size} banking/UPI apps configured",
@@ -285,7 +310,6 @@ fun HomeScreen(
                         }
                     )
 
-                    // 4. Custom Timer & Daily Schedules inside Side Drawer
                     LofiDrawerNavigationItem(
                         title = "Custom Timer & Schedules",
                         subtitle = "Set exact D/H/M/S & recurring Strict windows",
@@ -297,9 +321,73 @@ fun HomeScreen(
                         }
                     )
 
+                    Text(
+                        text = "STUDY SUITE & ANALYTICS",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = NeonMagenta,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+
+                    LofiDrawerNavigationItem(
+                        title = "Study Planner",
+                        subtitle = "Lecture & playback speed plan calculator",
+                        icon = Icons.Default.Calculate,
+                        testTag = "drawer_study_planner_button",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToRoute("study_planner")
+                        }
+                    )
+
+                    LofiDrawerNavigationItem(
+                        title = "Test Calendar",
+                        subtitle = "Upcoming mock tests & pipe-delimited import",
+                        icon = Icons.Default.CalendarToday,
+                        testTag = "drawer_test_calendar_button",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToRoute("test_calendar")
+                        }
+                    )
+
+                    LofiDrawerNavigationItem(
+                        title = "PYQ Practice",
+                        subtitle = "Subject & topic-wise PYQ quiz practice",
+                        icon = Icons.Default.Quiz,
+                        testTag = "drawer_pyq_practice_button",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToRoute("pyq_practice")
+                        }
+                    )
+
+                    LofiDrawerNavigationItem(
+                        title = "App Usage & Daily Quota",
+                        subtitle = "Track daily app usage & quota bars",
+                        icon = Icons.Default.BarChart,
+                        testTag = "drawer_app_usage_button",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToRoute("app_usage")
+                        }
+                    )
+
+                    LofiDrawerNavigationItem(
+                        title = "All Apps (Launcher Mode)",
+                        subtitle = " distraction-free study app drawer",
+                        icon = Icons.Default.Apps,
+                        testTag = "drawer_all_apps_button",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToRoute("all_apps")
+                        }
+                    )
+
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 4.dp),
-                        color = lofiAmber.copy(alpha = 0.15f)
+                        color = NeonCyan.copy(alpha = 0.15f)
                     )
 
                     WallpaperSettingsDrawerCard(
@@ -326,6 +414,8 @@ fun HomeScreen(
                             onNavigateToUninstall()
                         }
                     )
+
+                    NeonDisciplineFooter(modifier = Modifier.padding(vertical = 8.dp))
                     Spacer(modifier = Modifier.height(24.dp))
                 }
             }
@@ -335,20 +425,12 @@ fun HomeScreen(
             containerColor = Color.Transparent,
             modifier = modifier
         ) { innerPadding ->
-            val bgAlpha = if (hasWallpaper) 0.42f else 1.0f
-            Box(
+            val bgAlpha = if (hasWallpaper) 0.45f else 1.0f
+            NeonLaserBackground(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                lofiEspressoDark.copy(alpha = bgAlpha),
-                                lofiEspressoMid.copy(alpha = bgAlpha),
-                                Color(0xFF120E14).copy(alpha = bgAlpha)
-                            )
-                        )
-                    )
-                    .padding(innerPadding)
+                    .padding(innerPadding),
+                bgAlpha = bgAlpha
             ) {
                 Column(
                     modifier = Modifier
@@ -360,7 +442,7 @@ fun HomeScreen(
                 ) {
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    // Top Header matching Design 6: "Focuss Buddy" in glowing warm cream + Night Owl badge
+                    // 1. Top Greeting Header matching Panel 2 ("Good Morning, / Focus Buddy" + Settings Gear)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -368,146 +450,294 @@ fun HomeScreen(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.weight(1f)
                         ) {
                             IconButton(
                                 onClick = { scope.launch { drawerState.open() } },
                                 modifier = Modifier
                                     .size(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(NeonSurface)
+                                    .border(1.dp, NeonSubtleBorderBrush, RoundedCornerShape(12.dp))
                                     .testTag("hamburger_menu_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Menu,
                                     contentDescription = "Menu",
-                                    tint = lofiCream
+                                    tint = NeonCyan
                                 )
                             }
-                            Text(
-                                text = "Focuss Buddy",
-                                fontWeight = FontWeight.Black,
-                                fontSize = 26.sp,
-                                color = lofiCream,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                style = TextStyle(
-                                    shadow = Shadow(
-                                        color = lofiAmber.copy(alpha = 0.45f),
-                                        offset = Offset(0f, 0f),
-                                        blurRadius = 18f
-                                    )
+                            Column {
+                                Text(
+                                    text = greetingText,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextSecondary,
+                                    maxLines = 1
                                 )
-                            )
+                                FocusBuddyNeonTitle(fontSize = 24.sp, focusInCyan = true)
+                            }
                         }
                         Box(
                             modifier = Modifier
-                                .size(46.dp)
+                                .size(42.dp)
                                 .clip(CircleShape)
-                                .background(lofiCardBg)
-                                .border(1.dp, lofiAmber.copy(alpha = 0.4f), CircleShape)
-                                .clickable { scope.launch { drawerState.open() } },
+                                .background(NeonSurface)
+                                .border(1.2.dp, NeonCardBorderBrush, CircleShape)
+                                .clickable { onNavigateToRoute("neon_settings") },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(text = "🦉", fontSize = 25.sp)
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = Color.White,
+                                modifier = Modifier.size(21.dp)
+                            )
                         }
                     }
 
-                    // 1. TARGET EXAM Countdown Pill Banner (Exact Design 6 style)
-                    ExamCountdownHeaderCard(viewModel = viewModel)
+                    // 2. Date & Large Clock + Streak Card Row (Exact Panel 2 layout)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = formattedDateStr,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = TextSecondary,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = formattedClockStr,
+                                fontSize = 38.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White,
+                                letterSpacing = 0.5.sp,
+                                maxLines = 1
+                            )
+                        }
 
-                    // 2. Two Side-by-Side Cozy Stat Cards: "🔥 X Day Streak" & "☕ Xh Ym Studied Today"
+                        // Streak Card ("🔥 12 Day Streak / Keep going!")
+                        Card(
+                            modifier = Modifier
+                                .border(1.2.dp, NeonCardBorderBrush, RoundedCornerShape(18.dp))
+                                .clickable { onNavigateToRoute("insights") },
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = NeonSurface)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Text(text = "🔥", fontSize = 15.sp)
+                                    Text(
+                                        text = "${advancedAnalytics.currentStreak}",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 17.sp,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = "Day Streak",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.5.sp,
+                                        color = TextSecondary
+                                    )
+                                }
+                                Text(
+                                    text = "Keep going!",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = NeonCyan
+                                )
+                            }
+                        }
+                    }
+
+                    // 3. Today's Focus Time Card with Circular Neon Ring Gauge (Exact Panel 2)
                     val todaySecs = dailyAnalytics.totalActualFocusTimeSeconds
                     val todayH = todaySecs / 3600L
                     val todayM = (todaySecs % 3600L) / 60L
                     val todayTimeFormatted = if (todayH > 0L) "${todayH}h ${todayM}m" else "${todayM}m"
+                    val dailyGoalFraction = remember(todaySecs) {
+                        if (todaySecs > 0L) {
+                            (todaySecs.toFloat() / (6f * 3600f)).coerceIn(0.08f, 1f)
+                        } else {
+                            0.68f
+                        }
+                    }
+                    val dailyGoalPercent = (dailyGoalFraction * 100f).toInt()
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.3.dp, NeonCardBorderBrush, RoundedCornerShape(20.dp))
+                            .clickable { onNavigateToRoute("app_usage") },
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = NeonSurface)
                     ) {
-                        // Left Stat Card: Streak (2-line symmetrical layout matching Studied Today)
-                        Card(
+                        Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .height(68.dp),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF332623)),
-                            border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.25f))
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 10.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                ) {
-                                    Text(text = "🔥", fontSize = 16.sp)
-                                    Text(
-                                        text = "${advancedAnalytics.currentStreak} ${if (advancedAnalytics.currentStreak == 1) "Day" else "Days"}",
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 15.sp,
-                                        color = lofiAmber,
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                }
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
-                                    text = "Focus Streak",
+                                    text = "Today's Focus Time",
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 11.sp,
-                                    color = lofiCream.copy(alpha = 0.9f),
-                                    maxLines = 1,
-                                    softWrap = false
+                                    color = TextSecondary
+                                )
+                                Text(
+                                    text = todayTimeFormatted,
+                                    fontSize = 28.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White
                                 )
                             }
-                        }
 
-                        // Right Stat Card: Studied Today
-                        Card(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(68.dp),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF352229)),
-                            border = BorderStroke(1.dp, lofiCoral.copy(alpha = 0.25f))
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 10.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
+                            Box(
+                                modifier = Modifier.size(58.dp),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                ) {
-                                    Text(text = "☕", fontSize = 16.sp)
-                                    Text(
-                                        text = todayTimeFormatted,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 15.sp,
-                                        color = lofiCoral,
-                                        maxLines = 1,
-                                        softWrap = false
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    val stroke = 6.dp.toPx()
+                                    drawCircle(
+                                        color = Color(0xFF28283C),
+                                        style = Stroke(width = stroke)
+                                    )
+                                    drawArc(
+                                        brush = Brush.sweepGradient(
+                                            colors = listOf(NeonCyan, NeonViolet, NeonMagenta, NeonCyan)
+                                        ),
+                                        startAngle = -90f,
+                                        sweepAngle = 360f * dailyGoalFraction,
+                                        useCenter = false,
+                                        style = Stroke(width = stroke, cap = StrokeCap.Round)
                                     )
                                 }
                                 Text(
-                                    text = "Studied Today",
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 11.sp,
-                                    color = lofiCream.copy(alpha = 0.9f),
-                                    maxLines = 1,
-                                    softWrap = false
+                                    text = "$dailyGoalPercent%",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 12.sp
                                 )
                             }
                         }
                     }
+
+                    // 4. Active Session Card (Exact Panel 2 layout)
+                    val isSessionRunning = activeSession != null && activeSession?.isActive == true
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.2.dp, NeonSubtleBorderBrush, RoundedCornerShape(20.dp)),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = NeonSurface)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Active Session",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextSecondary
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(
+                                                Brush.linearGradient(listOf(NeonCyan, NeonViolet))
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "B",
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 18.sp
+                                        )
+                                    }
+                                    Column {
+                                        Text(
+                                            text = if (isSessionRunning) {
+                                                if (activeSession?.isStrict == true) "Strict Focus" else "Deep Focus"
+                                            } else {
+                                                "Physics / Deep Study"
+                                            },
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.5.sp
+                                        )
+                                        Text(
+                                            text = if (isSessionRunning) "Session in progress" else "${selectedQuickMinutes}:00 ready",
+                                            color = TextSecondary,
+                                            fontSize = 12.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(NeonBlack)
+                                        .border(1.3.dp, NeonCardBorderBrush, RoundedCornerShape(50))
+                                        .clickable {
+                                            if (!isSessionRunning) {
+                                                viewModel.startFocusSession(
+                                                    minutes = selectedQuickMinutes,
+                                                    isStrict = quickStrictSelected,
+                                                    totalMs = selectedQuickMinutes * 60 * 1000L
+                                                )
+                                            } else if (activeSession?.isStrict != true) {
+                                                viewModel.stopActiveSession()
+                                            }
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = when {
+                                            !isSessionRunning -> "> Start"
+                                            activeSession?.isStrict == true -> "🔒 Locked"
+                                            else -> "> Pause"
+                                        },
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.5.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 5. Exam Countdown Card (Exact Panel 2 style with diagonal neon laser streaks)
+                    ExamCountdownHeaderCard(viewModel = viewModel)
 
                     // Permission Alert Banner if Accessibility or Usage Stats is missing
                     if (!isAccessibilityEnabled || !isUsageEnabled) {
@@ -530,8 +760,7 @@ fun HomeScreen(
                         )
                     }
 
-                    // 3. Centerpiece: Glowing Golden-Amber Circular Focus Ring + Starfield + Bonsai Tree
-                    val isSessionRunning = activeSession != null && activeSession?.isActive == true
+                    // 6. Centerpiece: Glowing Neon Cyan-Violet-Magenta Circular Focus Ring + Starfield
                     LofiAmberFocusCenterpiece(
                         activeSession = activeSession,
                         selectedMinutes = selectedQuickMinutes,
@@ -541,7 +770,7 @@ fun HomeScreen(
                         }
                     )
 
-                    // 4. Duration & Mode Pill Selector Row ("15m", "25m", "60m", "Strict") — Exact Design 6
+                    // 7. Duration & Mode Pill Selector Row ("15m", "25m", "60m", "Strict")
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -577,7 +806,7 @@ fun HomeScreen(
                         )
                     }
 
-                    // 5. Offline Focus Sound Pill Row ("Off", "Brown Noise", "40Hz Gamma", "Soft Rain") — Exact Design 6
+                    // 8. Offline Focus Sound Pill Row ("Off", "Brown Noise", "40Hz Gamma", "Soft Rain")
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -596,9 +825,10 @@ fun HomeScreen(
                         }
                     }
 
-                    // 6. Primary Golden-Amber Pill Button: "Start Focus Session" (or Active Session Controls)
+                    // 9. Primary Neon Gradient Pill Button: "Start Focus Session" (or Active Session Controls)
                     if (!isSessionRunning) {
-                        Button(
+                        NeonPrimaryGradientButton(
+                            text = "Start Focus Session",
                             onClick = {
                                 viewModel.startFocusSession(
                                     minutes = selectedQuickMinutes,
@@ -608,23 +838,10 @@ fun HomeScreen(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(54.dp)
                                 .testTag("start_focus_session_button"),
-                            shape = RoundedCornerShape(27.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = lofiAmber,
-                                contentColor = Color(0xFF1A1108)
-                            ),
-                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
-                        ) {
-                            Text(
-                                text = "Start Focus Session",
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        }
+                            height = 54.dp,
+                            fontSize = 17.sp
+                        )
                     } else {
                         val session = activeSession!!
                         val deactivationMethod by viewModel.deactivationMethod.collectAsStateWithLifecycle()
@@ -641,7 +858,7 @@ fun HomeScreen(
                                         .testTag("stop_session_icon_button"),
                                     shape = RoundedCornerShape(27.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.error,
+                                        containerColor = NeonMagenta,
                                         contentColor = Color.White
                                     )
                                 ) {
@@ -668,10 +885,10 @@ fun HomeScreen(
                                         .testTag("start_focus_session_button"),
                                     shape = RoundedCornerShape(27.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF3A2428),
-                                        contentColor = lofiAmber
+                                        containerColor = NeonSurface,
+                                        contentColor = NeonCyan
                                     ),
-                                    border = BorderStroke(1.5.dp, lofiAmber.copy(alpha = 0.7f))
+                                    border = BorderStroke(1.5.dp, NeonCardBorderBrush)
                                 ) {
                                     Icon(Icons.Default.Lock, contentDescription = "Strict Active", modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
@@ -687,7 +904,40 @@ fun HomeScreen(
                         }
                     }
 
-                    // 7. Exact Design 6 2x2 Bento Grid with Golden-Amber Borders (Zero mid-word wrapping!)
+                    // 10. Study Apps Section (Exact Panel 2: Physics, Chemistry, Mathematics, Biology)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Study Apps",
+                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 15.5.sp
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.clickable { onNavigateToRoute("all_apps") }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Apps,
+                                contentDescription = null,
+                                tint = NeonCyan,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "All Apps",
+                                color = NeonCyan,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.5.sp
+                            )
+                        }
+                    }
+                    NeonStudyAppsQuickRow(onNavigateToRoute = onNavigateToRoute)
+
+                    // 11. 2x2 Neon Bento Feature Grid (YouTube Study Mode, WhatsApp Chat-Only, 7s Mindful Gate, Keyword Blocker)
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -696,7 +946,6 @@ fun HomeScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            // Top-Left: YouTube Study Mode
                             LofiBentoFeatureCard(
                                 titleLine1 = "YouTube",
                                 titleLine2 = "Study Mode",
@@ -707,19 +956,15 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .size(34.dp)
                                             .clip(RoundedCornerShape(10.dp))
-                                            .background(
-                                                Brush.verticalGradient(
-                                                    listOf(Color(0xFF1A243B), Color(0xFF0F1523))
-                                                )
-                                            )
-                                            .border(1.dp, lofiAmber.copy(alpha = 0.35f), RoundedCornerShape(10.dp)),
+                                            .background(NeonBlack)
+                                            .border(1.dp, NeonCyan.copy(alpha = 0.55f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Box(
                                             modifier = Modifier
                                                 .size(width = 24.dp, height = 17.dp)
                                                 .clip(RoundedCornerShape(5.dp))
-                                                .background(Color(0xFFE53935)),
+                                                .background(Color(0xFFFF1744)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
@@ -741,7 +986,6 @@ fun HomeScreen(
                                 modifier = Modifier.weight(1f)
                             )
 
-                            // Top-Right: WhatsApp Chat-Only
                             LofiBentoFeatureCard(
                                 titleLine1 = "WhatsApp",
                                 titleLine2 = "Chat-Only",
@@ -752,21 +996,21 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .size(34.dp)
                                             .clip(RoundedCornerShape(10.dp))
-                                            .background(Color(0xFF332625))
-                                            .border(1.dp, lofiAmber.copy(alpha = 0.35f), RoundedCornerShape(10.dp)),
+                                            .background(NeonBlack)
+                                            .border(1.dp, NeonMagenta.copy(alpha = 0.55f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Box(
                                             modifier = Modifier
                                                 .size(26.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFFF3C68F)),
+                                                .background(Color(0xFF00E676).copy(alpha = 0.2f)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Chat,
                                                 contentDescription = null,
-                                                tint = Color(0xFF281C18),
+                                                tint = Color(0xFF00E676),
                                                 modifier = Modifier.size(14.dp)
                                             )
                                         }
@@ -787,7 +1031,6 @@ fun HomeScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            // Bottom-Left: 7s Mindful Gate
                             LofiBentoFeatureCard(
                                 titleLine1 = "7s Mindful",
                                 titleLine2 = "Breath Gate",
@@ -798,19 +1041,15 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .size(34.dp)
                                             .clip(RoundedCornerShape(10.dp))
-                                            .background(
-                                                Brush.verticalGradient(
-                                                    listOf(Color(0xFF253C46), Color(0xFF3A5F56))
-                                                )
-                                            )
-                                            .border(1.dp, lofiAmber.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
+                                            .background(NeonBlack)
+                                            .border(1.dp, NeonCyan.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.SelfImprovement,
                                             contentDescription = null,
-                                            tint = lofiCream,
-                                            modifier = Modifier.size(22.dp)
+                                            tint = NeonCyan,
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
                                 },
@@ -818,7 +1057,6 @@ fun HomeScreen(
                                 modifier = Modifier.weight(1f)
                             )
 
-                            // Bottom-Right: Keyword Blocker
                             LofiBentoFeatureCard(
                                 titleLine1 = "Keyword",
                                 titleLine2 = "Blocker",
@@ -829,15 +1067,15 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .size(34.dp)
                                             .clip(RoundedCornerShape(10.dp))
-                                            .background(Color(0xFF332328))
-                                            .border(1.dp, lofiAmber.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
+                                            .background(NeonBlack)
+                                            .border(1.dp, NeonMagenta.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Shield,
                                             contentDescription = null,
-                                            tint = lofiAmber,
-                                            modifier = Modifier.size(22.dp)
+                                            tint = NeonMagenta,
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
                                 },
@@ -860,7 +1098,7 @@ fun HomeScreen(
                     }
                     AlertDialog(
                         onDismissRequest = { showMindfulDialogFromHome = false },
-                        containerColor = Color(0xFF241B26),
+                        containerColor = NeonSurface,
                         title = {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -868,11 +1106,11 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("7s Mindful Gate", fontWeight = FontWeight.Bold, color = lofiCream, fontSize = 18.sp)
+                                    Text("7s Mindful Gate", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 18.sp)
                                     Text(
-                                        text = "\"Rukiye! Kya ye abhi zaroori hai?\"",
+                                        text = ""Rukiye! Kya ye abhi zaroori hai?"",
                                         fontSize = 11.sp,
-                                        color = lofiAmber
+                                        color = NeonCyan
                                     )
                                 }
                                 Switch(
@@ -892,7 +1130,7 @@ fun HomeScreen(
                                 Text(
                                     text = "Select apps that will show a 7-second breathing pause + intention check before opening (${mindfulPkgs.size} chosen):",
                                     fontSize = 12.sp,
-                                    color = lofiCream.copy(alpha = 0.75f)
+                                    color = TextSecondary
                                 )
                                 OutlinedTextField(
                                     value = searchQuery,
@@ -917,7 +1155,7 @@ fun HomeScreen(
                                         ) {
                                             Text(
                                                 text = app.appName,
-                                                color = lofiCream,
+                                                color = Color.White,
                                                 fontSize = 14.sp,
                                                 fontWeight = if (app.isMindfulDelay) FontWeight.Bold else FontWeight.Normal,
                                                 modifier = Modifier.weight(1f),
@@ -945,8 +1183,8 @@ fun HomeScreen(
                 if (showKeywordDialogFromHome) {
                     AlertDialog(
                         onDismissRequest = { showKeywordDialogFromHome = false },
-                        containerColor = Color(0xFF241B26),
-                        title = { Text("Keyword & Topic Blocker", fontWeight = FontWeight.Bold, color = lofiCream) },
+                        containerColor = NeonSurface,
+                        title = { Text("Keyword & Topic Blocker", fontWeight = FontWeight.Bold, color = Color.White) },
                         text = {
                             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                                 KeywordTopicBlockerCard(viewModel = viewModel)
@@ -975,7 +1213,7 @@ fun HomeScreen(
                             .testTag("brightness_adjustment_tray"),
                         shape = RoundedCornerShape(24.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f)
+                            containerColor = NeonSurface.copy(alpha = 0.96f)
                         ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
                     ) {
@@ -995,7 +1233,7 @@ fun HomeScreen(
                                     Icon(
                                         imageVector = Icons.Default.BrightnessMedium,
                                         contentDescription = "Brightness Icon",
-                                        tint = MaterialTheme.colorScheme.primary,
+                                        tint = NeonCyan,
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Text(
@@ -1007,7 +1245,7 @@ fun HomeScreen(
                                 }
                                 Text(
                                     text = "${(wallpaperOpacity * 100).toInt()}%",
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = NeonCyan,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -1023,9 +1261,9 @@ fun HomeScreen(
                                     onValueChange = onWallpaperOpacityChange,
                                     valueRange = 0.0f..1.0f,
                                     colors = SliderDefaults.colors(
-                                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                                        activeTrackColor = NeonCyan,
                                         inactiveTrackColor = Color.White.copy(alpha = 0.2f),
-                                        thumbColor = MaterialTheme.colorScheme.primary
+                                        thumbColor = NeonMagenta
                                     ),
                                     modifier = Modifier
                                         .weight(1f)
@@ -1037,7 +1275,8 @@ fun HomeScreen(
                                     modifier = Modifier.testTag("brightness_done_button"),
                                     shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary
+                                        containerColor = NeonCyan,
+                                        contentColor = NeonBlack
                                     ),
                                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                 ) {
@@ -1065,16 +1304,14 @@ private fun LofiDrawerNavigationItem(
     testTag: String,
     onClick: () -> Unit
 ) {
-    val lofiAmber = Color(0xFFFFB74D)
-    val lofiCream = Color(0xFFFFF8E7)
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .testTag(testTag),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF281E29)),
-        border = BorderStroke(1.dp, lofiAmber.copy(alpha = 0.35f))
+        colors = CardDefaults.cardColors(containerColor = NeonSurface),
+        border = BorderStroke(1.dp, NeonSubtleBorderBrush)
     ) {
         Row(
             modifier = Modifier
@@ -1087,13 +1324,14 @@ private fun LofiDrawerNavigationItem(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(lofiAmber.copy(alpha = 0.16f)),
+                    .background(NeonCyan.copy(alpha = 0.14f))
+                    .border(1.dp, NeonCyan.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = title,
-                    tint = lofiAmber,
+                    tint = NeonCyan,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -1102,7 +1340,7 @@ private fun LofiDrawerNavigationItem(
                     text = title,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
-                    color = lofiCream,
+                    color = Color.White,
                     maxLines = 1,
                     softWrap = false,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -1110,7 +1348,7 @@ private fun LofiDrawerNavigationItem(
                 Text(
                     text = subtitle,
                     fontSize = 11.sp,
-                    color = lofiCream.copy(alpha = 0.65f),
+                    color = TextSecondary,
                     maxLines = 1,
                     softWrap = false,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -1119,7 +1357,7 @@ private fun LofiDrawerNavigationItem(
             Icon(
                 imageVector = Icons.Default.KeyboardArrowRight,
                 contentDescription = null,
-                tint = lofiAmber
+                tint = NeonMagenta
             )
         }
     }
@@ -1178,21 +1416,21 @@ fun LofiAmberFocusCenterpiece(
         }
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "lofi_stars")
+    val infiniteTransition = rememberInfiniteTransition(label = "neon_stars")
     val glowPulse by infiniteTransition.animateFloat(
-        initialValue = 0.75f,
+        initialValue = 0.78f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = FastOutSlowInEasing),
+            animation = tween(2000, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "amber_glow_pulse"
+        label = "neon_glow_pulse"
     )
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(240.dp)
+            .height(232.dp)
             .clickable(enabled = !isRunning, onClick = onRingClick),
         contentAlignment = Alignment.Center
     ) {
@@ -1202,12 +1440,12 @@ fun LofiAmberFocusCenterpiece(
             val ringRadius = size.minDimension * 0.41f
 
             val starOffsets = listOf(
-                Triple(-1.35f, -0.78f, 3.5f),
-                Triple(1.28f, -0.72f, 3.2f),
+                Triple(-1.35f, -0.78f, 3.2f),
+                Triple(1.28f, -0.72f, 3.0f),
                 Triple(-1.42f, 0.15f, 2.2f),
-                Triple(1.38f, 0.25f, 2.6f),
+                Triple(1.38f, 0.25f, 2.5f),
                 Triple(-1.18f, 0.78f, 2.0f),
-                Triple(1.22f, 0.74f, 3.0f),
+                Triple(1.22f, 0.74f, 2.8f),
                 Triple(-0.95f, -0.95f, 1.8f),
                 Triple(0.98f, -0.92f, 2.0f)
             )
@@ -1216,7 +1454,7 @@ fun LofiAmberFocusCenterpiece(
                 val sy = cy + ringRadius * dy
                 val alpha = ((glowPulse + (idx % 3) * 0.1f).coerceIn(0.35f, 0.95f))
                 drawCircle(
-                    color = Color(0xFFFFD584).copy(alpha = alpha),
+                    color = (if (idx % 2 == 0) NeonCyan else NeonMagenta).copy(alpha = alpha),
                     radius = rDp.dp.toPx(),
                     center = Offset(sx, sy)
                 )
@@ -1225,19 +1463,19 @@ fun LofiAmberFocusCenterpiece(
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        Color(0xFFFFB74D).copy(alpha = 0.18f * glowPulse),
-                        Color(0xFFFF8A65).copy(alpha = 0.06f),
+                        NeonCyan.copy(alpha = 0.20f * glowPulse),
+                        NeonMagenta.copy(alpha = 0.10f * glowPulse),
                         Color.Transparent
                     ),
                     center = Offset(cx, cy),
-                    radius = ringRadius * 1.32f
+                    radius = ringRadius * 1.35f
                 ),
-                radius = ringRadius * 1.32f,
+                radius = ringRadius * 1.35f,
                 center = Offset(cx, cy)
             )
 
             drawCircle(
-                color = Color(0xFF1B141D),
+                color = NeonBlack,
                 radius = ringRadius * 0.92f,
                 center = Offset(cx, cy)
             )
@@ -1247,7 +1485,7 @@ fun LofiAmberFocusCenterpiece(
             val topLeft = Offset(cx - ringRadius, cy - ringRadius)
 
             drawArc(
-                color = Color(0xFF4A3325),
+                color = Color(0xFF222234),
                 startAngle = 0f,
                 sweepAngle = 360f,
                 useCenter = false,
@@ -1257,21 +1495,30 @@ fun LofiAmberFocusCenterpiece(
             )
 
             drawArc(
-                color = Color(0xFFFFB74D).copy(alpha = 0.32f * glowPulse),
+                brush = Brush.sweepGradient(
+                    colors = listOf(
+                        NeonCyan.copy(alpha = 0.35f * glowPulse),
+                        NeonViolet.copy(alpha = 0.35f * glowPulse),
+                        NeonMagenta.copy(alpha = 0.35f * glowPulse),
+                        NeonCyan.copy(alpha = 0.35f * glowPulse)
+                    ),
+                    center = Offset(cx, cy)
+                ),
                 startAngle = -90f,
                 sweepAngle = 360f * ringProgress,
                 useCenter = false,
                 topLeft = topLeft,
                 size = arcSize,
-                style = Stroke(width = strokePx * 1.9f, cap = StrokeCap.Round)
+                style = Stroke(width = strokePx * 1.85f, cap = StrokeCap.Round)
             )
 
             drawArc(
                 brush = Brush.sweepGradient(
                     colors = listOf(
-                        Color(0xFFFFA726),
-                        Color(0xFFFFCC80),
-                        Color(0xFFFFB74D)
+                        NeonCyan,
+                        NeonViolet,
+                        NeonMagenta,
+                        NeonCyan
                     ),
                     center = Offset(cx, cy)
                 ),
@@ -1287,16 +1534,23 @@ fun LofiAmberFocusCenterpiece(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(top = 10.dp)
+            modifier = Modifier.padding(top = 6.dp)
         ) {
             Text(
                 text = formattedTimer,
-                fontSize = if (formattedTimer.length > 5) 34.sp else 48.sp,
+                fontSize = if (formattedTimer.length > 5) 34.sp else 46.sp,
                 fontWeight = FontWeight.Black,
-                color = Color(0xFFFFF8E7),
+                color = Color.White,
                 letterSpacing = 1.sp,
                 maxLines = 1,
-                softWrap = false
+                softWrap = false,
+                style = TextStyle(
+                    shadow = Shadow(
+                        color = NeonCyan.copy(alpha = 0.55f),
+                        offset = Offset(0f, 0f),
+                        blurRadius = 16f
+                    )
+                )
             )
             Spacer(modifier = Modifier.height(2.dp))
             val dynamicStage = when {
@@ -1306,12 +1560,12 @@ fun LofiAmberFocusCenterpiece(
                 else -> GrowthStage.SEED
             }
             Box(
-                modifier = Modifier.size(60.dp),
+                modifier = Modifier.size(56.dp),
                 contentAlignment = Alignment.Center
             ) {
                 PlantVisual(
                     stage = dynamicStage,
-                    size = 60.dp
+                    size = 56.dp
                 )
             }
             if (isRunning) {
@@ -1319,7 +1573,7 @@ fun LofiAmberFocusCenterpiece(
                     text = if (activeSession?.isStrict == true) "🔒 STRICT • ${(ringProgress * 100).toInt()}%" else "FOCUS • ${(ringProgress * 100).toInt()}%",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = Color(0xFFFFB74D),
+                    color = NeonCyan,
                     letterSpacing = 0.8.sp,
                     maxLines = 1,
                     softWrap = false
@@ -1336,15 +1590,20 @@ private fun LofiSelectablePill(
     horizontalPad: Dp = 16.dp,
     onClick: () -> Unit
 ) {
-    val lofiAmber = Color(0xFFFFB74D)
-    val lofiCream = Color(0xFFFFF8E7)
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (selected) lofiAmber else Color(0xFF231A24))
+            .background(
+                if (selected) NeonHorizontalBrush
+                else Brush.horizontalGradient(listOf(NeonSurface, NeonSurface))
+            )
             .border(
-                width = 1.dp,
-                color = if (selected) lofiAmber else Color(0xFF523C35),
+                width = 1.1.dp,
+                brush = if (selected) {
+                    Brush.horizontalGradient(listOf(NeonCyan, NeonMagenta))
+                } else {
+                    NeonSubtleBorderBrush
+                },
                 shape = RoundedCornerShape(50)
             )
             .clickable(onClick = onClick)
@@ -1355,7 +1614,7 @@ private fun LofiSelectablePill(
             text = text,
             fontSize = 12.sp,
             fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
-            color = if (selected) Color(0xFF1A1108) else lofiCream,
+            color = Color.White,
             maxLines = 1,
             softWrap = false
         )
@@ -1372,19 +1631,18 @@ private fun LofiBentoFeatureCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val lofiAmber = Color(0xFFFFB74D)
-    val lofiCream = Color(0xFFFFF8E7)
     Card(
         modifier = modifier
             .height(84.dp)
+            .border(
+                width = if (isActive) 1.6.dp else 1.1.dp,
+                brush = if (isActive) NeonCardBorderBrush else NeonSubtleBorderBrush,
+                shape = RoundedCornerShape(18.dp)
+            )
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xF01E1620)
-        ),
-        border = BorderStroke(
-            width = if (isActive) 1.8.dp else 1.2.dp,
-            color = if (isActive) lofiAmber else lofiAmber.copy(alpha = 0.55f)
+            containerColor = NeonSurface
         )
     ) {
         Row(
@@ -1405,7 +1663,7 @@ private fun LofiBentoFeatureCard(
                     fontSize = 12.sp,
                     lineHeight = 14.sp,
                     letterSpacing = (-0.2).sp,
-                    color = lofiCream,
+                    color = Color.White,
                     maxLines = 1,
                     softWrap = false
                 )
@@ -1415,7 +1673,7 @@ private fun LofiBentoFeatureCard(
                     fontSize = 11.5.sp,
                     lineHeight = 13.5.sp,
                     letterSpacing = (-0.2).sp,
-                    color = lofiCream.copy(alpha = 0.92f),
+                    color = Color.White.copy(alpha = 0.92f),
                     maxLines = 1,
                     softWrap = false
                 )
@@ -1425,7 +1683,7 @@ private fun LofiBentoFeatureCard(
                     fontWeight = FontWeight.Bold,
                     fontSize = 9.5.sp,
                     lineHeight = 11.sp,
-                    color = if (isActive) lofiAmber else lofiCream.copy(alpha = 0.55f),
+                    color = if (isActive) NeonCyan else TextSecondary,
                     maxLines = 1,
                     softWrap = false
                 )
@@ -1972,7 +2230,7 @@ fun ActiveSessionWidget(
         modifier = Modifier.fillMaxWidth().testTag("active_session_widget_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF281E29),
+            containerColor = NeonSurface,
             contentColor = Color.White
         )
     ) {
@@ -2405,13 +2663,13 @@ fun LongTermBlockSection(
                                             modifier = Modifier
                                                 .size(36.dp)
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0x26FFB74D)),
+                                                .background(Color(0x2600E5FF)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.AppBlocking,
                                                 contentDescription = "App block icon",
-                                                tint = Color(0xFFFFB74D),
+                                                tint = NeonCyan,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -2497,7 +2755,7 @@ fun LongTermBlockSection(
                                                   text = "Today: ${fmt(usedSeconds)} / ${fmt(limitSeconds)}",
                                                   fontSize = 11.sp,
                                                   fontWeight = FontWeight.Bold,
-                                                  color = if (fraction >= 1f) MaterialTheme.colorScheme.error else Color(0xFFFFA630)
+                                                  color = if (fraction >= 1f) MaterialTheme.colorScheme.error else NeonMagenta
                                               )
                                           }
                                           LinearProgressIndicator(
@@ -2506,7 +2764,7 @@ fun LongTermBlockSection(
                                                   .fillMaxWidth()
                                                   .height(4.dp)
                                                   .clip(RoundedCornerShape(2.dp)),
-                                              color = if (fraction >= 1f) MaterialTheme.colorScheme.error else Color(0xFFFFA630),
+                                              color = if (fraction >= 1f) MaterialTheme.colorScheme.error else NeonMagenta,
                                               trackColor = Color(0x10FFFFFF)
                                           )
                                       }
@@ -2625,13 +2883,13 @@ fun LongTermBlockSection(
                                               modifier = Modifier
                                                   .size(36.dp)
                                                   .clip(RoundedCornerShape(8.dp))
-                                                  .background(Color(0x1FFFA630)),
+                                                  .background(Color(0x26FF00E6)),
                                               contentAlignment = Alignment.Center
                                           ) {
                                               Icon(
                                                   imageVector = Icons.Default.Language,
                                                   contentDescription = "Website block icon",
-                                                  tint = Color(0xFFFFA630),
+                                                  tint = NeonMagenta,
                                                   modifier = Modifier.size(18.dp)
                                               )
                                           }
@@ -2800,9 +3058,9 @@ fun AnalyticsCard(
         modifier = Modifier.fillMaxWidth().testTag("analytics_dashboard_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xEB221824)
+            containerColor = NeonSurface
         ),
-        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -2862,7 +3120,7 @@ fun AnalyticsCard(
                     ) {
                         Text(
                             text = tab,
-                            color = if (isSelected) Color(0xFF1A1108) else Color(0xFFFFF8E7).copy(alpha = 0.65f),
+                            color = if (isSelected) NeonBlack else Color.White.copy(alpha = 0.65f),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -3277,7 +3535,7 @@ fun AnalyticsCard(
                                     ) {
                                         Text(
                                             text = tabOption,
-                                            color = if (isSelected) Color(0xFF1A1108) else Color(0xFFFFF8E7).copy(alpha = 0.65f),
+                                            color = if (isSelected) NeonBlack else Color.White.copy(alpha = 0.65f),
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -3516,7 +3774,7 @@ fun AnalyticsCard(
                                                         text = formattedDate,
                                                         fontWeight = FontWeight.Bold,
                                                         fontSize = 11.5.sp,
-                                                        color = Color(0xFFFFF8E7),
+                                                        color = Color.White,
                                                         maxLines = 1,
                                                         softWrap = false,
                                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -4297,7 +4555,7 @@ fun FocusTimerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Configure Focus", fontWeight = FontWeight.Black, color = Color(0xFFFFF8E7)); Text("🦉", fontSize = 18.sp) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Configure Focus", fontWeight = FontWeight.Black, color = Color.White); Text("⚡", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -4943,7 +5201,7 @@ fun AppSelectionScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Block Distractions", fontWeight = FontWeight.Black, color = Color(0xFFFFF8E7)); Text("🦉", fontSize = 18.sp) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Block Distractions", fontWeight = FontWeight.Black, color = Color.White); Text("⚡", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -5186,7 +5444,7 @@ fun AppLockScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("App Lock (PIN Gate)", fontWeight = FontWeight.Black, color = Color(0xFFFFF8E7)); Text("🦉", fontSize = 18.sp) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("App Lock (PIN Gate)", fontWeight = FontWeight.Black, color = Color.White); Text("⚡", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -5541,14 +5799,14 @@ fun BlockDetailsScreen(
                         .size(80.dp)
                         .clip(RoundedCornerShape(20.dp))
                         .background(
-                            if (blockInfo.type == "WEBSITE") Color(0x1FFFA630) else Color(0x26FFB74D)
+                            if (blockInfo.type == "WEBSITE") Color(0x26FF00E6) else Color(0x2600E5FF)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (blockInfo.type == "WEBSITE") Icons.Default.Language else Icons.Default.AppBlocking,
                         contentDescription = "Block type",
-                        tint = if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFFFFB74D),
+                        tint = if (blockInfo.type == "WEBSITE") NeonMagenta else NeonCyan,
                         modifier = Modifier.size(40.dp)
                     )
                 }
@@ -5565,7 +5823,7 @@ fun BlockDetailsScreen(
                     text = if (blockInfo.type == "WEBSITE") "WEBSITE BLOCK" else "APP BLOCK",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = (if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFFFFB74D)),
+                    color = (if (blockInfo.type == "WEBSITE") NeonMagenta else NeonCyan),
                     letterSpacing = 1.5.sp
                 )
 
@@ -5654,7 +5912,7 @@ fun BlockDetailsScreen(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                         contentColor = Color.White,
-                        disabledContainerColor = Color(0xFF281E29).copy(alpha = 0.1f),
+                        disabledContainerColor = NeonSurface.copy(alpha = 0.1f),
                         disabledContentColor = Color.White.copy(alpha = 0.3f)
                     ),
                     shape = RoundedCornerShape(16.dp),
@@ -5741,7 +5999,7 @@ fun DailyDashboardCard(
             .testTag("daily_dashboard_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xEB221824)
+            containerColor = NeonSurface
         ),
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
     ) {
@@ -5874,9 +6132,9 @@ fun ContentLevelBlockingCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xEB221824)
+            containerColor = NeonSurface
         ),
-        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -6144,9 +6402,9 @@ fun AccentThemeCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth().testTag("accent_theme_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xEB221824)
+            containerColor = NeonSurface
         ),
-        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -6255,7 +6513,7 @@ fun AccentThemeCard(viewModel: FocusViewModel) {
                         
                         Text(
                             text = theme.displayName,
-                            color = if (isSelected) Color(0xFFFFB74D) else Color(0xFFFFF8E7).copy(alpha = 0.65f),
+                            color = if (isSelected) NeonCyan else Color.White.copy(alpha = 0.65f),
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                             fontSize = 11.sp,
                             maxLines = 1,
@@ -6281,9 +6539,9 @@ fun WallpaperSettingsDrawerCard(
             .testTag("wallpaper_settings_card"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xEB221824)
+            containerColor = NeonSurface
         ),
-        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -6421,7 +6679,7 @@ fun WeeklyInsightsBarChart(
                 text = "Past 7 Days Focus Distribution",
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
-                color = Color(0xFFFFF8E7),
+                color = Color.White,
                 maxLines = 1,
                 softWrap = false
             )
@@ -6431,11 +6689,11 @@ fun WeeklyInsightsBarChart(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Box(modifier = Modifier.size(8.dp).background(Color(0xFF4CAF50), RoundedCornerShape(2.dp)))
-                    Text("Completed", fontSize = 10.sp, color = Color(0xFFFFF8E7).copy(alpha = 0.75f), maxLines = 1, softWrap = false)
+                    Text("Completed", fontSize = 10.sp, color = Color.White.copy(alpha = 0.75f), maxLines = 1, softWrap = false)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Box(modifier = Modifier.size(8.dp).background(Color(0xFFFF5722), RoundedCornerShape(2.dp)))
-                    Text("Early / Missed", fontSize = 10.sp, color = Color(0xFFFFF8E7).copy(alpha = 0.75f), maxLines = 1, softWrap = false)
+                    Text("Early / Missed", fontSize = 10.sp, color = Color.White.copy(alpha = 0.75f), maxLines = 1, softWrap = false)
                 }
             }
         }
@@ -6583,10 +6841,10 @@ fun MyForestGalleryCard(
             .testTag("my_forest_gallery_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xEB221824),
-            contentColor = Color(0xFFFFF8E7)
+            containerColor = NeonSurface,
+            contentColor = Color.White
         ),
-        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -6854,8 +7112,8 @@ fun GlitchCountdownText(
     var isGlitching by remember { mutableStateOf(false) }
     var glitchOffsetX by remember { mutableStateOf(0f) }
     var glitchOffsetY by remember { mutableStateOf(0f) }
-    var glitchColor1 by remember { mutableStateOf(Color(0xFFFFB74D)) }
-    var glitchColor2 by remember { mutableStateOf(Color(0xFFFFA630)) }
+    var glitchColor1 by remember { mutableStateOf(NeonCyan) }
+    var glitchColor2 by remember { mutableStateOf(NeonMagenta) }
 
     // Execute glitch effect on minute boundary change (seconds == 0) and random 30-second intervals
     LaunchedEffect(seconds) {
@@ -6867,11 +7125,11 @@ fun GlitchCountdownText(
                 glitchOffsetY = (-4..4).random().toFloat()
                 // Randomly swap foreground layers
                 if ((0..1).random() == 0) {
-                    glitchColor1 = Color(0xFFFFB74D)
-                    glitchColor2 = Color(0xFFFFA630)
+                    glitchColor1 = NeonCyan
+                    glitchColor2 = NeonMagenta
                 } else {
-                    glitchColor1 = Color(0xFFFFA630)
-                    glitchColor2 = Color(0xFFFFB74D)
+                    glitchColor1 = NeonMagenta
+                    glitchColor2 = NeonCyan
                 }
                 kotlinx.coroutines.delay(30L)
             }
@@ -6891,7 +7149,7 @@ fun GlitchCountdownText(
 
         // High fidelity glow effect for the retro-futuristic digital clock
         val neonGlowShadow = Shadow(
-            color = if (isHyperFocus) Color(0xFFFF5252).copy(alpha = 0.85f) else Color(0xFFFFB74D).copy(alpha = 0.85f),
+            color = if (isHyperFocus) Color(0xFFFF5252).copy(alpha = 0.85f) else NeonCyan.copy(alpha = 0.85f),
             offset = Offset(0f, 0f),
             blurRadius = 14f
         )
@@ -7041,8 +7299,8 @@ fun StrictShieldHexagonVisual(
                 val vignetteGradient = Brush.radialGradient(
                     colors = listOf(
                         Color.Transparent,
-                        Color(0xFFFFB74D).copy(alpha = 0.05f),
-                        Color(0xFFFFB74D).copy(alpha = 0.25f)
+                        NeonCyan.copy(alpha = 0.05f),
+                        NeonCyan.copy(alpha = 0.25f)
                     ),
                     center = Offset(width / 2f, height / 2f),
                     radius = Math.max(width, height) / 1.1f
@@ -7081,7 +7339,7 @@ fun StrictShieldHexagonVisual(
                 // Subtle Lofi golden-amber ambient glow (no distracting lines over text/cards)
                 drawPath(
                     path = path,
-                    color = Color(0xFFFFB74D).copy(alpha = 0.04f),
+                    color = NeonCyan.copy(alpha = 0.04f),
                     style = Stroke(width = 0.8.dp.toPx())
                 )
             }
@@ -7121,7 +7379,7 @@ fun StrictScheduleManagerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Recurring Schedules", fontWeight = FontWeight.Black, color = Color(0xFFFFF8E7)); Text("🦉", fontSize = 18.sp) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Recurring Schedules", fontWeight = FontWeight.Black, color = Color.White); Text("⚡", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -7879,45 +8137,87 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
     val hours = (totalSecs % (24 * 3600)) / 3600
     val minutes = (totalSecs % 3600) / 60
 
-    val lofiAmber = Color(0xFFFFB74D)
-    val lofiCoral = Color(0xFFFF8A65)
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .border(1.3.dp, NeonCardBorderBrush, RoundedCornerShape(20.dp))
             .clickable { showConfigDialog = true },
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF281C24)
-        ),
-        border = BorderStroke(1.5.dp, lofiAmber.copy(alpha = 0.85f))
+            containerColor = NeonSurface
+        )
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 13.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "$effectiveTitle • ",
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 13.5.sp,
-                color = lofiCoral,
-                letterSpacing = 0.5.sp,
-                maxLines = 1,
-                softWrap = false,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false)
-            )
-            Text(
-                text = "${days}d : ${hours}h : ${minutes}m",
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.5.sp,
-                color = lofiAmber,
-                maxLines = 1,
-                softWrap = false
-            )
+        Box(modifier = Modifier.fillMaxWidth()) {
+            // Diagonal Neon Laser Streaks inside the Exam Countdown Card (Exact Panel 2)
+            Canvas(modifier = Modifier.matchParentSize()) {
+                drawLine(
+                    brush = Brush.linearGradient(
+                        colors = listOf(Color.Transparent, NeonMagenta.copy(alpha = 0.45f), Color.Transparent)
+                    ),
+                    start = Offset(0f, size.height),
+                    end = Offset(size.width * 0.45f, 0f),
+                    strokeWidth = 2.5.dp.toPx()
+                )
+                drawLine(
+                    brush = Brush.linearGradient(
+                        colors = listOf(Color.Transparent, NeonCyan.copy(alpha = 0.35f), Color.Transparent)
+                    ),
+                    start = Offset(size.width * 0.15f, size.height),
+                    end = Offset(size.width * 0.65f, 0f),
+                    strokeWidth = 1.8.dp.toPx()
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "Exam Countdown • $effectiveTitle",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        color = TextSecondary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    Row(
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "$days",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 26.sp,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Days Left  (${hours}h ${minutes}m)",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.5.sp,
+                            color = NeonCyan,
+                            modifier = Modifier.padding(bottom = 3.dp)
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(NeonMagenta.copy(alpha = 0.16f))
+                        .border(1.dp, NeonMagenta.copy(alpha = 0.65f), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarToday,
+                        contentDescription = "Exam Date",
+                        tint = NeonMagenta,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
         }
     }
 
@@ -8037,9 +8337,9 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF281E29)
+            containerColor = NeonSurface
         ),
-        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -8058,7 +8358,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                     Icon(
                         imageVector = Icons.Default.WbSunny,
                         contentDescription = "Morning Lock",
-                        tint = Color(0xFFFFB74D),
+                        tint = NeonCyan,
                         modifier = Modifier.size(24.dp)
                     )
                     Column(modifier = Modifier.weight(1f)) {
@@ -8066,7 +8366,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                             text = "Morning 5–9 AM Strict Lock",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
-                            color = Color(0xFFFFF8E7),
+                            color = Color.White,
                             maxLines = 1,
                             softWrap = false,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -8074,7 +8374,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                         Text(
                             text = "Daily 5:00 AM – 9:00 AM Auto Strict Mode",
                             fontSize = 11.5.sp,
-                            color = Color(0xFFFFB74D),
+                            color = NeonCyan,
                             maxLines = 1,
                             softWrap = false,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -8092,7 +8392,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
             Text(
                 text = "Automatically turns ON Strict Mode every morning from 5:00 AM to 9:00 AM with a live countdown timer so you start your day focused without morning doomscrolling.",
                 fontSize = 13.sp,
-                color = Color(0xFFFFF8E7).copy(alpha = 0.72f),
+                color = Color.White.copy(alpha = 0.72f),
                 lineHeight = 18.sp
             )
 
@@ -8108,7 +8408,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                     text = "Daily 5 AM – 9 AM Schedule",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFFFFF8E7).copy(alpha = 0.8f),
+                    color = Color.White.copy(alpha = 0.8f),
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
                     softWrap = false,
@@ -8123,7 +8423,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                     },
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = if (enabled) Color(0xFFFFB74D) else Color.White.copy(alpha = 0.45f),
+                    color = if (enabled) NeonCyan else Color.White.copy(alpha = 0.45f),
                     maxLines = 1,
                     softWrap = false
                 )
@@ -8144,9 +8444,9 @@ fun MindfulLaunchDelayCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xEB221824)
+            containerColor = NeonSurface
         ),
-        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -8173,14 +8473,14 @@ fun MindfulLaunchDelayCard(viewModel: FocusViewModel) {
                             text = "7s Mindful Launch Gate",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
-                            color = Color(0xFFFFF8E7),
+                            color = Color.White,
                             maxLines = 1,
                             softWrap = false
                         )
                         Text(
                             text = "\"Rukiye! Kya ye zaroori hai?\"",
                             fontSize = 11.5.sp,
-                            color = Color(0xFFFFB74D),
+                            color = NeonCyan,
                             maxLines = 1,
                             softWrap = false
                         )
@@ -8288,9 +8588,9 @@ fun KeywordTopicBlockerCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xEB221824)
+            containerColor = NeonSurface
         ),
-        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),

@@ -93,7 +93,7 @@ class FocusViewModel(
     val instagramBlockReels = MutableStateFlow(false)
     val snapchatBlockSpotlight = MutableStateFlow(false)
     val whatsappBlockStatus = MutableStateFlow(false)
-    val accentTheme = MutableStateFlow("Lofi Sunset Amber")
+    val accentTheme = MutableStateFlow("Neon Black")
 
     // Offline Focus Sound Generator state
     val focusSoundMode: StateFlow<FocusSoundGenerator.SoundMode> = FocusSoundGenerator.activeMode
@@ -849,17 +849,17 @@ class FocusViewModel(
             val savedInstagramReels = prefs.getBoolean("instagram_block_reels", false)
             val savedSnapchatSpotlight = prefs.getBoolean("snapchat_block_spotlight", false)
             val savedWhatsappStatus = prefs.getBoolean("whatsapp_block_status", false)
-            val migratedToLofiV6 = prefs.getBoolean("migrated_to_lofi_amber_v6", false)
-            val savedAccentTheme = if (!migratedToLofiV6) {
+            val migratedToNeonV7 = prefs.getBoolean("migrated_to_neon_black_v7", false)
+            val savedAccentTheme = if (!migratedToNeonV7) {
                 prefs.edit()
-                    .putString("accent_theme", "Lofi Sunset Amber")
-                    .putBoolean("migrated_to_lofi_amber_v6", true)
+                    .putString("accent_theme", "Neon Black")
+                    .putBoolean("migrated_to_neon_black_v7", true)
                     .apply()
-                try { repository.saveSetting("accent_theme", "Lofi Sunset Amber") } catch (e: Exception) { }
-                "Lofi Sunset Amber"
+                try { repository.saveSetting("accent_theme", "Neon Black") } catch (e: Exception) { }
+                "Neon Black"
             } else {
                 val dbAccentTheme = try { repository.getSetting("accent_theme") } catch (e: Exception) { null }
-                dbAccentTheme ?: prefs.getString("accent_theme", "Lofi Sunset Amber") ?: "Lofi Sunset Amber"
+                dbAccentTheme ?: prefs.getString("accent_theme", "Neon Black") ?: "Neon Black"
             }
 
             youtubeBlockShorts.value = savedYoutubeShorts
