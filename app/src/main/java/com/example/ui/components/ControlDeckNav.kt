@@ -87,7 +87,8 @@ fun ControlDeckBottomNav(
                         NeonViolet.copy(alpha = 0.30f),
                         NeonMagenta.copy(alpha = 0.45f)
                     )
-                )
+                ),
+                shape = androidx.compose.ui.graphics.RectangleShape
             )
             .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),

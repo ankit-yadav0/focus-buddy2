@@ -235,7 +235,7 @@ fun HomeScreen(
                 drawerContainerColor = NeonBlack,
                 modifier = Modifier
                     .width(325.dp)
-                    .border(1.dp, NeonSubtleBorderBrush)
+                    .border(1.dp, NeonSubtleBorderBrush, RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp))
             ) {
                 Spacer(modifier = Modifier.height(24.dp))
                 Row(
@@ -1108,7 +1108,7 @@ fun HomeScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text("7s Mindful Gate", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 18.sp)
                                     Text(
-                                        text = ""Rukiye! Kya ye abhi zaroori hai?"",
+                                        text = "\"Rukiye! Kya ye abhi zaroori hai?\"",
                                         fontSize = 11.sp,
                                         color = NeonCyan
                                     )
