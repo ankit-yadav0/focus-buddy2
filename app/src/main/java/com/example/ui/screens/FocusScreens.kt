@@ -2661,7 +2661,7 @@ fun LongTermBlockSection(
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
                                         RealAppIconBadge(
-                                            packageName = block.packageName,
+                                            packageName = block.target,
                                             appName = block.targetLabel,
                                             size = 38.dp,
                                             cornerRadius = 10.dp

@@ -718,7 +718,8 @@ class MainActivity : ComponentActivity() {
                                             composable("all_apps") {
                                                 AllAppsDrawerScreen(
                                                     viewModel = focusViewModel,
-                                                    onBack = { navController.popBackStack() }
+                                                    onBack = { navController.popBackStack() },
+                                                    onNavigateToRoute = { route -> navController.navigate(route) }
                                                 )
                                             }
                                             composable("neon_settings") {

@@ -1152,7 +1152,7 @@ fun AppUsageQuotaScreen(
 fun AllAppsDrawerScreen(
     viewModel: FocusViewModel,
     onBack: () -> Unit,
-    onNavigateToRoute: (String) -> Unit,
+    onNavigateToRoute: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1404,7 +1404,7 @@ fun RealPinnedStudyAppsSection(
     installedApps: List<AppInfo>,
     pinnedPackages: Set<String>,
     onEditClick: () -> Unit,
-    onNavigateToRoute: (String) -> Unit,
+    onNavigateToRoute: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1682,7 +1682,7 @@ fun EditPinnedStudyAppsDialog(
 fun NeonSettingsHubScreen(
     viewModel: FocusViewModel,
     onBack: () -> Unit,
-    onNavigateToRoute: (String) -> Unit,
+    onNavigateToRoute: (String) -> Unit = {},
     onPickWallpaper: () -> Unit = {},
     onClearWallpaper: () -> Unit = {},
     modifier: Modifier = Modifier
