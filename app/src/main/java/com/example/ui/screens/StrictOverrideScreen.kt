@@ -13,7 +13,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -33,7 +32,7 @@ import com.example.ui.theme.NeonSurface
 import com.example.ui.theme.TextSecondary
 import com.example.viewmodel.FocusViewModel
 
-private const val STRICT_OVERRIDE_COOLDOWN_MS = 45L * 60L * 1000L // 45 minutes
+private const val STRICT_OVERRIDE_COOLDOWN_MS = 45L * 60L * 1000L
 
 private fun isStrictOverrideBlackoutWindow(hour: Int): Boolean {
     return hour >= 22 || hour < 6

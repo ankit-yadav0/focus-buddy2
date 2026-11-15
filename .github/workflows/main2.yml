@@ -123,4 +123,8 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.code }}
           name: v${{ steps.version.outputs.code }}
+          generate_release_notes: true
+          body: |
+            ### What's Updated in v${{ steps.version.outputs.code }} (${{ steps.version.outputs.name }})
+            - Commit: ${{ github.event.head_commit.message }}
           files: app/build/outputs/apk/release/*.apk

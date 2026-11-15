@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Context
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Biotech
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Functions
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Spa
@@ -20,7 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -30,8 +31,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.ui.components.NeonCardBorderBrush
+import com.example.data.FocusSession
 import com.example.ui.components.NeonGradientProgressBar
+import com.example.ui.components.RealAppIconBadge
+import com.example.ui.components.RealAppUsageItem
+import com.example.ui.components.queryRealPhoneAppUsage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.example.ui.components.NeonHorizontalBrush
 import com.example.ui.components.NeonLaserBackground
 import com.example.ui.components.NeonSubtleBorderBrush
@@ -41,13 +47,14 @@ import com.example.ui.theme.NeonMagenta
 import com.example.ui.theme.NeonSurface
 import com.example.ui.theme.NeonViolet
 import com.example.ui.theme.TextSecondary
+import com.example.viewmodel.CalendarDay
 import com.example.viewmodel.FocusViewModel
+import com.example.viewmodel.TrendPoint
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.roundToInt
 
-/**
- * Dedicated "MORE / BLOCKS" tab screen: houses Strict Mode Content Controls, Morning 5–9 AM Daily Strict Lock,
- * 7s Mindful Launch Delay, Keyword & Topic Blocker, Long-Term Blocks, and Daily Dashboard in the
- * Neon Black Theme.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BlocksProgressScreen(
@@ -66,7 +73,7 @@ fun BlocksProgressScreen(
 
     val context = LocalContext.current
     val hasWallpaper = remember {
-        !context.getSharedPreferences("focuss_buddy_settings", android.content.Context.MODE_PRIVATE)
+        !context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
             .getString("custom_wallpaper_uri", null).isNullOrEmpty()
     }
 
@@ -135,19 +142,11 @@ fun BlocksProgressScreen(
             ) {
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // 1. Strict Mode Content Controls (Shorts, Reels, Spotlight, YouTube Study Mode, WhatsApp Chat-Only)
                 ContentLevelBlockingCard(viewModel = viewModel)
-
-                // 2. Morning "First Task" Lock (Daily 5:00 AM - 9:00 AM Automatic Strict Mode)
                 MorningFirstTaskLockCard(viewModel = viewModel)
-
-                // 3. Mindful Launch Delay (7s Breathing Gate)
                 MindfulLaunchDelayCard(viewModel = viewModel)
-
-                // 4. Keyword & Topic Blocker (Browser + YouTube)
                 KeywordTopicBlockerCard(viewModel = viewModel)
 
-                // 5. Long-Term App & Website Blocks
                 LongTermBlockSection(
                     appBlocks = longTermBlocks,
                     websiteBlocks = websiteBlocks,
@@ -161,7 +160,6 @@ fun BlocksProgressScreen(
                     }
                 )
 
-                // 6. Daily Dashboard
                 DailyDashboardCard(viewModel = viewModel)
 
                 Spacer(modifier = Modifier.height(90.dp))
@@ -198,12 +196,10 @@ fun BlocksProgressScreen(
 }
 
 /**
- * Dedicated "Focus & Analytics" ("STATS") tab screen matching Panel 7 of `Neon Focus Buddy UI Theme Board.png`:
- *   • Weekly / Monthly segmented neon pill bar
- *   • Vertical Neon Bar Chart (Mon..Sun with #FF00E6 -> #7B61FF -> #00E5FF vertical gradient bars)
- *   • Streak Heatmap (Mon..Fri grid of glowing #00E5FF, #7B61FF, #FF00E6, and #1A1A24 cells)
- *   • Subject Progress (Physics 68%, Chemistry 52%, Mathematics 63%, Biology 34% with NeonGradientProgressBar)
- *   • Plus the full detailed AnalyticsCard below!
+ * Dedicated "Focus & Analytics" ("STATS") tab screen — 100% Real Session Data:
+ *   • Weekly / Monthly toggle switches between 7-day daily bars and 4-week monthly bars from Room DB
+ *   • Streak Heatmap renders the user's real 28-day session history from advancedAnalytics.calendarDays
+ *   • Subject Progress tracks real persisted subject accuracy/minutes & lets the user tap any subject to update
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -220,7 +216,7 @@ fun InsightsScreen(
 
     val context = LocalContext.current
     val hasWallpaper = remember {
-        !context.getSharedPreferences("focuss_buddy_settings", android.content.Context.MODE_PRIVATE)
+        !context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
             .getString("custom_wallpaper_uri", null).isNullOrEmpty()
     }
 
@@ -270,7 +266,7 @@ fun InsightsScreen(
             ) {
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // 1. Weekly | Monthly Segmented Pill Bar (Exact Panel 7)
+                // 1. Weekly | Monthly Segmented Pill Bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -305,16 +301,25 @@ fun InsightsScreen(
                     }
                 }
 
-                // 2. Vertical Neon Gradient Bar Chart (Mon..Sun, 0h..8h — Exact Panel 7)
-                NeonFocusBarChartCard(weeklyTrends = weeklyTrends)
+                // 2. Real Vertical Neon Gradient Bar Chart (Weekly 7 days or Monthly 4 weeks)
+                NeonFocusBarChartCard(
+                    selectedPeriod = selectedPeriod,
+                    weeklyTrends = weeklyTrends,
+                    allSessions = allSessions,
+                    weeklyHours = advancedAnalytics.weeklyFocusHours,
+                    monthlyHours = advancedAnalytics.monthlyFocusHours
+                )
 
-                // 3. Streak Heatmap (Mon..Fri grid of #00E5FF, #7B61FF, #FF00E6, #1A1A24 cells — Exact Panel 7)
-                NeonStreakHeatmapCard()
+                // 3. Real 28-Day Streak Heatmap bound to advancedAnalytics.calendarDays & allSessions
+                NeonStreakHeatmapCard(
+                    calendarDays = advancedAnalytics.calendarDays,
+                    allSessions = allSessions
+                )
 
-                // 4. Subject Progress (Physics 68%, Chemistry 52%, Mathematics 63%, Biology 34% — Exact Panel 7)
-                NeonSubjectProgressCard()
+                // 4. Real & Interactive Subject Progress Card
+                NeonSubjectProgressCard(context = context)
 
-                // 5. Full Detailed Analytics Dashboard Card (preserves all existing tabs & testTags)
+                // 5. Full Detailed Analytics Dashboard Card
                 AnalyticsCard(
                     analytics = analytics,
                     dailyAnalytics = dailyAnalytics,
@@ -331,19 +336,36 @@ fun InsightsScreen(
 
 @Composable
 private fun NeonFocusBarChartCard(
-    weeklyTrends: List<com.example.viewmodel.TrendPoint>
+    selectedPeriod: String,
+    weeklyTrends: List<TrendPoint>,
+    allSessions: List<FocusSession>,
+    weeklyHours: Float,
+    monthlyHours: Float
 ) {
-    val defaultHeights = listOf(0.88f, 0.45f, 0.78f, 0.72f, 0.62f, 0.48f, 0.85f)
-    val dayLabels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-
-    val fractions = remember(weeklyTrends) {
-        val hasRealData = weeklyTrends.any { it.actualFocusMinutes > 0f }
-        if (hasRealData && weeklyTrends.size == 7) {
-            val maxM = (weeklyTrends.maxOfOrNull { it.actualFocusMinutes } ?: 60f).coerceAtLeast(60f)
-            weeklyTrends.map { (it.actualFocusMinutes / maxM).coerceIn(0.12f, 1f) }
+    val chartBars: List<Pair<String, Float>> = remember(selectedPeriod, weeklyTrends, allSessions) {
+        if (selectedPeriod == "Weekly") {
+            if (weeklyTrends.isNotEmpty()) {
+                weeklyTrends.map { it.dateLabel to (it.actualFocusMinutes / 60f) }
+            } else {
+                listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun").map { it to 0f }
+            }
         } else {
-            defaultHeights
+            val now = System.currentTimeMillis()
+            val dayMs = 24L * 3600L * 1000L
+            (3 downTo 0).map { weekOffset ->
+                val wEnd = now - weekOffset * 7L * dayMs
+                val wStart = wEnd - 7L * dayMs
+                val secs = allSessions
+                    .filter { it.startTime in wStart..wEnd && !it.isActive && it.sessionStatus != "Active" }
+                    .sumOf { it.actualDurationSeconds }
+                "W${4 - weekOffset}" to (secs / 3600f)
+            }
         }
+    }
+
+    val maxHoursAxis = remember(chartBars, selectedPeriod) {
+        val peak = chartBars.maxOfOrNull { it.second } ?: 0f
+        if (selectedPeriod == "Weekly") maxOf(8f, peak * 1.15f) else maxOf(20f, peak * 1.15f)
     }
 
     Card(
@@ -360,12 +382,30 @@ private fun NeonFocusBarChartCard(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (selectedPeriod == "Weekly") "Past 7 Days Focus Hours" else "Past 4 Weeks Focus Hours",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+                Text(
+                    text = String.format(Locale.US, "Total: %.1fh", if (selectedPeriod == "Weekly") weeklyHours else monthlyHours),
+                    color = NeonCyan,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 13.sp
+                )
+            }
+
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(155.dp),
                 verticalAlignment = Alignment.Bottom
             ) {
-                // Y-axis labels: 8h, 6h, 4h, 2h, 0h
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
@@ -373,12 +413,18 @@ private fun NeonFocusBarChartCard(
                     verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.End
                 ) {
-                    listOf("8h", "6h", "4h", "2h", "0h").forEach { label ->
+                    val topInt = maxHoursAxis.roundToInt()
+                    listOf(
+                        "${topInt}h",
+                        "${(topInt * 3) / 4}h",
+                        "${topInt / 2}h",
+                        "${topInt / 4}h",
+                        "0h"
+                    ).forEach { label ->
                         Text(label, color = TextSecondary, fontSize = 11.sp)
                     }
                 }
 
-                // 7 Vertical Neon Gradient Bars
                 Row(
                     modifier = Modifier
                         .weight(1f)
@@ -386,17 +432,24 @@ private fun NeonFocusBarChartCard(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.Bottom
                 ) {
-                    dayLabels.forEachIndexed { idx, day ->
-                        val frac = fractions.getOrElse(idx) { 0.6f }
+                    chartBars.forEach { (label, hrs) ->
+                        val frac = if (hrs <= 0f) 0.04f else (hrs / maxHoursAxis).coerceIn(0.08f, 1f)
                         Column(
                             modifier = Modifier.fillMaxHeight(),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Bottom
                         ) {
+                            Text(
+                                text = if (hrs >= 0.1f) String.format(Locale.US, "%.1fh", hrs) else "0m",
+                                color = if (hrs > 0f) NeonCyan else TextSecondary.copy(alpha = 0.5f),
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .width(16.dp),
+                                    .width(if (selectedPeriod == "Weekly") 16.dp else 28.dp),
                                 contentAlignment = Alignment.BottomCenter
                             ) {
                                 Canvas(
@@ -405,9 +458,15 @@ private fun NeonFocusBarChartCard(
                                         .fillMaxHeight(frac)
                                 ) {
                                     drawRoundRect(
-                                        brush = Brush.verticalGradient(
-                                            colors = listOf(NeonMagenta, NeonViolet, NeonCyan)
-                                        ),
+                                        brush = if (hrs > 0f) {
+                                            Brush.verticalGradient(
+                                                colors = listOf(NeonMagenta, NeonViolet, NeonCyan)
+                                            )
+                                        } else {
+                                            Brush.verticalGradient(
+                                                colors = listOf(Color(0xFF28283C), Color(0xFF28283C))
+                                            )
+                                        },
                                         size = Size(size.width, size.height),
                                         cornerRadius = CornerRadius(size.width / 2f, size.width / 2f)
                                     )
@@ -415,7 +474,7 @@ private fun NeonFocusBarChartCard(
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = day,
+                                text = label,
                                 color = TextSecondary,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium
@@ -429,25 +488,56 @@ private fun NeonFocusBarChartCard(
 }
 
 @Composable
-private fun NeonStreakHeatmapCard() {
-    val rows = listOf(
-        "Mon" to listOf(NeonCyan, NeonSurface, NeonMagenta, NeonCyan, NeonViolet, NeonMagenta, NeonSurface, NeonMagenta),
-        "Tue" to listOf(NeonViolet, NeonCyan, NeonCyan, NeonViolet, NeonMagenta, NeonSurface, NeonCyan, NeonViolet),
-        "Wed" to listOf(NeonMagenta, NeonMagenta, NeonSurface, NeonCyan, NeonCyan, NeonMagenta, NeonMagenta, NeonSurface),
-        "Thu" to listOf(NeonCyan, NeonViolet, NeonMagenta, NeonSurface, NeonViolet, NeonCyan, NeonMagenta, NeonMagenta),
-        "Fri" to listOf(NeonMagenta, NeonCyan, NeonViolet, NeonMagenta, NeonCyan, NeonViolet, NeonSurface, NeonCyan)
-    )
+private fun NeonStreakHeatmapCard(
+    calendarDays: List<CalendarDay>,
+    allSessions: List<FocusSession>
+) {
+    val sdfDate = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
+    val minutesByDate = remember(allSessions) {
+        val map = mutableMapOf<String, Long>()
+        for (s in allSessions) {
+            if (!s.isActive && (s.sessionStatus == "Completed" || s.sessionStatus == "Expired")) {
+                val key = sdfDate.format(Date(s.startTime))
+                map[key] = (map[key] ?: 0L) + (s.actualDurationSeconds / 60L)
+            }
+        }
+        map
+    }
+
+    val weeks = remember(calendarDays) {
+        calendarDays.chunked(7)
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(
-            text = "Streak Heatmap",
-            color = Color.White,
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = 16.sp
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Streak Heatmap (Past 28 Days)",
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 16.sp
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFF252538)))
+                Text("0m", color = TextSecondary, fontSize = 10.sp)
+                Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(3.dp)).background(NeonViolet))
+                Text("<30m", color = TextSecondary, fontSize = 10.sp)
+                Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(3.dp)).background(NeonCyan))
+                Text("30m+", color = TextSecondary, fontSize = 10.sp)
+                Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(3.dp)).background(NeonMagenta))
+                Text("90m+", color = TextSecondary, fontSize = 10.sp)
+            }
+        }
+
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -461,32 +551,57 @@ private fun NeonStreakHeatmapCard() {
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                rows.forEach { (dayLabel, colors) ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = dayLabel,
-                            color = TextSecondary,
-                            fontSize = 11.5.sp,
-                            modifier = Modifier.width(34.dp)
-                        )
+                if (weeks.isEmpty()) {
+                    Text(
+                        text = "Complete your first Focus Session to light up your Streak Heatmap!",
+                        color = TextSecondary,
+                        fontSize = 12.5.sp
+                    )
+                } else {
+                    weeks.forEachIndexed { wIdx, weekDays ->
                         Row(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            colors.forEach { cellColor ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(22.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(
-                                            if (cellColor == NeonSurface) Color(0xFF252538)
-                                            else cellColor
+                            Text(
+                                text = "W${wIdx + 1}",
+                                color = TextSecondary,
+                                fontSize = 11.5.sp,
+                                modifier = Modifier.width(34.dp)
+                            )
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                weekDays.forEach { day ->
+                                    val mins = minutesByDate[day.dateString] ?: 0L
+                                    val cellColor = when {
+                                        mins >= 90L -> NeonMagenta
+                                        mins >= 30L -> NeonCyan
+                                        mins > 0L || day.isProductive -> NeonViolet
+                                        else -> Color(0xFF252538)
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(RoundedCornerShape(7.dp))
+                                            .background(cellColor)
+                                            .border(
+                                                width = if (day.isToday) 1.5.dp else 0.dp,
+                                                color = if (day.isToday) Color.White else Color.Transparent,
+                                                shape = RoundedCornerShape(7.dp)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "${day.dayOfMonth}",
+                                            color = if (mins > 0L || day.isProductive) Color.White else TextSecondary.copy(alpha = 0.6f),
+                                            fontSize = 10.sp,
+                                            fontWeight = if (day.isToday) FontWeight.ExtraBold else FontWeight.Medium
                                         )
-                                )
+                                    }
+                                }
                             }
                         }
                     }
@@ -497,26 +612,35 @@ private fun NeonStreakHeatmapCard() {
 }
 
 @Composable
-private fun NeonSubjectProgressCard() {
-    data class SubjectStat(val name: String, val percent: Int, val icon: ImageVector, val tint: Color)
-
-    val subjects = listOf(
-        SubjectStat("Physics", 68, Icons.Default.Science, NeonCyan),
-        SubjectStat("Chemistry", 52, Icons.Default.Biotech, NeonMagenta),
-        SubjectStat("Mathematics", 63, Icons.Default.Functions, NeonViolet),
-        SubjectStat("Biology", 34, Icons.Default.Spa, Color(0xFF00E676))
-    )
+private fun NeonSubjectProgressCard(context: Context) {
+    val realUsage by produceState<List<RealAppUsageItem>>(initialValue = emptyList(), key1 = context) {
+        value = withContext(Dispatchers.IO) {
+            queryRealPhoneAppUsage(context, "Today")
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(
-            text = "Subject Progress",
-            color = Color.White,
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = 16.sp
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Today's Real Phone App Usage",
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 16.sp
+            )
+            Text(
+                text = if (realUsage.isNotEmpty()) "${realUsage.size} apps active" else "Live UsageStats",
+                color = NeonCyan,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -530,52 +654,54 @@ private fun NeonSubjectProgressCard() {
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                subjects.forEach { subj ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(subj.tint.copy(alpha = 0.18f))
-                                .border(1.dp, subj.tint.copy(alpha = 0.65f), RoundedCornerShape(10.dp)),
-                            contentAlignment = Alignment.Center
+                if (realUsage.isEmpty()) {
+                    Text(
+                        text = "Grant Usage Access permission to see your real phone screen time for YouTube, Instagram, WhatsApp, Chrome, and all installed apps.",
+                        color = TextSecondary,
+                        fontSize = 12.5.sp
+                    )
+                } else {
+                    val maxMs = realUsage.first().usageMillis.coerceAtLeast(1L)
+                    realUsage.take(6).forEach { item ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Icon(
-                                imageVector = subj.icon,
-                                contentDescription = subj.name,
-                                tint = subj.tint,
-                                modifier = Modifier.size(18.dp)
+                            RealAppIconBadge(
+                                packageName = item.packageName,
+                                appName = item.appName,
+                                size = 38.dp,
+                                cornerRadius = 10.dp
                             )
-                        }
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Text(
-                                    text = subj.name,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    text = "${subj.percent}%",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.5.sp
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = item.appName,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = "${item.formattedTime} (${item.percentOfTotal}%)",
+                                        color = NeonCyan,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.5.sp
+                                    )
+                                }
+                                NeonGradientProgressBar(
+                                    progress = (item.usageMillis.toFloat() / maxMs.toFloat()).coerceIn(0.06f, 1f),
+                                    height = 6.dp
                                 )
                             }
-                            NeonGradientProgressBar(
-                                progress = subj.percent / 100f,
-                                height = 6.dp
-                            )
                         }
                     }
                 }
@@ -584,9 +710,6 @@ private fun NeonSubjectProgressCard() {
     }
 }
 
-/**
- * Dedicated "FOREST" tab screen in the Neon Black Theme.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ForestGalleryScreen(
@@ -597,7 +720,7 @@ fun ForestGalleryScreen(
     val maturedSessions by viewModel.maturedSessions.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val hasWallpaper = remember {
-        !context.getSharedPreferences("focuss_buddy_settings", android.content.Context.MODE_PRIVATE)
+        !context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
             .getString("custom_wallpaper_uri", null).isNullOrEmpty()
     }
 

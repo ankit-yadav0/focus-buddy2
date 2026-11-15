@@ -19,9 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SelfImprovement
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -45,6 +43,8 @@ import com.example.ui.components.NeonLaserBackground
 import com.example.ui.components.NeonOutlinedPillButton
 import com.example.ui.components.NeonPrimaryGradientButton
 import com.example.ui.components.NeonSubtleBorderBrush
+import com.example.ui.components.RealAppIconBadge
+import com.example.ui.components.formatUsageDuration
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.NeonBlack
 import com.example.ui.theme.NeonCyan
@@ -128,7 +128,6 @@ class BlockActivity : ComponentActivity() {
                 startActivity(launchIntent)
             }
         } catch (e: Exception) {
-            // Fall through to finish() which reveals the underlying app
         }
         finish()
     }
@@ -153,10 +152,24 @@ class BlockActivity : ComponentActivity() {
                 ) {
                     val app = application as FocusApplication
                     val activeSession by app.repository.activeSession.collectAsState(initial = null)
+                    val longTermBlocks by app.repository.allLongTermBlocks.collectAsState(initial = emptyList())
+                    val matchingQuotaBlock = remember(longTermBlocks, blockedPackageState) {
+                        longTermBlocks.firstOrNull {
+                            it.type == "APP" && it.target == blockedPackageState && it.dailyLimitSeconds != null
+                        }
+                    }
+                    val quotaStatusText = remember(matchingQuotaBlock) {
+                        val lim = matchingQuotaBlock?.dailyLimitSeconds
+                        if (lim != null && lim > 0L) {
+                            val used = matchingQuotaBlock.usedSecondsToday.coerceAtMost(lim)
+                            "0h 0m left  •  ${formatUsageDuration(used * 1000L)} / ${formatUsageDuration(lim * 1000L)} used"
+                        } else null
+                    }
 
                     if (isMindfulDelayState) {
                         MindfulBreathingGateScreen(
                             appName = appLabelState,
+                            blockedPackage = blockedPackageState,
                             triggerKey = mindfulTriggerKey,
                             onProceedWithReason = { _ ->
                                 launchAllowedAppAndFinish(blockedPackageState)
@@ -192,7 +205,9 @@ class BlockActivity : ComponentActivity() {
                             longTermType = longTermTypeState,
                             onReturnHome = {
                                 goHomeAndFinish()
-                            }
+                            },
+                            blockedPackage = blockedPackageState,
+                            quotaStatusText = quotaStatusText
                         )
                     }
                 }
@@ -206,7 +221,8 @@ fun MindfulBreathingGateScreen(
     appName: String,
     triggerKey: Int,
     onProceedWithReason: (String) -> Unit,
-    onCancelToHome: () -> Unit
+    onCancelToHome: () -> Unit,
+    blockedPackage: String = ""
 ) {
     var secondsLeft by remember(triggerKey) { mutableIntStateOf(7) }
 
@@ -265,9 +281,18 @@ fun MindfulBreathingGateScreen(
                     .weight(1f)
                     .wrapContentHeight(Alignment.CenterVertically)
             ) {
+                if (blockedPackage.isNotBlank()) {
+                    RealAppIconBadge(
+                        packageName = blockedPackage,
+                        appName = appName,
+                        size = 56.dp,
+                        cornerRadius = 16.dp
+                    )
+                }
+
                 Box(
                     modifier = Modifier
-                        .size(126.dp)
+                        .size(116.dp)
                         .clip(CircleShape)
                         .background(NeonSurface)
                         .border(2.5.dp, NeonCardBorderBrush, CircleShape),
@@ -277,7 +302,7 @@ fun MindfulBreathingGateScreen(
                         Text(
                             text = "${secondsLeft}s",
                             color = NeonCyan,
-                            fontSize = 40.sp,
+                            fontSize = 38.sp,
                             fontWeight = FontWeight.Black,
                             fontFamily = FontFamily.Monospace
                         )
@@ -286,7 +311,7 @@ fun MindfulBreathingGateScreen(
                             imageVector = Icons.Default.SelfImprovement,
                             contentDescription = "Ready",
                             tint = NeonMagenta,
-                            modifier = Modifier.size(56.dp)
+                            modifier = Modifier.size(52.dp)
                         )
                     }
                 }
@@ -374,15 +399,6 @@ fun MindfulBreathingGateScreen(
     }
 }
 
-/**
- * Blocked Screen matching Panel 4 of `Neon Focus Buddy UI Theme Board.png`:
- *   • Deep #08080F background with diagonal neon magenta & cyan laser beams
- *   • Large glowing NeonCircularLockEmblem at top-center
- *   • "Blocked" bold white headline + "You can't access this app right now. It's part of your focus plan."
- *   • Dark #1A1A24 app card with neon gradient squircle icon, app title, limit/status reason, and timer
- *   • Glowing neon gradient-bordered pill button "Go Back"
- *   • "Better Focus. Brighter Future." tagline at the bottom
- */
 @Composable
 fun BlockScreenContent(
     appName: String,
@@ -392,7 +408,9 @@ fun BlockScreenContent(
     longTermReason: String,
     longTermEndDate: Long,
     longTermType: String,
-    onReturnHome: () -> Unit
+    onReturnHome: () -> Unit,
+    blockedPackage: String = "",
+    quotaStatusText: String? = null
 ) {
     val endTime = activeSession?.endTime ?: fallbackEndTime
     val actualEndTime = if (isLongTerm) longTermEndDate else endTime
@@ -451,7 +469,6 @@ fun BlockScreenContent(
         ) {
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Centerpiece matching Panel 4 of the Neon Focus Buddy UI Theme Board
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -479,7 +496,7 @@ fun BlockScreenContent(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Main Blocked App Info Card (Exact Panel 4 layout: App Icon + Name + Limit/Status + Timer)
+                // Real Blocked App Info Card with actual phone App Icon!
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = NeonSurface,
@@ -501,30 +518,12 @@ fun BlockScreenContent(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            // Neon gradient squircle app icon badge (Instagram / App style)
-                            Box(
-                                modifier = Modifier
-                                    .size(54.dp)
-                                    .clip(RoundedCornerShape(15.dp))
-                                    .background(
-                                        Brush.linearGradient(
-                                            colors = listOf(
-                                                NeonMagenta,
-                                                NeonViolet,
-                                                Color(0xFFFF7A00)
-                                            )
-                                        )
-                                    )
-                                    .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(15.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = appName.firstOrNull()?.uppercase() ?: "A",
-                                    color = Color.White,
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Black
-                                )
-                            }
+                            RealAppIconBadge(
+                                packageName = blockedPackage,
+                                appName = appName,
+                                size = 54.dp,
+                                cornerRadius = 15.dp
+                            )
 
                             Column(
                                 modifier = Modifier.weight(1f),
@@ -541,8 +540,8 @@ fun BlockScreenContent(
                                     text = when {
                                         longTermReason.isNotEmpty() -> longTermReason
                                         isLongTerm -> "Long-term block active"
-                                        activeSession?.isStrict == true -> "Strict Mode • Daily focus plan"
-                                        else -> "Daily limit reached"
+                                        activeSession?.isStrict == true -> "Strict Mode • Focus session active"
+                                        else -> "Blocked during Focus Session"
                                     },
                                     color = TextSecondary,
                                     fontSize = 13.5.sp,
@@ -561,7 +560,8 @@ fun BlockScreenContent(
                                         modifier = Modifier.size(15.dp)
                                     )
                                     Text(
-                                        text = if (timeRemaining > 0L) "$timeString remaining" else "0h 0m / ${durationMinutes}m",
+                                        text = quotaStatusText
+                                            ?: if (timeRemaining > 0L) "$timeString remaining" else "0h 0m / ${durationMinutes}m",
                                         color = Color.White,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
@@ -573,7 +573,6 @@ fun BlockScreenContent(
 
                         HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
 
-                        // Compact session / block metadata row
                         if (isLongTerm) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -605,7 +604,6 @@ fun BlockScreenContent(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Glowing Neon-Bordered "Go Back" Pill Button matching Panel 4
                 NeonOutlinedPillButton(
                     text = "Go Back",
                     onClick = onReturnHome,

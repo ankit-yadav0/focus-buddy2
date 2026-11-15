@@ -71,22 +71,18 @@ import com.example.data.LongTermBlock
 import com.example.viewmodel.AppInfo
 import com.example.viewmodel.FocusViewModel
 import com.example.ui.theme.AccentTheme
-import com.example.ui.theme.NeonBlack
+import com.example.ui.theme.NeonBackground
+import com.example.ui.theme.NeonBackgroundMid
+import com.example.ui.theme.NeonSurface
+import com.example.ui.theme.NeonSurfaceElevated
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonMagenta
-import com.example.ui.theme.NeonSurface
 import com.example.ui.theme.NeonViolet
-import com.example.ui.theme.TextSecondary
-import com.example.ui.components.FocusBuddyNeonTitle
-import com.example.ui.components.NeonCardBorderBrush
-import com.example.ui.components.NeonDisciplineFooter
-import com.example.ui.components.NeonGradientProgressBar
-import com.example.ui.components.NeonHorizontalBrush
-import com.example.ui.components.NeonLaserBackground
-import com.example.ui.components.NeonOutlinedPillButton
-import com.example.ui.components.NeonPrimaryGradientButton
-import com.example.ui.components.NeonSubtleBorderBrush
-import com.example.ui.components.NeonTargetLightningLogo
+import com.example.ui.theme.NeonHorizontalBrush
+import com.example.ui.components.NeonStarfieldBackground
+import com.example.ui.components.RealAppIconBadge
+import com.example.ui.components.queryRecentPhoneApps
+
 import com.example.viewmodel.DailyAnalytics
 import com.example.viewmodel.TrendPoint
 import com.example.viewmodel.AdvancedAnalytics
@@ -121,7 +117,9 @@ fun HomeScreen(
     onWallpaperOpacityChange: (Float) -> Unit = {},
     onNavigateToUninstall: () -> Unit = {},
     onNavigateToStrictOverride: () -> Unit = {},
-    onNavigateToRoute: (String) -> Unit = {},
+    onNavigateToAppUsage: () -> Unit = {},
+    onNavigateToAllApps: () -> Unit = {},
+    onNavigateToNeonSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -132,6 +130,7 @@ fun HomeScreen(
     val dailyAnalytics by viewModel.dailyAnalytics.collectAsStateWithLifecycle()
     val advancedAnalytics by viewModel.advancedAnalytics.collectAsStateWithLifecycle()
     val currentSoundMode by viewModel.focusSoundMode.collectAsStateWithLifecycle()
+    val appList by viewModel.appListState.collectAsStateWithLifecycle()
 
     val youtubeStudyEnabled by viewModel.youtubeStudyMode.collectAsStateWithLifecycle()
     val whatsappStatusEnabled by viewModel.whatsappBlockStatus.collectAsStateWithLifecycle()
@@ -142,34 +141,29 @@ fun HomeScreen(
     val isStrictModeActive by viewModel.isStrictModeActive.collectAsStateWithLifecycle()
     val showReflectionPrompt by viewModel.showReflectionPrompt.collectAsStateWithLifecycle()
 
-    var selectedQuickMinutes by remember { mutableIntStateOf(25) }
+    val sharedPrefs = remember {
+        context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
+    }
+
+    var selectedQuickMinutes by remember { mutableIntStateOf(sharedPrefs.getInt("home_quick_minutes", 25)) }
     var quickStrictSelected by remember { mutableStateOf(false) }
     var showStrictWizardFromHome by remember { mutableStateOf(false) }
     var showMindfulDialogFromHome by remember { mutableStateOf(false) }
     var showKeywordDialogFromHome by remember { mutableStateOf(false) }
+    var showDailyGoalDialog by remember { mutableStateOf(false) }
+    var dailyGoalHours by remember { mutableIntStateOf(sharedPrefs.getInt("daily_focus_goal_hours", 6).coerceIn(1, 16)) }
 
-    var currentWallMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(10_000L)
-            currentWallMillis = System.currentTimeMillis()
-        }
+    var pinnedPackages by remember {
+        mutableStateOf(
+            sharedPrefs.getString("pinned_study_packages_v1", "")
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.toSet()
+                ?: emptySet()
+        )
     }
-
-    val greetingText = remember(currentWallMillis) {
-        val hr = Calendar.getInstance().apply { timeInMillis = currentWallMillis }.get(Calendar.HOUR_OF_DAY)
-        when {
-            hr < 12 -> "Good Morning,"
-            hr < 17 -> "Good Afternoon,"
-            else -> "Good Evening,"
-        }
-    }
-    val formattedDateStr = remember(currentWallMillis) {
-        SimpleDateFormat("EEE, dd MMM yyyy", Locale.US).format(Date(currentWallMillis))
-    }
-    val formattedClockStr = remember(currentWallMillis) {
-        SimpleDateFormat("hh:mm", Locale.US).format(Date(currentWallMillis))
-    }
+    var showEditStudyAppsDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.actionBlockedMessage.collect { message ->
@@ -217,9 +211,6 @@ fun HomeScreen(
         }
     }
 
-    val sharedPrefs = remember {
-        context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
-    }
     val hasWallpaper = remember {
         !sharedPrefs.getString("custom_wallpaper_uri", null).isNullOrEmpty()
     }
@@ -228,33 +219,88 @@ fun HomeScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
+    val lofiAmber = NeonCyan
+    val lofiCoral = NeonMagenta
+    val lofiCream = Color(0xFFFFFFFF)
+    val lofiEspressoDark = NeonBackground
+    val lofiEspressoMid = NeonBackgroundMid
+
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000L)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
+    val dateLabel = remember(nowMillis / 60_000L) {
+        SimpleDateFormat("EEE, dd MMM yyyy", Locale.US).format(Date(nowMillis))
+    }
+    val timeLabel = remember(nowMillis / 1000L) {
+        SimpleDateFormat("hh:mm", Locale.US).format(Date(nowMillis))
+    }
+    val greetingLabel = remember(nowMillis / 60_000L) {
+        val hr = Calendar.getInstance().apply { timeInMillis = nowMillis }.get(Calendar.HOUR_OF_DAY)
+        when {
+            hr < 12 -> "Good Morning,"
+            hr < 17 -> "Good Afternoon,"
+            else -> "Good Evening,"
+        }
+    }
+
+    val isSessionRunning = activeSession != null && activeSession?.isActive == true
+    val sessionRemainingSecs = remember(activeSession, nowMillis, isSessionRunning, selectedQuickMinutes) {
+        if (isSessionRunning && activeSession != null) {
+            max(0L, (activeSession!!.endTime - TrustedClock.now()) / 1000L)
+        } else {
+            selectedQuickMinutes * 60L
+        }
+    }
+    val activeSessionTimeText = remember(sessionRemainingSecs) {
+        val days = sessionRemainingSecs / 86400L
+        val hrs = (sessionRemainingSecs % 86400L) / 3600L
+        val mins = (sessionRemainingSecs % 3600L) / 60L
+        val secs = sessionRemainingSecs % 60L
+        when {
+            days > 0L -> "${days}d ${hrs}h ${mins}m"
+            hrs > 0L -> String.format(Locale.US, "%02d:%02d:%02d", hrs, mins, secs)
+            else -> String.format(Locale.US, "%02d:%02d", mins, secs)
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = NeonBlack,
-                modifier = Modifier
-                    .width(325.dp)
-                    .border(1.dp, NeonSubtleBorderBrush, RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp))
+                drawerContainerColor = NeonSurface,
+                modifier = Modifier.width(320.dp)
             ) {
                 Spacer(modifier = Modifier.height(24.dp))
                 Row(
                     modifier = Modifier.padding(horizontal = 24.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    NeonTargetLightningLogo(size = 38.dp)
-                    Column {
-                        FocusBuddyNeonTitle(fontSize = 22.sp, focusInCyan = true)
-                        Text(
-                            text = "Clean • Modern • Focused",
-                            fontSize = 11.5.sp,
-                            color = TextSecondary,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
+                    Text(
+                        text = "Focus",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 22.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Buddy",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 22.sp,
+                        color = NeonMagenta
+                    )
                 }
+                Text(
+                    text = "Clean • Modern • Focused",
+                    fontSize = 12.sp,
+                    color = NeonCyan,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                    maxLines = 1,
+                    softWrap = false
+                )
 
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = 14.dp, horizontal = 24.dp),
@@ -289,6 +335,17 @@ fun HomeScreen(
                     )
 
                     LofiDrawerNavigationItem(
+                        title = "App Usage & Daily Quota",
+                        subtitle = "Real phone usage & daily app quotas",
+                        icon = Icons.Default.BarChart,
+                        testTag = "drawer_app_usage_button",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onNavigateToAppUsage()
+                        }
+                    )
+
+                    LofiDrawerNavigationItem(
                         title = "App Locking (PIN Gate)",
                         subtitle = "${lockedApps.size} apps protected with PIN",
                         icon = Icons.Default.Lock,
@@ -300,17 +357,6 @@ fun HomeScreen(
                     )
 
                     LofiDrawerNavigationItem(
-                        title = "Banking Mode (Pause)",
-                        subtitle = "${bankingApps.size} banking/UPI apps configured",
-                        icon = Icons.Default.Shield,
-                        testTag = "banking_pause_button",
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            onNavigateToBankingPause()
-                        }
-                    )
-
-                    LofiDrawerNavigationItem(
                         title = "Custom Timer & Schedules",
                         subtitle = "Set exact D/H/M/S & recurring Strict windows",
                         icon = Icons.Default.Timer,
@@ -318,70 +364,6 @@ fun HomeScreen(
                         onClick = {
                             scope.launch { drawerState.close() }
                             onNavigateToTimer()
-                        }
-                    )
-
-                    Text(
-                        text = "STUDY SUITE & ANALYTICS",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = NeonMagenta,
-                        letterSpacing = 1.sp,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                    )
-
-                    LofiDrawerNavigationItem(
-                        title = "Study Planner",
-                        subtitle = "Lecture & playback speed plan calculator",
-                        icon = Icons.Default.Calculate,
-                        testTag = "drawer_study_planner_button",
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            onNavigateToRoute("study_planner")
-                        }
-                    )
-
-                    LofiDrawerNavigationItem(
-                        title = "Test Calendar",
-                        subtitle = "Upcoming mock tests & pipe-delimited import",
-                        icon = Icons.Default.CalendarToday,
-                        testTag = "drawer_test_calendar_button",
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            onNavigateToRoute("test_calendar")
-                        }
-                    )
-
-                    LofiDrawerNavigationItem(
-                        title = "PYQ Practice",
-                        subtitle = "Subject & topic-wise PYQ quiz practice",
-                        icon = Icons.Default.Quiz,
-                        testTag = "drawer_pyq_practice_button",
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            onNavigateToRoute("pyq_practice")
-                        }
-                    )
-
-                    LofiDrawerNavigationItem(
-                        title = "App Usage & Daily Quota",
-                        subtitle = "Track daily app usage & quota bars",
-                        icon = Icons.Default.BarChart,
-                        testTag = "drawer_app_usage_button",
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            onNavigateToRoute("app_usage")
-                        }
-                    )
-
-                    LofiDrawerNavigationItem(
-                        title = "All Apps (Launcher Mode)",
-                        subtitle = " distraction-free study app drawer",
-                        icon = Icons.Default.Apps,
-                        testTag = "drawer_all_apps_button",
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            onNavigateToRoute("all_apps")
                         }
                     )
 
@@ -414,8 +396,6 @@ fun HomeScreen(
                             onNavigateToUninstall()
                         }
                     )
-
-                    NeonDisciplineFooter(modifier = Modifier.padding(vertical = 8.dp))
                     Spacer(modifier = Modifier.height(24.dp))
                 }
             }
@@ -425,24 +405,35 @@ fun HomeScreen(
             containerColor = Color.Transparent,
             modifier = modifier
         ) { innerPadding ->
-            val bgAlpha = if (hasWallpaper) 0.45f else 1.0f
-            NeonLaserBackground(
+            val bgAlpha = if (hasWallpaper) 0.42f else 1.0f
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
-                bgAlpha = bgAlpha
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                lofiEspressoDark.copy(alpha = bgAlpha),
+                                lofiEspressoMid.copy(alpha = bgAlpha),
+                                NeonBackground.copy(alpha = bgAlpha)
+                            )
+                        )
+                    )
+                    .padding(innerPadding)
             ) {
+                if (!hasWallpaper) {
+                    NeonStarfieldBackground(modifier = Modifier.fillMaxSize())
+                }
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 18.dp)
                         .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    // 1. Top Greeting Header matching Panel 2 ("Good Morning, / Focus Buddy" + Settings Gear)
+                    // Top Header ("Good Morning, Focus Buddy" + Gear / Menu)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -456,83 +447,93 @@ fun HomeScreen(
                             IconButton(
                                 onClick = { scope.launch { drawerState.open() } },
                                 modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
                                     .background(NeonSurface)
-                                    .border(1.dp, NeonSubtleBorderBrush, RoundedCornerShape(12.dp))
+                                    .border(1.dp, NeonCyan.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
                                     .testTag("hamburger_menu_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Menu,
                                     contentDescription = "Menu",
-                                    tint = NeonCyan
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                             Column {
                                 Text(
-                                    text = greetingText,
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = TextSecondary,
-                                    maxLines = 1
+                                    text = greetingLabel,
+                                    fontSize = 13.sp,
+                                    color = Color.White.copy(alpha = 0.72f),
+                                    fontWeight = FontWeight.Medium
                                 )
-                                FocusBuddyNeonTitle(fontSize = 24.sp, focusInCyan = true)
+                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Text(
+                                        text = "Focus",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 23.sp,
+                                        color = NeonCyan,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                    Text(
+                                        text = "Buddy",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 23.sp,
+                                        color = NeonMagenta,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
                             }
                         }
-                        Box(
+                        IconButton(
+                            onClick = onNavigateToNeonSettings,
                             modifier = Modifier
-                                .size(42.dp)
+                                .size(40.dp)
                                 .clip(CircleShape)
                                 .background(NeonSurface)
-                                .border(1.2.dp, NeonCardBorderBrush, CircleShape)
-                                .clickable { onNavigateToRoute("neon_settings") },
-                            contentAlignment = Alignment.Center
+                                .border(1.dp, NeonCyan.copy(alpha = 0.4f), CircleShape)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
                                 contentDescription = "Settings",
-                                tint = Color.White,
-                                modifier = Modifier.size(21.dp)
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
 
-                    // 2. Date & Large Clock + Streak Card Row (Exact Panel 2 layout)
+                    // Date + Big Digital Clock + Streak Badge
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column {
                             Text(
-                                text = formattedDateStr,
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = TextSecondary,
-                                maxLines = 1
+                                text = dateLabel,
+                                color = Color.White.copy(alpha = 0.65f),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = formattedClockStr,
-                                fontSize = 38.sp,
-                                fontWeight = FontWeight.ExtraBold,
+                                text = timeLabel,
                                 color = Color.White,
-                                letterSpacing = 0.5.sp,
-                                maxLines = 1
+                                fontSize = 36.sp,
+                                fontWeight = FontWeight.Light,
+                                letterSpacing = 1.sp
                             )
                         }
 
-                        // Streak Card ("🔥 12 Day Streak / Keep going!")
                         Card(
-                            modifier = Modifier
-                                .border(1.2.dp, NeonCardBorderBrush, RoundedCornerShape(18.dp))
-                                .clickable { onNavigateToRoute("insights") },
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(containerColor = NeonSurface)
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = NeonSurface),
+                            border = BorderStroke(1.dp, NeonMagenta.copy(alpha = 0.45f))
                         ) {
                             Column(
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -540,69 +541,77 @@ fun HomeScreen(
                                 ) {
                                     Text(text = "🔥", fontSize = 15.sp)
                                     Text(
-                                        text = "${advancedAnalytics.currentStreak}",
-                                        fontWeight = FontWeight.Black,
-                                        fontSize = 17.sp,
+                                        text = "${advancedAnalytics.currentStreak} Day Streak",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 13.sp,
                                         color = Color.White
-                                    )
-                                    Text(
-                                        text = "Day Streak",
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.5.sp,
-                                        color = TextSecondary
                                     )
                                 }
                                 Text(
-                                    text = "Keep going!",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    color = NeonCyan
+                                    text = if (advancedAnalytics.currentStreak > 0) "Keep going!" else "Start today!",
+                                    fontSize = 10.sp,
+                                    color = NeonMagenta,
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
                         }
                     }
 
-                    // 3. Today's Focus Time Card with Circular Neon Ring Gauge (Exact Panel 2)
-                    val todaySecs = dailyAnalytics.totalActualFocusTimeSeconds
+                                        // Today's Focus Time Card with Circular Progress Ring (100% REAL DATA + live active session seconds)
+                    val liveActiveElapsedSecs = remember(activeSession, nowMillis, isSessionRunning) {
+                        if (isSessionRunning && activeSession != null) {
+                            val start = activeSession!!.startTime
+                            val maxDur = ((activeSession!!.endTime - start) / 1000L).coerceAtLeast(0L)
+                            ((TrustedClock.now() - start) / 1000L).coerceAtLeast(0L).coerceAtMost(maxDur)
+                        } else 0L
+                    }
+                    val todaySecs = max(dailyAnalytics.totalActualFocusTimeSeconds, liveActiveElapsedSecs)
                     val todayH = todaySecs / 3600L
                     val todayM = (todaySecs % 3600L) / 60L
-                    val todayTimeFormatted = if (todayH > 0L) "${todayH}h ${todayM}m" else "${todayM}m"
-                    val dailyGoalFraction = remember(todaySecs) {
-                        if (todaySecs > 0L) {
-                            (todaySecs.toFloat() / (6f * 3600f)).coerceIn(0.08f, 1f)
-                        } else {
-                            0.68f
-                        }
+                    val todayS = todaySecs % 60L
+                    val todayTimeFormatted = when {
+                        todayH > 0L -> "${todayH}h ${todayM}m"
+                        todayM > 0L -> "${todayM}m"
+                        todayS > 0L -> "${todayS}s"
+                        else -> "0m"
                     }
-                    val dailyGoalPercent = (dailyGoalFraction * 100f).toInt()
+                    val dailyGoalSecs = (dailyGoalHours * 3600L).coerceAtLeast(1L)
+                    val goalFraction = (todaySecs.toFloat() / dailyGoalSecs.toFloat()).coerceIn(0f, 1f)
+                    val goalPct = ((todaySecs * 100L) / dailyGoalSecs).toInt().coerceIn(0, 100)
 
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .border(1.3.dp, NeonCardBorderBrush, RoundedCornerShape(20.dp))
-                            .clickable { onNavigateToRoute("app_usage") },
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = NeonSurface)
+                            .clickable { showDailyGoalDialog = true },
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = NeonSurface),
+                        border = BorderStroke(1.2.dp, NeonCyan.copy(alpha = 0.55f))
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 18.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
                                     text = "Today's Focus Time",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = TextSecondary
+                                    color = Color.White.copy(alpha = 0.72f),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
                                 )
                                 Text(
                                     text = todayTimeFormatted,
-                                    fontSize = 28.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color.White
+                                    color = Color.White,
+                                    fontSize = 26.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = "Daily Goal: ${dailyGoalHours}h • Tap to change or view App Usage",
+                                    color = NeonCyan.copy(alpha = 0.8f),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
 
@@ -612,131 +621,131 @@ fun HomeScreen(
                             ) {
                                 Canvas(modifier = Modifier.fillMaxSize()) {
                                     val stroke = 6.dp.toPx()
-                                    drawCircle(
-                                        color = Color(0xFF28283C),
-                                        style = Stroke(width = stroke)
-                                    )
                                     drawArc(
-                                        brush = Brush.sweepGradient(
-                                            colors = listOf(NeonCyan, NeonViolet, NeonMagenta, NeonCyan)
-                                        ),
-                                        startAngle = -90f,
-                                        sweepAngle = 360f * dailyGoalFraction,
+                                        color = Color.White.copy(alpha = 0.1f),
+                                        startAngle = 0f,
+                                        sweepAngle = 360f,
                                         useCenter = false,
                                         style = Stroke(width = stroke, cap = StrokeCap.Round)
                                     )
+                                    if (goalFraction > 0f) {
+                                        drawArc(
+                                            brush = NeonHorizontalBrush,
+                                            startAngle = -90f,
+                                            sweepAngle = 360f * goalFraction.coerceAtLeast(0.04f),
+                                            useCenter = false,
+                                            style = Stroke(width = stroke, cap = StrokeCap.Round)
+                                        )
+                                    }
                                 }
                                 Text(
-                                    text = "$dailyGoalPercent%",
+                                    text = "$goalPct%",
                                     color = Color.White,
-                                    fontWeight = FontWeight.ExtraBold,
+                                    fontWeight = FontWeight.Bold,
                                     fontSize = 12.sp
                                 )
                             }
                         }
                     }
 
-                    // 4. Active Session Card (Exact Panel 2 layout)
-                    val isSessionRunning = activeSession != null && activeSession?.isActive == true
+                    // Active Session Status Card (Real session status + quick Start/Stop)
                     Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.2.dp, NeonSubtleBorderBrush, RoundedCornerShape(20.dp)),
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = NeonSurface)
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = NeonSurface),
+                        border = BorderStroke(1.dp, NeonViolet.copy(alpha = 0.45f))
                     ) {
-                        Column(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Active Session",
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextSecondary
-                            )
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(38.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(
-                                                Brush.linearGradient(listOf(NeonCyan, NeonViolet))
-                                            ),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "B",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Black,
-                                            fontSize = 18.sp
-                                        )
-                                    }
-                                    Column {
-                                        Text(
-                                            text = if (isSessionRunning) {
-                                                if (activeSession?.isStrict == true) "Strict Focus" else "Deep Focus"
-                                            } else {
-                                                "Physics / Deep Study"
-                                            },
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.5.sp
-                                        )
-                                        Text(
-                                            text = if (isSessionRunning) "Session in progress" else "${selectedQuickMinutes}:00 ready",
-                                            color = TextSecondary,
-                                            fontSize = 12.sp,
-                                            fontFamily = FontFamily.Monospace
-                                        )
-                                    }
-                                }
-
                                 Box(
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .background(NeonBlack)
-                                        .border(1.3.dp, NeonCardBorderBrush, RoundedCornerShape(50))
-                                        .clickable {
-                                            if (!isSessionRunning) {
-                                                viewModel.startFocusSession(
-                                                    minutes = selectedQuickMinutes,
-                                                    isStrict = quickStrictSelected,
-                                                    totalMs = selectedQuickMinutes * 60 * 1000L
-                                                )
-                                            } else if (activeSession?.isStrict != true) {
-                                                viewModel.stopActiveSession()
-                                            }
-                                        }
-                                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                                        .size(38.dp)
+                                        .clip(RoundedCornerShape(11.dp))
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(NeonCyan.copy(alpha = 0.25f), NeonMagenta.copy(alpha = 0.25f))
+                                            )
+                                        )
+                                        .border(1.dp, NeonCyan.copy(alpha = 0.6f), RoundedCornerShape(11.dp)),
                                     contentAlignment = Alignment.Center
                                 ) {
+                                    Icon(
+                                        imageVector = if (isSessionRunning && activeSession?.isStrict == true) Icons.Default.Lock else Icons.Default.Timer,
+                                        contentDescription = null,
+                                        tint = NeonCyan,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Column {
                                     Text(
                                         text = when {
-                                            !isSessionRunning -> "> Start"
-                                            activeSession?.isStrict == true -> "🔒 Locked"
-                                            else -> "> Pause"
+                                            isSessionRunning && activeSession?.isStrict == true -> "Strict Focus Active"
+                                            isSessionRunning -> "Focus Session Active"
+                                            else -> "Ready to Focus"
                                         },
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 12.5.sp
+                                        fontSize = 14.sp
+                                    )
+                                    Text(
+                                        text = if (isSessionRunning) "$activeSessionTimeText remaining • ${blockedApps.size} apps blocked"
+                                        else "${selectedQuickMinutes}m preset • ${blockedApps.size} apps in block list",
+                                        color = if (isSessionRunning) NeonCyan else Color.White.copy(alpha = 0.6f),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                 }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(NeonSurfaceElevated)
+                                    .border(1.dp, NeonMagenta.copy(alpha = 0.65f), RoundedCornerShape(50))
+                                    .clickable {
+                                        if (isSessionRunning) {
+                                            if (activeSession?.isStrict != true) {
+                                                viewModel.stopActiveSession()
+                                            } else {
+                                                onNavigateToStrictOverride()
+                                            }
+                                        } else {
+                                            viewModel.startFocusSession(
+                                                minutes = selectedQuickMinutes,
+                                                isStrict = quickStrictSelected,
+                                                totalMs = selectedQuickMinutes * 60 * 1000L
+                                            )
+                                        }
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 7.dp)
+                            ) {
+                                Text(
+                                    text = when {
+                                        isSessionRunning && activeSession?.isStrict == true -> "Override"
+                                        isSessionRunning -> "> Stop"
+                                        else -> "> Start"
+                                    },
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
 
-                    // 5. Exam Countdown Card (Exact Panel 2 style with diagonal neon laser streaks)
+                    // Exam Countdown Card (Restored as requested by user!)
                     ExamCountdownHeaderCard(viewModel = viewModel)
 
                     // Permission Alert Banner if Accessibility or Usage Stats is missing
@@ -760,88 +769,41 @@ fun HomeScreen(
                         )
                     }
 
-                    // 6. Centerpiece: Glowing Neon Cyan-Violet-Magenta Circular Focus Ring + Starfield
+                    // Centerpiece: Glowing Neon Cyan-Magenta Circular Focus Ring (Fixed so timer NEVER overflows!)
                     LofiAmberFocusCenterpiece(
                         activeSession = activeSession,
                         selectedMinutes = selectedQuickMinutes,
-                        onSessionExpired = { viewModel.stopActiveSession() },
+                        onSessionExpired = {
+                            viewModel.stopActiveSession()
+                        },
                         onRingClick = {
                             if (!isSessionRunning) onNavigateToTimer()
                         }
                     )
 
-                    // 7. Duration & Mode Pill Selector Row ("15m", "25m", "60m", "Strict")
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        listOf(15, 25, 60).forEach { mins ->
-                            val isSelected = selectedQuickMinutes == mins
-                            LofiSelectablePill(
-                                text = "${mins}m",
-                                selected = isSelected,
-                                onClick = {
-                                    if (!isSessionRunning) {
-                                        selectedQuickMinutes = mins
-                                    }
-                                }
-                            )
-                        }
-                        val strictHighlighted = quickStrictSelected || isStrictModeActive
-                        LofiSelectablePill(
-                            text = "Strict",
-                            selected = strictHighlighted,
-                            onClick = {
-                                if (!isStrictModeActive) {
-                                    if (quickStrictSelected) {
-                                        quickStrictSelected = false
-                                    } else {
-                                        showStrictWizardFromHome = true
-                                    }
-                                }
-                            }
-                        )
-                    }
-
-                    // 8. Offline Focus Sound Pill Row ("Off", "Brown Noise", "40Hz Gamma", "Soft Rain")
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        FocusSoundGenerator.SoundMode.entries.forEach { mode ->
-                            val isSelected = currentSoundMode == mode
-                            LofiSelectablePill(
-                                text = mode.displayName,
-                                selected = isSelected,
-                                horizontalPad = 14.dp,
-                                onClick = { viewModel.setFocusSoundMode(mode) }
-                            )
-                        }
-                    }
-
-                    // 9. Primary Neon Gradient Pill Button: "Start Focus Session" (or Active Session Controls)
+                    // Primary Neon Cyan-Magenta Pill Button: Opens Timer Config or Starts Focus Session
                     if (!isSessionRunning) {
-                        NeonPrimaryGradientButton(
-                            text = "Start Focus Session",
-                            onClick = {
-                                viewModel.startFocusSession(
-                                    minutes = selectedQuickMinutes,
-                                    isStrict = quickStrictSelected,
-                                    totalMs = selectedQuickMinutes * 60 * 1000L
-                                )
-                            },
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .height(54.dp)
+                                .clip(RoundedCornerShape(27.dp))
+                                .background(NeonHorizontalBrush)
+                                .clickable {
+                                    onNavigateToTimer()
+                                }
                                 .testTag("start_focus_session_button"),
-                            height = 54.dp,
-                            fontSize = 17.sp
-                        )
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Start Focus Session",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     } else {
                         val session = activeSession!!
                         val deactivationMethod by viewModel.deactivationMethod.collectAsStateWithLifecycle()
@@ -858,7 +820,7 @@ fun HomeScreen(
                                         .testTag("stop_session_icon_button"),
                                     shape = RoundedCornerShape(27.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = NeonMagenta,
+                                        containerColor = MaterialTheme.colorScheme.error,
                                         contentColor = Color.White
                                     )
                                 ) {
@@ -885,10 +847,10 @@ fun HomeScreen(
                                         .testTag("start_focus_session_button"),
                                     shape = RoundedCornerShape(27.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = NeonSurface,
+                                        containerColor = NeonSurfaceElevated,
                                         contentColor = NeonCyan
                                     ),
-                                    border = BorderStroke(1.5.dp, NeonCardBorderBrush)
+                                    border = BorderStroke(1.5.dp, NeonMagenta.copy(alpha = 0.7f))
                                 ) {
                                     Icon(Icons.Default.Lock, contentDescription = "Strict Active", modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
@@ -904,40 +866,26 @@ fun HomeScreen(
                         }
                     }
 
-                    // 10. Study Apps Section (Exact Panel 2: Physics, Chemistry, Mathematics, Biology)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Study Apps",
-                            color = Color.White,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.5.sp
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.clickable { onNavigateToRoute("all_apps") }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Apps,
-                                contentDescription = null,
-                                tint = NeonCyan,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Text(
-                                text = "All Apps",
-                                color = NeonCyan,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.5.sp
-                            )
+                    // Pinned Study Apps & Recent Phone Apps (100% REAL PHONE APPS!)
+                    RealPinnedStudyAppsSection(
+                        installedApps = appList,
+                        pinnedPackages = pinnedPackages,
+                        onEditClick = { showEditStudyAppsDialog = true },
+                        onNavigateToRoute = { route ->
+                            when (route) {
+                                "app_usage" -> onNavigateToAppUsage()
+                                "all_apps" -> onNavigateToAllApps()
+                                else -> onNavigateToNeonSettings()
+                            }
                         }
-                    }
-                    NeonStudyAppsQuickRow(onNavigateToRoute = onNavigateToRoute)
+                    )
 
-                    // 11. 2x2 Neon Bento Feature Grid (YouTube Study Mode, WhatsApp Chat-Only, 7s Mindful Gate, Keyword Blocker)
+                    RealRecentAppsRow(
+                        installedApps = appList,
+                        onOpenAllApps = onNavigateToAllApps
+                    )
+
+                    // 2x2 Bento Grid with Neon Borders (YouTube Study, WhatsApp Chat-Only, 7s Mindful, Keyword Blocker)
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -956,8 +904,8 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .size(34.dp)
                                             .clip(RoundedCornerShape(10.dp))
-                                            .background(NeonBlack)
-                                            .border(1.dp, NeonCyan.copy(alpha = 0.55f), RoundedCornerShape(10.dp)),
+                                            .background(NeonSurfaceElevated)
+                                            .border(1.dp, NeonCyan.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Box(
@@ -996,21 +944,21 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .size(34.dp)
                                             .clip(RoundedCornerShape(10.dp))
-                                            .background(NeonBlack)
-                                            .border(1.dp, NeonMagenta.copy(alpha = 0.55f), RoundedCornerShape(10.dp)),
+                                            .background(NeonSurfaceElevated)
+                                            .border(1.dp, NeonCyan.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Box(
                                             modifier = Modifier
                                                 .size(26.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFF00E676).copy(alpha = 0.2f)),
+                                                .background(Color(0xFF00E676)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Chat,
                                                 contentDescription = null,
-                                                tint = Color(0xFF00E676),
+                                                tint = NeonBackground,
                                                 modifier = Modifier.size(14.dp)
                                             )
                                         }
@@ -1041,15 +989,15 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .size(34.dp)
                                             .clip(RoundedCornerShape(10.dp))
-                                            .background(NeonBlack)
-                                            .border(1.dp, NeonCyan.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
+                                            .background(NeonSurfaceElevated)
+                                            .border(1.dp, NeonCyan.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.SelfImprovement,
                                             contentDescription = null,
                                             tint = NeonCyan,
-                                            modifier = Modifier.size(20.dp)
+                                            modifier = Modifier.size(22.dp)
                                         )
                                     }
                                 },
@@ -1067,15 +1015,15 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .size(34.dp)
                                             .clip(RoundedCornerShape(10.dp))
-                                            .background(NeonBlack)
-                                            .border(1.dp, NeonMagenta.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
+                                            .background(NeonSurfaceElevated)
+                                            .border(1.dp, NeonMagenta.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Shield,
                                             contentDescription = null,
                                             tint = NeonMagenta,
-                                            modifier = Modifier.size(20.dp)
+                                            modifier = Modifier.size(22.dp)
                                         )
                                     }
                                 },
@@ -1088,13 +1036,82 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.height(80.dp))
                 }
 
-                // Single-Step Interactive Dialog for 7s Mindful Gate from Bento Grid
+                if (showEditStudyAppsDialog) {
+                    EditPinnedStudyAppsDialog(
+                        installedApps = appList,
+                        currentPinned = pinnedPackages,
+                        onDismiss = { showEditStudyAppsDialog = false },
+                        onSave = { updated ->
+                            pinnedPackages = updated
+                            sharedPrefs.edit().putString("pinned_study_packages_v1", updated.joinToString(",")).apply()
+                            showEditStudyAppsDialog = false
+                        }
+                    )
+                }
+
+                if (showDailyGoalDialog) {
+                    var tempGoal by remember { mutableIntStateOf(dailyGoalHours) }
+                    AlertDialog(
+                        onDismissRequest = { showDailyGoalDialog = false },
+                        containerColor = NeonSurface,
+                        title = {
+                            Text("Today's Focus Goal", color = Color.White, fontWeight = FontWeight.Bold)
+                        },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(
+                                    text = "Set your daily target study hours (${tempGoal}h/day):",
+                                    color = Color.White.copy(alpha = 0.75f),
+                                    fontSize = 13.sp
+                                )
+                                Slider(
+                                    value = tempGoal.toFloat(),
+                                    onValueChange = { tempGoal = it.toInt().coerceIn(1, 16) },
+                                    valueRange = 1f..16f,
+                                    steps = 14,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = NeonCyan,
+                                        activeTrackColor = NeonMagenta
+                                    )
+                                )
+                                OutlinedButton(
+                                    onClick = {
+                                        showDailyGoalDialog = false
+                                        onNavigateToAppUsage()
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.5f))
+                                ) {
+                                    Text("Open Real Phone App Usage", color = NeonCyan, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    dailyGoalHours = tempGoal
+                                    sharedPrefs.edit().putInt("daily_focus_goal_hours", tempGoal).apply()
+                                    showDailyGoalDialog = false
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan, contentColor = NeonBackground)
+                            ) {
+                                Text("Save Goal", fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showDailyGoalDialog = false }) {
+                                Text("Cancel", color = Color.White.copy(alpha = 0.6f))
+                            }
+                        }
+                    )
+                }
+
                 if (showMindfulDialogFromHome) {
-                    val appList by viewModel.mindfulDelayListState.collectAsStateWithLifecycle()
+                    val mindfulAppList by viewModel.mindfulDelayListState.collectAsStateWithLifecycle()
                     var searchQuery by remember { mutableStateOf("") }
-                    val filteredApps = remember(appList, searchQuery) {
-                        if (searchQuery.isBlank()) appList
-                        else appList.filter { it.appName.contains(searchQuery, ignoreCase = true) }
+                    val filteredApps = remember(mindfulAppList, searchQuery) {
+                        if (searchQuery.isBlank()) mindfulAppList
+                        else mindfulAppList.filter { it.appName.contains(searchQuery, ignoreCase = true) }
                     }
                     AlertDialog(
                         onDismissRequest = { showMindfulDialogFromHome = false },
@@ -1106,11 +1123,11 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("7s Mindful Gate", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 18.sp)
+                                    Text("7s Mindful Gate", fontWeight = FontWeight.Bold, color = lofiCream, fontSize = 18.sp)
                                     Text(
                                         text = "\"Rukiye! Kya ye abhi zaroori hai?\"",
                                         fontSize = 11.sp,
-                                        color = NeonCyan
+                                        color = lofiAmber
                                     )
                                 }
                                 Switch(
@@ -1130,7 +1147,7 @@ fun HomeScreen(
                                 Text(
                                     text = "Select apps that will show a 7-second breathing pause + intention check before opening (${mindfulPkgs.size} chosen):",
                                     fontSize = 12.sp,
-                                    color = TextSecondary
+                                    color = lofiCream.copy(alpha = 0.75f)
                                 )
                                 OutlinedTextField(
                                     value = searchQuery,
@@ -1153,15 +1170,26 @@ fun HomeScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
-                                            Text(
-                                                text = app.appName,
-                                                color = Color.White,
-                                                fontSize = 14.sp,
-                                                fontWeight = if (app.isMindfulDelay) FontWeight.Bold else FontWeight.Normal,
-                                                modifier = Modifier.weight(1f),
-                                                maxLines = 1,
-                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                            )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                RealAppIconBadge(
+                                                    packageName = app.packageName,
+                                                    appName = app.appName,
+                                                    size = 30.dp,
+                                                    cornerRadius = 8.dp
+                                                )
+                                                Text(
+                                                    text = app.appName,
+                                                    color = lofiCream,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = if (app.isMindfulDelay) FontWeight.Bold else FontWeight.Normal,
+                                                    maxLines = 1,
+                                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                                )
+                                            }
                                             Checkbox(
                                                 checked = app.isMindfulDelay,
                                                 onCheckedChange = { viewModel.toggleMindfulDelayApp(app) }
@@ -1179,12 +1207,11 @@ fun HomeScreen(
                     )
                 }
 
-                // Quick Dialog for Keyword Blocker from Bento Grid
                 if (showKeywordDialogFromHome) {
                     AlertDialog(
                         onDismissRequest = { showKeywordDialogFromHome = false },
                         containerColor = NeonSurface,
-                        title = { Text("Keyword & Topic Blocker", fontWeight = FontWeight.Bold, color = Color.White) },
+                        title = { Text("Keyword & Topic Blocker", fontWeight = FontWeight.Bold, color = lofiCream) },
                         text = {
                             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                                 KeywordTopicBlockerCard(viewModel = viewModel)
@@ -1198,7 +1225,6 @@ fun HomeScreen(
                     )
                 }
 
-                // Collapsible Wallpaper Brightness Adjustment Tray
                 AnimatedVisibility(
                     visible = showBrightnessTray && hasWallpaper,
                     enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
@@ -1213,7 +1239,7 @@ fun HomeScreen(
                             .testTag("brightness_adjustment_tray"),
                         shape = RoundedCornerShape(24.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = NeonSurface.copy(alpha = 0.96f)
+                            containerColor = NeonSurface.copy(alpha = 0.95f)
                         ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
                     ) {
@@ -1263,7 +1289,7 @@ fun HomeScreen(
                                     colors = SliderDefaults.colors(
                                         activeTrackColor = NeonCyan,
                                         inactiveTrackColor = Color.White.copy(alpha = 0.2f),
-                                        thumbColor = NeonMagenta
+                                        thumbColor = NeonCyan
                                     ),
                                     modifier = Modifier
                                         .weight(1f)
@@ -1276,7 +1302,7 @@ fun HomeScreen(
                                     shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = NeonCyan,
-                                        contentColor = NeonBlack
+                                        contentColor = NeonBackground
                                     ),
                                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                 ) {
@@ -1304,14 +1330,16 @@ private fun LofiDrawerNavigationItem(
     testTag: String,
     onClick: () -> Unit
 ) {
+    val lofiAmber = NeonCyan
+    val lofiCream = Color.White
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .testTag(testTag),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = NeonSurface),
-        border = BorderStroke(1.dp, NeonSubtleBorderBrush)
+        colors = CardDefaults.cardColors(containerColor = NeonSurfaceElevated),
+        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
     ) {
         Row(
             modifier = Modifier
@@ -1324,14 +1352,13 @@ private fun LofiDrawerNavigationItem(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(NeonCyan.copy(alpha = 0.14f))
-                    .border(1.dp, NeonCyan.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
+                    .background(NeonCyan.copy(alpha = 0.16f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = title,
-                    tint = NeonCyan,
+                    tint = lofiAmber,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -1340,7 +1367,7 @@ private fun LofiDrawerNavigationItem(
                     text = title,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
-                    color = Color.White,
+                    color = lofiCream,
                     maxLines = 1,
                     softWrap = false,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -1348,7 +1375,7 @@ private fun LofiDrawerNavigationItem(
                 Text(
                     text = subtitle,
                     fontSize = 11.sp,
-                    color = TextSecondary,
+                    color = lofiCream.copy(alpha = 0.65f),
                     maxLines = 1,
                     softWrap = false,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -1357,7 +1384,7 @@ private fun LofiDrawerNavigationItem(
             Icon(
                 imageVector = Icons.Default.KeyboardArrowRight,
                 contentDescription = null,
-                tint = NeonMagenta
+                tint = lofiAmber
             )
         }
     }
@@ -1395,7 +1422,7 @@ fun LofiAmberFocusCenterpiece(
 
     val ringProgress = remember(timeRemainingMs, totalDurationMs, isRunning) {
         if (!isRunning) {
-            0.78f
+            1.0f
         } else {
             val elapsed = (totalDurationMs - timeRemainingMs).coerceIn(0L, totalDurationMs)
             (elapsed.toFloat() / totalDurationMs.toFloat()).coerceIn(0.05f, 1f)
@@ -1403,25 +1430,39 @@ fun LofiAmberFocusCenterpiece(
     }
 
     val totalSecs = timeRemainingMs / 1000L
-    val hrs = totalSecs / 3600L
+    val days = totalSecs / 86400L
+    val hrs = (totalSecs % 86400L) / 3600L
     val mins = (totalSecs % 3600L) / 60L
     val secs = totalSecs % 60L
-    val formattedTimer = remember(hrs, mins, secs, isRunning, selectedMinutes) {
-        if (!isRunning) {
-            String.format(Locale.US, "%02d:00", selectedMinutes)
-        } else if (hrs > 0L) {
-            String.format(Locale.US, "%02d:%02d:%02d", hrs, mins, secs)
-        } else {
-            String.format(Locale.US, "%02d:%02d", mins, secs)
+
+    val primaryTimerText = remember(days, hrs, mins, secs, isRunning, selectedMinutes) {
+        when {
+            !isRunning -> String.format(Locale.US, "%02d:00", selectedMinutes)
+            days > 0L -> "${days}d ${hrs}h"
+            hrs > 0L -> String.format(Locale.US, "%02d:%02d:%02d", hrs, mins, secs)
+            else -> String.format(Locale.US, "%02d:%02d", mins, secs)
+        }
+    }
+    val secondarySubTimerText = remember(days, mins, secs, isRunning) {
+        if (isRunning && days > 0L) {
+            String.format(Locale.US, "%02dm %02ds", mins, secs)
+        } else null
+    }
+    val timerFontSize = remember(primaryTimerText, days, hrs) {
+        when {
+            days > 0L -> 26.sp
+            hrs > 0L || primaryTimerText.length >= 8 -> 22.sp
+            primaryTimerText.length >= 6 -> 26.sp
+            else -> 36.sp
         }
     }
 
     val infiniteTransition = rememberInfiniteTransition(label = "neon_stars")
     val glowPulse by infiniteTransition.animateFloat(
-        initialValue = 0.78f,
+        initialValue = 0.75f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = FastOutSlowInEasing),
+            animation = tween(2200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "neon_glow_pulse"
@@ -1430,41 +1471,20 @@ fun LofiAmberFocusCenterpiece(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(232.dp)
+            .height(236.dp)
             .clickable(enabled = !isRunning, onClick = onRingClick),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val cx = size.width / 2f
             val cy = size.height / 2f
-            val ringRadius = size.minDimension * 0.41f
-
-            val starOffsets = listOf(
-                Triple(-1.35f, -0.78f, 3.2f),
-                Triple(1.28f, -0.72f, 3.0f),
-                Triple(-1.42f, 0.15f, 2.2f),
-                Triple(1.38f, 0.25f, 2.5f),
-                Triple(-1.18f, 0.78f, 2.0f),
-                Triple(1.22f, 0.74f, 2.8f),
-                Triple(-0.95f, -0.95f, 1.8f),
-                Triple(0.98f, -0.92f, 2.0f)
-            )
-            starOffsets.forEachIndexed { idx, (dx, dy, rDp) ->
-                val sx = cx + ringRadius * dx
-                val sy = cy + ringRadius * dy
-                val alpha = ((glowPulse + (idx % 3) * 0.1f).coerceIn(0.35f, 0.95f))
-                drawCircle(
-                    color = (if (idx % 2 == 0) NeonCyan else NeonMagenta).copy(alpha = alpha),
-                    radius = rDp.dp.toPx(),
-                    center = Offset(sx, sy)
-                )
-            }
+            val ringRadius = size.minDimension * 0.42f
 
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        NeonCyan.copy(alpha = 0.20f * glowPulse),
-                        NeonMagenta.copy(alpha = 0.10f * glowPulse),
+                        NeonCyan.copy(alpha = 0.22f * glowPulse),
+                        NeonMagenta.copy(alpha = 0.12f * glowPulse),
                         Color.Transparent
                     ),
                     center = Offset(cx, cy),
@@ -1475,7 +1495,7 @@ fun LofiAmberFocusCenterpiece(
             )
 
             drawCircle(
-                color = NeonBlack,
+                color = NeonSurface,
                 radius = ringRadius * 0.92f,
                 center = Offset(cx, cy)
             )
@@ -1485,7 +1505,7 @@ fun LofiAmberFocusCenterpiece(
             val topLeft = Offset(cx - ringRadius, cy - ringRadius)
 
             drawArc(
-                color = Color(0xFF222234),
+                color = NeonSurfaceElevated,
                 startAngle = 0f,
                 sweepAngle = 360f,
                 useCenter = false,
@@ -1495,21 +1515,13 @@ fun LofiAmberFocusCenterpiece(
             )
 
             drawArc(
-                brush = Brush.sweepGradient(
-                    colors = listOf(
-                        NeonCyan.copy(alpha = 0.35f * glowPulse),
-                        NeonViolet.copy(alpha = 0.35f * glowPulse),
-                        NeonMagenta.copy(alpha = 0.35f * glowPulse),
-                        NeonCyan.copy(alpha = 0.35f * glowPulse)
-                    ),
-                    center = Offset(cx, cy)
-                ),
+                color = NeonCyan.copy(alpha = 0.28f * glowPulse),
                 startAngle = -90f,
                 sweepAngle = 360f * ringProgress,
                 useCenter = false,
                 topLeft = topLeft,
                 size = arcSize,
-                style = Stroke(width = strokePx * 1.85f, cap = StrokeCap.Round)
+                style = Stroke(width = strokePx * 1.8f, cap = StrokeCap.Round)
             )
 
             drawArc(
@@ -1532,53 +1544,47 @@ fun LofiAmberFocusCenterpiece(
         }
 
         Column(
+            modifier = Modifier
+                .widthIn(max = 142.dp)
+                .padding(horizontal = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(top = 6.dp)
+            verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = formattedTimer,
-                fontSize = if (formattedTimer.length > 5) 34.sp else 46.sp,
+                text = primaryTimerText,
+                fontSize = timerFontSize,
                 fontWeight = FontWeight.Black,
                 color = Color.White,
-                letterSpacing = 1.sp,
+                letterSpacing = 0.5.sp,
                 maxLines = 1,
                 softWrap = false,
-                style = TextStyle(
-                    shadow = Shadow(
-                        color = NeonCyan.copy(alpha = 0.55f),
-                        offset = Offset(0f, 0f),
-                        blurRadius = 16f
-                    )
-                )
+                textAlign = TextAlign.Center
             )
-            Spacer(modifier = Modifier.height(2.dp))
-            val dynamicStage = when {
-                !isRunning -> GrowthStage.MATURED
-                timeRemainingMs <= 0L -> GrowthStage.MATURED
-                ringProgress >= 0.50f -> GrowthStage.SAPLING
-                else -> GrowthStage.SEED
-            }
-            Box(
-                modifier = Modifier.size(56.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                PlantVisual(
-                    stage = dynamicStage,
-                    size = 56.dp
-                )
-            }
-            if (isRunning) {
+            if (secondarySubTimerText != null) {
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = if (activeSession?.isStrict == true) "🔒 STRICT • ${(ringProgress * 100).toInt()}%" else "FOCUS • ${(ringProgress * 100).toInt()}%",
-                    fontSize = 10.sp,
+                    text = secondarySubTimerText,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = NeonCyan,
-                    letterSpacing = 0.8.sp,
                     maxLines = 1,
-                    softWrap = false
+                    softWrap = false,
+                    textAlign = TextAlign.Center
                 )
             }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = if (!isRunning) "TAP FOR CUSTOM TIMER"
+                else if (activeSession?.isStrict == true) "🔒 STRICT • ${(ringProgress * 100).toInt()}%"
+                else "⚡ FOCUS • ${(ringProgress * 100).toInt()}%",
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = if (activeSession?.isStrict == true) NeonMagenta else NeonCyan,
+                letterSpacing = 0.5.sp,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
@@ -1598,12 +1604,8 @@ private fun LofiSelectablePill(
                 else Brush.horizontalGradient(listOf(NeonSurface, NeonSurface))
             )
             .border(
-                width = 1.1.dp,
-                brush = if (selected) {
-                    Brush.horizontalGradient(listOf(NeonCyan, NeonMagenta))
-                } else {
-                    NeonSubtleBorderBrush
-                },
+                width = 1.dp,
+                color = if (selected) NeonCyan else NeonCyan.copy(alpha = 0.35f),
                 shape = RoundedCornerShape(50)
             )
             .clickable(onClick = onClick)
@@ -1634,15 +1636,14 @@ private fun LofiBentoFeatureCard(
     Card(
         modifier = modifier
             .height(84.dp)
-            .border(
-                width = if (isActive) 1.6.dp else 1.1.dp,
-                brush = if (isActive) NeonCardBorderBrush else NeonSubtleBorderBrush,
-                shape = RoundedCornerShape(18.dp)
-            )
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = NeonSurface
+        ),
+        border = BorderStroke(
+            width = if (isActive) 1.6.dp else 1.dp,
+            color = if (isActive) NeonCyan else NeonCyan.copy(alpha = 0.32f)
         )
     ) {
         Row(
@@ -1673,7 +1674,7 @@ private fun LofiBentoFeatureCard(
                     fontSize = 11.5.sp,
                     lineHeight = 13.5.sp,
                     letterSpacing = (-0.2).sp,
-                    color = Color.White.copy(alpha = 0.92f),
+                    color = Color.White.copy(alpha = 0.9f),
                     maxLines = 1,
                     softWrap = false
                 )
@@ -1683,7 +1684,7 @@ private fun LofiBentoFeatureCard(
                     fontWeight = FontWeight.Bold,
                     fontSize = 9.5.sp,
                     lineHeight = 11.sp,
-                    color = if (isActive) NeonCyan else TextSecondary,
+                    color = if (isActive) NeonCyan else Color.White.copy(alpha = 0.55f),
                     maxLines = 1,
                     softWrap = false
                 )
@@ -2230,7 +2231,7 @@ fun ActiveSessionWidget(
         modifier = Modifier.fillMaxWidth().testTag("active_session_widget_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = NeonSurface,
+            containerColor = Color(0xFF1A1A24),
             contentColor = Color.White
         )
     ) {
@@ -2659,20 +2660,12 @@ fun LongTermBlockSection(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(36.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0x2600E5FF)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.AppBlocking,
-                                                contentDescription = "App block icon",
-                                                tint = NeonCyan,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
+                                        RealAppIconBadge(
+                                            packageName = block.packageName,
+                                            appName = block.targetLabel,
+                                            size = 38.dp,
+                                            cornerRadius = 10.dp
+                                        )
                                         Column {
                                             Text(
                                                 text = block.targetLabel,
@@ -2755,7 +2748,7 @@ fun LongTermBlockSection(
                                                   text = "Today: ${fmt(usedSeconds)} / ${fmt(limitSeconds)}",
                                                   fontSize = 11.sp,
                                                   fontWeight = FontWeight.Bold,
-                                                  color = if (fraction >= 1f) MaterialTheme.colorScheme.error else NeonMagenta
+                                                  color = if (fraction >= 1f) MaterialTheme.colorScheme.error else Color(0xFFFFA630)
                                               )
                                           }
                                           LinearProgressIndicator(
@@ -2764,7 +2757,7 @@ fun LongTermBlockSection(
                                                   .fillMaxWidth()
                                                   .height(4.dp)
                                                   .clip(RoundedCornerShape(2.dp)),
-                                              color = if (fraction >= 1f) MaterialTheme.colorScheme.error else NeonMagenta,
+                                              color = if (fraction >= 1f) MaterialTheme.colorScheme.error else Color(0xFFFFA630),
                                               trackColor = Color(0x10FFFFFF)
                                           )
                                       }
@@ -2883,13 +2876,13 @@ fun LongTermBlockSection(
                                               modifier = Modifier
                                                   .size(36.dp)
                                                   .clip(RoundedCornerShape(8.dp))
-                                                  .background(Color(0x26FF00E6)),
+                                                  .background(Color(0x1FFFA630)),
                                               contentAlignment = Alignment.Center
                                           ) {
                                               Icon(
                                                   imageVector = Icons.Default.Language,
                                                   contentDescription = "Website block icon",
-                                                  tint = NeonMagenta,
+                                                  tint = Color(0xFFFFA630),
                                                   modifier = Modifier.size(18.dp)
                                               )
                                           }
@@ -3058,9 +3051,9 @@ fun AnalyticsCard(
         modifier = Modifier.fillMaxWidth().testTag("analytics_dashboard_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = NeonSurface
+            containerColor = Color(0xFF1A1A24)
         ),
-        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -3120,7 +3113,7 @@ fun AnalyticsCard(
                     ) {
                         Text(
                             text = tab,
-                            color = if (isSelected) NeonBlack else Color.White.copy(alpha = 0.65f),
+                            color = if (isSelected) Color(0xFF1A1108) else Color(0xFFFFFFFF).copy(alpha = 0.65f),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -3535,7 +3528,7 @@ fun AnalyticsCard(
                                     ) {
                                         Text(
                                             text = tabOption,
-                                            color = if (isSelected) NeonBlack else Color.White.copy(alpha = 0.65f),
+                                            color = if (isSelected) Color(0xFF1A1108) else Color(0xFFFFFFFF).copy(alpha = 0.65f),
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -3774,7 +3767,7 @@ fun AnalyticsCard(
                                                         text = formattedDate,
                                                         fontWeight = FontWeight.Bold,
                                                         fontSize = 11.5.sp,
-                                                        color = Color.White,
+                                                        color = Color(0xFFFFFFFF),
                                                         maxLines = 1,
                                                         softWrap = false,
                                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -4555,7 +4548,7 @@ fun FocusTimerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Configure Focus", fontWeight = FontWeight.Black, color = Color.White); Text("⚡", fontSize = 18.sp) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Configure Focus", fontWeight = FontWeight.Black, color = Color(0xFFFFFFFF)); Text("🦉", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -5201,7 +5194,7 @@ fun AppSelectionScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Block Distractions", fontWeight = FontWeight.Black, color = Color.White); Text("⚡", fontSize = 18.sp) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Block Distractions", fontWeight = FontWeight.Black, color = Color(0xFFFFFFFF)); Text("🦉", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -5353,43 +5346,31 @@ fun AppListItemRow(
             .clickable(enabled = !isReadOnly) { onToggle() },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isReadOnly) MaterialTheme.colorScheme.surface.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
+            containerColor = if (isReadOnly) NeonSurface.copy(alpha = 0.5f) else NeonSurface
+        ),
+        border = BorderStroke(
+            1.dp,
+            if (checked) NeonCyan.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.07f)
         )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                // Placeholder beautiful color avatar instead of simple icon, matching modern design
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.secondary.copy(alpha = if (isReadOnly) 0.15f else 0.3f),
-                                    MaterialTheme.colorScheme.primary.copy(alpha = if (isReadOnly) 0.15f else 0.3f)
-                                )
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = app.appName.firstOrNull()?.toString()?.uppercase() ?: "?",
-                        fontWeight = FontWeight.Black,
-                        fontSize = 18.sp,
-                        color = if (isReadOnly) Color.White.copy(alpha = 0.5f) else Color.White
-                    )
-                }
+                RealAppIconBadge(
+                    packageName = app.packageName,
+                    appName = app.appName,
+                    size = 42.dp,
+                    cornerRadius = 11.dp
+                )
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -5401,7 +5382,7 @@ fun AppListItemRow(
                     Text(
                         text = app.packageName,
                         fontSize = 11.sp,
-                        color = if (isReadOnly) Color.White.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.4f),
+                        color = if (isReadOnly) Color.White.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.45f),
                         maxLines = 1
                     )
                 }
@@ -5412,8 +5393,8 @@ fun AppListItemRow(
                 onCheckedChange = { if (!isReadOnly) onToggle() },
                 enabled = !isReadOnly,
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.primary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                    checkedThumbColor = NeonCyan,
+                    checkedTrackColor = NeonCyan.copy(alpha = 0.45f)
                 )
             )
         }
@@ -5444,7 +5425,7 @@ fun AppLockScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("App Lock (PIN Gate)", fontWeight = FontWeight.Black, color = Color.White); Text("⚡", fontSize = 18.sp) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("App Lock (PIN Gate)", fontWeight = FontWeight.Black, color = Color(0xFFFFFFFF)); Text("🦉", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -5799,14 +5780,14 @@ fun BlockDetailsScreen(
                         .size(80.dp)
                         .clip(RoundedCornerShape(20.dp))
                         .background(
-                            if (blockInfo.type == "WEBSITE") Color(0x26FF00E6) else Color(0x2600E5FF)
+                            if (blockInfo.type == "WEBSITE") Color(0x1FFFA630) else Color(0x26FFB74D)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (blockInfo.type == "WEBSITE") Icons.Default.Language else Icons.Default.AppBlocking,
                         contentDescription = "Block type",
-                        tint = if (blockInfo.type == "WEBSITE") NeonMagenta else NeonCyan,
+                        tint = if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFF00E5FF),
                         modifier = Modifier.size(40.dp)
                     )
                 }
@@ -5823,7 +5804,7 @@ fun BlockDetailsScreen(
                     text = if (blockInfo.type == "WEBSITE") "WEBSITE BLOCK" else "APP BLOCK",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = (if (blockInfo.type == "WEBSITE") NeonMagenta else NeonCyan),
+                    color = (if (blockInfo.type == "WEBSITE") Color(0xFFFFA630) else Color(0xFF00E5FF)),
                     letterSpacing = 1.5.sp
                 )
 
@@ -5912,7 +5893,7 @@ fun BlockDetailsScreen(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                         contentColor = Color.White,
-                        disabledContainerColor = NeonSurface.copy(alpha = 0.1f),
+                        disabledContainerColor = Color(0xFF1A1A24).copy(alpha = 0.1f),
                         disabledContentColor = Color.White.copy(alpha = 0.3f)
                     ),
                     shape = RoundedCornerShape(16.dp),
@@ -5999,7 +5980,7 @@ fun DailyDashboardCard(
             .testTag("daily_dashboard_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = NeonSurface
+            containerColor = Color(0xFF1A1A24)
         ),
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
     ) {
@@ -6132,9 +6113,9 @@ fun ContentLevelBlockingCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = NeonSurface
+            containerColor = Color(0xFF1A1A24)
         ),
-        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -6402,9 +6383,9 @@ fun AccentThemeCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth().testTag("accent_theme_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = NeonSurface
+            containerColor = Color(0xFF1A1A24)
         ),
-        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -6513,7 +6494,7 @@ fun AccentThemeCard(viewModel: FocusViewModel) {
                         
                         Text(
                             text = theme.displayName,
-                            color = if (isSelected) NeonCyan else Color.White.copy(alpha = 0.65f),
+                            color = if (isSelected) Color(0xFF00E5FF) else Color(0xFFFFFFFF).copy(alpha = 0.65f),
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                             fontSize = 11.sp,
                             maxLines = 1,
@@ -6539,9 +6520,9 @@ fun WallpaperSettingsDrawerCard(
             .testTag("wallpaper_settings_card"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = NeonSurface
+            containerColor = Color(0xFF1A1A24)
         ),
-        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -6679,7 +6660,7 @@ fun WeeklyInsightsBarChart(
                 text = "Past 7 Days Focus Distribution",
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
-                color = Color.White,
+                color = Color(0xFFFFFFFF),
                 maxLines = 1,
                 softWrap = false
             )
@@ -6689,11 +6670,11 @@ fun WeeklyInsightsBarChart(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Box(modifier = Modifier.size(8.dp).background(Color(0xFF4CAF50), RoundedCornerShape(2.dp)))
-                    Text("Completed", fontSize = 10.sp, color = Color.White.copy(alpha = 0.75f), maxLines = 1, softWrap = false)
+                    Text("Completed", fontSize = 10.sp, color = Color(0xFFFFFFFF).copy(alpha = 0.75f), maxLines = 1, softWrap = false)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Box(modifier = Modifier.size(8.dp).background(Color(0xFFFF5722), RoundedCornerShape(2.dp)))
-                    Text("Early / Missed", fontSize = 10.sp, color = Color.White.copy(alpha = 0.75f), maxLines = 1, softWrap = false)
+                    Text("Early / Missed", fontSize = 10.sp, color = Color(0xFFFFFFFF).copy(alpha = 0.75f), maxLines = 1, softWrap = false)
                 }
             }
         }
@@ -6841,10 +6822,10 @@ fun MyForestGalleryCard(
             .testTag("my_forest_gallery_card"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = NeonSurface,
-            contentColor = Color.White
+            containerColor = Color(0xFF1A1A24),
+            contentColor = Color(0xFFFFFFFF)
         ),
-        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -7112,8 +7093,8 @@ fun GlitchCountdownText(
     var isGlitching by remember { mutableStateOf(false) }
     var glitchOffsetX by remember { mutableStateOf(0f) }
     var glitchOffsetY by remember { mutableStateOf(0f) }
-    var glitchColor1 by remember { mutableStateOf(NeonCyan) }
-    var glitchColor2 by remember { mutableStateOf(NeonMagenta) }
+    var glitchColor1 by remember { mutableStateOf(Color(0xFF00E5FF)) }
+    var glitchColor2 by remember { mutableStateOf(Color(0xFFFFA630)) }
 
     // Execute glitch effect on minute boundary change (seconds == 0) and random 30-second intervals
     LaunchedEffect(seconds) {
@@ -7125,11 +7106,11 @@ fun GlitchCountdownText(
                 glitchOffsetY = (-4..4).random().toFloat()
                 // Randomly swap foreground layers
                 if ((0..1).random() == 0) {
-                    glitchColor1 = NeonCyan
-                    glitchColor2 = NeonMagenta
+                    glitchColor1 = Color(0xFF00E5FF)
+                    glitchColor2 = Color(0xFFFFA630)
                 } else {
-                    glitchColor1 = NeonMagenta
-                    glitchColor2 = NeonCyan
+                    glitchColor1 = Color(0xFFFFA630)
+                    glitchColor2 = Color(0xFF00E5FF)
                 }
                 kotlinx.coroutines.delay(30L)
             }
@@ -7149,7 +7130,7 @@ fun GlitchCountdownText(
 
         // High fidelity glow effect for the retro-futuristic digital clock
         val neonGlowShadow = Shadow(
-            color = if (isHyperFocus) Color(0xFFFF5252).copy(alpha = 0.85f) else NeonCyan.copy(alpha = 0.85f),
+            color = if (isHyperFocus) Color(0xFFFF5252).copy(alpha = 0.85f) else Color(0xFF00E5FF).copy(alpha = 0.85f),
             offset = Offset(0f, 0f),
             blurRadius = 14f
         )
@@ -7299,8 +7280,8 @@ fun StrictShieldHexagonVisual(
                 val vignetteGradient = Brush.radialGradient(
                     colors = listOf(
                         Color.Transparent,
-                        NeonCyan.copy(alpha = 0.05f),
-                        NeonCyan.copy(alpha = 0.25f)
+                        Color(0xFF00E5FF).copy(alpha = 0.05f),
+                        Color(0xFF00E5FF).copy(alpha = 0.25f)
                     ),
                     center = Offset(width / 2f, height / 2f),
                     radius = Math.max(width, height) / 1.1f
@@ -7339,7 +7320,7 @@ fun StrictShieldHexagonVisual(
                 // Subtle Lofi golden-amber ambient glow (no distracting lines over text/cards)
                 drawPath(
                     path = path,
-                    color = NeonCyan.copy(alpha = 0.04f),
+                    color = Color(0xFF00E5FF).copy(alpha = 0.04f),
                     style = Stroke(width = 0.8.dp.toPx())
                 )
             }
@@ -7379,7 +7360,7 @@ fun StrictScheduleManagerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Recurring Schedules", fontWeight = FontWeight.Black, color = Color.White); Text("⚡", fontSize = 18.sp) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("Recurring Schedules", fontWeight = FontWeight.Black, color = Color(0xFFFFFFFF)); Text("🦉", fontSize = 18.sp) } },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -8123,15 +8104,9 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
         }
     }
 
-    val effectiveTitle = if (goalTitle.isNotBlank()) goalTitle.uppercase() else "TARGET EXAM"
-    val effectiveTargetMs = if (goalTargetMs > nowWall) {
-        goalTargetMs
-    } else {
-        // Default 45 Days 12 Hrs 30 Mins preview until user taps to set their exact exam date
-        nowWall + (45L * 24 * 3600 + 12L * 3600 + 30L * 60) * 1000L
-    }
-
-    val remainingMs = max(0L, effectiveTargetMs - nowWall)
+    val hasValidGoal = goalTargetMs > nowWall
+    val effectiveTitle = if (goalTitle.isNotBlank()) goalTitle else "Exam Countdown"
+    val remainingMs = if (hasValidGoal) max(0L, goalTargetMs - nowWall) else 0L
     val totalSecs = remainingMs / 1000L
     val days = totalSecs / (24 * 3600)
     val hours = (totalSecs % (24 * 3600)) / 3600
@@ -8140,93 +8115,91 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.3.dp, NeonCardBorderBrush, RoundedCornerShape(20.dp))
             .clickable { showConfigDialog = true },
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = NeonSurface
-        )
+        ),
+        border = BorderStroke(1.2.dp, NeonMagenta.copy(alpha = 0.65f))
     ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
-            // Diagonal Neon Laser Streaks inside the Exam Countdown Card (Exact Panel 2)
-            Canvas(modifier = Modifier.matchParentSize()) {
-                drawLine(
-                    brush = Brush.linearGradient(
-                        colors = listOf(Color.Transparent, NeonMagenta.copy(alpha = 0.45f), Color.Transparent)
-                    ),
-                    start = Offset(0f, size.height),
-                    end = Offset(size.width * 0.45f, 0f),
-                    strokeWidth = 2.5.dp.toPx()
-                )
-                drawLine(
-                    brush = Brush.linearGradient(
-                        colors = listOf(Color.Transparent, NeonCyan.copy(alpha = 0.35f), Color.Transparent)
-                    ),
-                    start = Offset(size.width * 0.15f, size.height),
-                    end = Offset(size.width * 0.65f, 0f),
-                    strokeWidth = 1.8.dp.toPx()
-                )
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        text = "Exam Countdown • $effectiveTitle",
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = TextSecondary,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            NeonViolet.copy(alpha = 0.16f),
+                            NeonMagenta.copy(alpha = 0.12f),
+                            NeonSurface
+                        )
                     )
+                )
+                .padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
+                Text(
+                    text = effectiveTitle,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 11.5.sp,
+                    color = Color.White.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                if (hasValidGoal) {
                     Row(
                         verticalAlignment = Alignment.Bottom,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
                             text = "$days",
-                            fontWeight = FontWeight.ExtraBold,
+                            fontWeight = FontWeight.Black,
                             fontSize = 26.sp,
                             color = Color.White
                         )
                         Text(
-                            text = "Days Left  (${hours}h ${minutes}m)",
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.5.sp,
+                            text = "Days Left (${hours}h ${minutes}m)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
                             color = NeonCyan,
                             modifier = Modifier.padding(bottom = 3.dp)
                         )
                     }
-                }
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(NeonMagenta.copy(alpha = 0.16f))
-                        .border(1.dp, NeonMagenta.copy(alpha = 0.65f), RoundedCornerShape(12.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CalendarToday,
-                        contentDescription = "Exam Date",
-                        tint = NeonMagenta,
-                        modifier = Modifier.size(20.dp)
+                } else {
+                    Text(
+                        text = "Tap to Set Target Exam Date",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp,
+                        color = NeonCyan
                     )
                 }
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(NeonMagenta.copy(alpha = 0.16f))
+                    .border(1.dp, NeonMagenta.copy(alpha = 0.6f), RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CalendarMonth,
+                    contentDescription = "Exam Date",
+                    tint = NeonMagenta,
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
     }
 
     if (showConfigDialog) {
-        var titleInput by remember { mutableStateOf(if (goalTitle.isNotBlank()) goalTitle else "TARGET EXAM") }
+        var titleInput by remember { mutableStateOf(if (goalTitle.isNotBlank()) goalTitle else "JEE / Target Exam") }
         val defaultTarget = if (goalTargetMs > System.currentTimeMillis()) {
             goalTargetMs
         } else {
-            System.currentTimeMillis() + 45L * 24 * 3600 * 1000L
+            System.currentTimeMillis() + 30L * 24 * 3600 * 1000L
         }
         var selectedDateMs by remember { mutableLongStateOf(defaultTarget) }
         val dateStr = remember(selectedDateMs) {
@@ -8235,7 +8208,7 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
 
         AlertDialog(
             onDismissRequest = { showConfigDialog = false },
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = NeonSurface,
             title = {
                 Text("Exam / Goal Countdown", fontWeight = FontWeight.Bold, color = Color.White)
             },
@@ -8252,7 +8225,7 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf("TARGET EXAM", "JEE Mains", "NEET UG", "Semester Exam", "UPSC / GATE").forEach { preset ->
+                        listOf("JEE Mains", "JEE Advanced", "NEET UG", "Semester Exam", "UPSC / GATE").forEach { preset ->
                             AssistChip(
                                 onClick = { titleInput = preset },
                                 label = { Text(preset, fontSize = 11.sp) }
@@ -8297,14 +8270,15 @@ fun ExamCountdownHeaderCard(viewModel: FocusViewModel) {
                             viewModel.setGoalExamCountdown(titleInput, selectedDateMs)
                         }
                         showConfigDialog = false
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonCyan, contentColor = NeonBackground)
                 ) {
                     Text("Save Goal", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 Row {
-                    if (goalTitle.isNotBlank()) {
+                    if (goalTitle.isNotBlank() || hasValidGoal) {
                         TextButton(
                             onClick = {
                                 viewModel.clearGoalExamCountdown()
@@ -8337,9 +8311,9 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = NeonSurface
+            containerColor = Color(0xFF1A1A24)
         ),
-        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -8358,7 +8332,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                     Icon(
                         imageVector = Icons.Default.WbSunny,
                         contentDescription = "Morning Lock",
-                        tint = NeonCyan,
+                        tint = Color(0xFF00E5FF),
                         modifier = Modifier.size(24.dp)
                     )
                     Column(modifier = Modifier.weight(1f)) {
@@ -8366,7 +8340,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                             text = "Morning 5–9 AM Strict Lock",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
-                            color = Color.White,
+                            color = Color(0xFFFFFFFF),
                             maxLines = 1,
                             softWrap = false,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -8374,7 +8348,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                         Text(
                             text = "Daily 5:00 AM – 9:00 AM Auto Strict Mode",
                             fontSize = 11.5.sp,
-                            color = NeonCyan,
+                            color = Color(0xFF00E5FF),
                             maxLines = 1,
                             softWrap = false,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -8392,7 +8366,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
             Text(
                 text = "Automatically turns ON Strict Mode every morning from 5:00 AM to 9:00 AM with a live countdown timer so you start your day focused without morning doomscrolling.",
                 fontSize = 13.sp,
-                color = Color.White.copy(alpha = 0.72f),
+                color = Color(0xFFFFFFFF).copy(alpha = 0.72f),
                 lineHeight = 18.sp
             )
 
@@ -8408,7 +8382,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                     text = "Daily 5 AM – 9 AM Schedule",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color.White.copy(alpha = 0.8f),
+                    color = Color(0xFFFFFFFF).copy(alpha = 0.8f),
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
                     softWrap = false,
@@ -8423,7 +8397,7 @@ fun MorningFirstTaskLockCard(viewModel: FocusViewModel) {
                     },
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = if (enabled) NeonCyan else Color.White.copy(alpha = 0.45f),
+                    color = if (enabled) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.45f),
                     maxLines = 1,
                     softWrap = false
                 )
@@ -8444,9 +8418,9 @@ fun MindfulLaunchDelayCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = NeonSurface
+            containerColor = Color(0xFF1A1A24)
         ),
-        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -8473,14 +8447,14 @@ fun MindfulLaunchDelayCard(viewModel: FocusViewModel) {
                             text = "7s Mindful Launch Gate",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
-                            color = Color.White,
+                            color = Color(0xFFFFFFFF),
                             maxLines = 1,
                             softWrap = false
                         )
                         Text(
                             text = "\"Rukiye! Kya ye zaroori hai?\"",
                             fontSize = 11.5.sp,
-                            color = NeonCyan,
+                            color = Color(0xFF00E5FF),
                             maxLines = 1,
                             softWrap = false
                         )
@@ -8588,9 +8562,9 @@ fun KeywordTopicBlockerCard(viewModel: FocusViewModel) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = NeonSurface
+            containerColor = Color(0xFF1A1A24)
         ),
-        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
     ) {
         Column(
             modifier = Modifier.padding(20.dp),

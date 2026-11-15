@@ -17,6 +17,8 @@ val NeonCyan = Color(0xFF00E5FF)
 val NeonMagenta = Color(0xFFFF00E6)
 val NeonViolet = Color(0xFF7B61FF)
 val NeonBlack = Color(0xFF08080F)
+val NeonBackground = NeonBlack
+val NeonBackgroundMid = Color(0xFF10101C)
 val NeonSurface = Color(0xFF1A1A24)
 val NeonSurfaceElevated = Color(0xFF222230)
 val NeonBorderDim = Color(0xFF2B2B3D)
@@ -39,6 +41,7 @@ val TextSecondary = Color(0xFFA0A6BE) // Cool modern silver-slate
 val NeonPrimaryGradient = Brush.horizontalGradient(
     colors = listOf(NeonCyan, NeonViolet, NeonMagenta)
 )
+val NeonHorizontalBrush = NeonPrimaryGradient
 
 val NeonReverseGradient = Brush.horizontalGradient(
     colors = listOf(NeonMagenta, NeonViolet, NeonCyan)

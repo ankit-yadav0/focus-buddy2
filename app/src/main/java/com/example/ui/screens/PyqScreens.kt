@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
 import android.app.DatePickerDialog
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,12 +15,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Quiz
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -53,47 +57,67 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
- * Study Planner Screen matching Panel 6 of `Neon Focus Buddy UI Theme Board.png`:
- *   • Plan Calculator card (Total Lectures, Hours per Lecture, Playback Speed)
- *   • Live Required Study Hours readout (e.g., 40 * 2 / 1.5 = 53.33 hours)
- *   • Plan Duration card (Start Date, End Date with neon magenta calendar icons,
- *     Foundational Subject neon toggle, and "Calculate Plan" primary gradient button)
+ * Study Planner Screen (Panel 6) — Persists study plan in SharedPreferences
+ * and lets the user launch a Focus Session directly for their calculated daily target!
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudyPlannerScreen(
     onBack: () -> Unit,
+    onStartPlannedSession: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var totalLecturesText by remember { mutableStateOf("40") }
-    var hoursPerLectureText by remember { mutableStateOf("2") }
-    var playbackSpeed by remember { mutableStateOf(1.5f) }
+    val prefs = remember { context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE) }
+
+    var totalLecturesText by remember { mutableStateOf(prefs.getString("planner_total_lectures", "40") ?: "40") }
+    var hoursPerLectureText by remember { mutableStateOf(prefs.getString("planner_hours_per_lec", "2") ?: "2") }
+    var playbackSpeed by remember { mutableFloatStateOf(prefs.getFloat("planner_playback_speed", 1.5f)) }
     var speedMenuExpanded by remember { mutableStateOf(false) }
-    var foundationalSubject by remember { mutableStateOf(true) }
-    var showCalculatedSummary by remember { mutableStateOf(false) }
+    var foundationalSubject by remember { mutableStateOf(prefs.getBoolean("planner_foundational", true)) }
+    var showCalculatedSummary by remember { mutableStateOf(prefs.getBoolean("planner_calculated", true)) }
 
     val nowMs = remember { System.currentTimeMillis() }
-    var startDateMs by remember { mutableLongStateOf(nowMs) }
-    var endDateMs by remember { mutableLongStateOf(nowMs + 28L * 24 * 3600 * 1000L) }
+    var startDateMs by remember {
+        mutableLongStateOf(prefs.getLong("planner_start_ms", nowMs))
+    }
+    var endDateMs by remember {
+        mutableLongStateOf(prefs.getLong("planner_end_ms", nowMs + 28L * 24 * 3600 * 1000L))
+    }
+
+    fun savePlannerState() {
+        prefs.edit()
+            .putString("planner_total_lectures", totalLecturesText)
+            .putString("planner_hours_per_lec", hoursPerLectureText)
+            .putFloat("planner_playback_speed", playbackSpeed)
+            .putBoolean("planner_foundational", foundationalSubject)
+            .putLong("planner_start_ms", startDateMs)
+            .putLong("planner_end_ms", endDateMs)
+            .putBoolean("planner_calculated", true)
+            .apply()
+    }
 
     val dateFormatter = remember { SimpleDateFormat("dd MMM yyyy", Locale.US) }
     val startDateStr = remember(startDateMs) { dateFormatter.format(Date(startDateMs)) }
     val endDateStr = remember(endDateMs) { dateFormatter.format(Date(endDateMs)) }
 
-    val lectures = totalLecturesText.toFloatOrNull() ?: 40f
-    val hoursPerLec = hoursPerLectureText.toFloatOrNull() ?: 2f
+    val lectures = totalLecturesText.toFloatOrNull() ?: 0f
+    val hoursPerLec = hoursPerLectureText.toFloatOrNull() ?: 0f
     val rawStudyHours = remember(lectures, hoursPerLec, playbackSpeed, foundationalSubject) {
         val base = (lectures * hoursPerLec) / playbackSpeed.coerceAtLeast(0.5f)
-        if (foundationalSubject) base else base * 0.9f
+        if (foundationalSubject) base else base * 0.85f
     }
     val totalDays = remember(startDateMs, endDateMs) {
         max(1L, ((endDateMs - startDateMs) / (24L * 3600 * 1000L)).coerceAtLeast(1L))
     }
     val dailyHoursTarget = remember(rawStudyHours, totalDays) {
         rawStudyHours / totalDays.toFloat()
+    }
+    val dailyMinutesTarget = remember(dailyHoursTarget) {
+        (dailyHoursTarget * 60f).roundToInt().coerceIn(15, 360)
     }
 
     Scaffold(
@@ -132,7 +156,6 @@ fun StudyPlannerScreen(
             ) {
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Top Header Card: Plan Calculator
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -156,12 +179,19 @@ fun StudyPlannerScreen(
                                 tint = NeonCyan,
                                 size = 38.dp
                             )
-                            Text(
-                                text = "Plan Calculator",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
+                            Column {
+                                Text(
+                                    text = "Plan Calculator",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp
+                                )
+                                Text(
+                                    text = "Auto-saved to your phone",
+                                    color = TextSecondary,
+                                    fontSize = 11.5.sp
+                                )
+                            }
                         }
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowRight,
@@ -171,12 +201,16 @@ fun StudyPlannerScreen(
                     }
                 }
 
-                // Inputs Section
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Total Lectures", color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     OutlinedTextField(
                         value = totalLecturesText,
-                        onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) totalLecturesText = it },
+                        onValueChange = {
+                            if (it.length <= 4 && it.all { c -> c.isDigit() }) {
+                                totalLecturesText = it
+                                savePlannerState()
+                            }
+                        },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         trailingIcon = {
@@ -197,7 +231,12 @@ fun StudyPlannerScreen(
                     Text("Hours per Lecture", color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     OutlinedTextField(
                         value = hoursPerLectureText,
-                        onValueChange = { if (it.length <= 4) hoursPerLectureText = it },
+                        onValueChange = {
+                            if (it.length <= 4) {
+                                hoursPerLectureText = it
+                                savePlannerState()
+                            }
+                        },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         trailingIcon = {
@@ -247,6 +286,7 @@ fun StudyPlannerScreen(
                                     onClick = {
                                         playbackSpeed = speed
                                         speedMenuExpanded = false
+                                        savePlannerState()
                                     }
                                 )
                             }
@@ -254,7 +294,6 @@ fun StudyPlannerScreen(
                     }
                 }
 
-                // Required Study Hours Readout (Exact Panel 6 style: "53.33 hours")
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -288,7 +327,6 @@ fun StudyPlannerScreen(
                     }
                 }
 
-                // Plan Duration Card (Exact Panel 6 layout)
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -309,7 +347,6 @@ fun StudyPlannerScreen(
                             fontSize = 15.sp
                         )
 
-                        // Start Date Box
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -323,6 +360,7 @@ fun StudyPlannerScreen(
                                         { _, y, m, d ->
                                             val chosen = Calendar.getInstance().apply { set(y, m, d) }
                                             startDateMs = chosen.timeInMillis
+                                            savePlannerState()
                                         },
                                         cal.get(Calendar.YEAR),
                                         cal.get(Calendar.MONTH),
@@ -346,7 +384,6 @@ fun StudyPlannerScreen(
                             )
                         }
 
-                        // End Date Box
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -360,6 +397,7 @@ fun StudyPlannerScreen(
                                         { _, y, m, d ->
                                             val chosen = Calendar.getInstance().apply { set(y, m, d) }
                                             endDateMs = chosen.timeInMillis
+                                            savePlannerState()
                                         },
                                         cal.get(Calendar.YEAR),
                                         cal.get(Calendar.MONTH),
@@ -383,21 +421,23 @@ fun StudyPlannerScreen(
                             )
                         }
 
-                        // Foundational Subject Toggle Row
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Foundational Subject",
+                                text = "Foundational Subject (100% buffer)",
                                 color = Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Switch(
                                 checked = foundationalSubject,
-                                onCheckedChange = { foundationalSubject = it },
+                                onCheckedChange = {
+                                    foundationalSubject = it
+                                    savePlannerState()
+                                },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = Color.White,
                                     checkedTrackColor = NeonMagenta,
@@ -407,10 +447,13 @@ fun StudyPlannerScreen(
                             )
                         }
 
-                        // Calculate Plan Neon Gradient Button
                         NeonPrimaryGradientButton(
                             text = "Calculate Plan",
-                            onClick = { showCalculatedSummary = true },
+                            onClick = {
+                                savePlannerState()
+                                showCalculatedSummary = true
+                                Toast.makeText(context, "Plan saved: ${String.format(Locale.US, "%.2f", dailyHoursTarget)} hrs/day", Toast.LENGTH_SHORT).show()
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             height = 54.dp
                         )
@@ -418,16 +461,16 @@ fun StudyPlannerScreen(
                         if (showCalculatedSummary) {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(14.dp),
-                                colors = CardDefaults.cardColors(containerColor = NeonBlack.copy(alpha = 0.75f)),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, NeonCyan.copy(alpha = 0.5f))
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = NeonBlack.copy(alpha = 0.8f)),
+                                border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.55f))
                             ) {
                                 Column(
                                     modifier = Modifier.padding(14.dp),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Text(
-                                        text = "Daily Focus Target: ${String.format(Locale.US, "%.2f", dailyHoursTarget)} hrs / day",
+                                        text = "Daily Focus Target: ${String.format(Locale.US, "%.2f", dailyHoursTarget)} hrs / day ($dailyMinutesTarget mins)",
                                         color = NeonCyan,
                                         fontWeight = FontWeight.ExtraBold,
                                         fontSize = 14.sp
@@ -436,6 +479,14 @@ fun StudyPlannerScreen(
                                         text = "Spanning $totalDays days • ${String.format(Locale.US, "%.1f", lectures / totalDays.toFloat())} lectures/day at ${playbackSpeed}x speed",
                                         color = TextSecondary,
                                         fontSize = 12.sp
+                                    )
+                                    NeonOutlinedPillButton(
+                                        text = "Start ${dailyMinutesTarget}m Focus Session Now",
+                                        leadingIcon = Icons.Default.PlayArrow,
+                                        onClick = { onStartPlannedSession(dailyMinutesTarget) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        height = 44.dp,
+                                        fontSize = 13.sp
                                     )
                                 }
                             }
@@ -449,14 +500,18 @@ fun StudyPlannerScreen(
     }
 }
 
+data class PyqQuestionItem(
+    val subject: String,
+    val topic: String,
+    val question: String,
+    val options: List<String>,
+    val correctIndex: Int,
+    val explanation: String
+)
+
 /**
- * PYQ Practice Screen matching Panel 9 of `Neon Focus Buddy UI Theme Board.png`:
- *   • Stepper: 1 Setup (glowing #FF00E6 circle) — 2 Quiz — 3 Results
- *   • Select Subject dropdown ("Physics", "Chemistry", "Mathematics", "Biology")
- *   • Select Topic dropdown ("Modern Physics", "Electrostatics", "Optics", etc.)
- *   • Number of Questions neon slider (5..50, default 20)
- *   • "Start Quiz" primary neon gradient button
- *   • "Practice today. Score better tomorrow." tagline
+ * PYQ Practice Screen (Panel 9) — Real Multi-Subject Question Bank + Custom Question Adder
+ * + Persists Subject Accuracy to SharedPreferences so Subject Progress in Focus & Analytics updates live!
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -464,6 +519,9 @@ fun PyqPracticeScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE) }
+
     var currentStep by remember { mutableIntStateOf(1) } // 1 = Setup, 2 = Quiz, 3 = Results
     var selectedSubject by remember { mutableStateOf("Physics") }
     var subjectExpanded by remember { mutableStateOf(false) }
@@ -481,32 +539,62 @@ fun PyqPracticeScreen(
         mutableStateOf(topicsBySubject[selectedSubject]?.firstOrNull() ?: "Modern Physics")
     }
     var topicExpanded by remember { mutableStateOf(false) }
-    var questionCount by remember { mutableFloatStateOf(20f) }
+    var questionCount by remember { mutableFloatStateOf(10f) }
+    var showAddQuestionDialog by remember { mutableStateOf(false) }
 
-    // Interactive sample quiz state for Step 2 & Step 3
-    var currentQuestionIdx by remember { mutableIntStateOf(0) }
-    var selectedOptionIdx by remember { mutableIntStateOf(-1) }
-    var correctCount by remember { mutableIntStateOf(0) }
-
-    val sampleQuestions = remember(selectedSubject, selectedTopic) {
+    val builtInBank = remember {
         listOf(
-            Triple(
-                "[$selectedSubject • $selectedTopic] If the de Broglie wavelength of a particle is halved, its kinetic energy becomes:",
-                listOf("2 times", "4 times", "Half", "Remains unchanged"),
-                1
-            ),
-            Triple(
-                "[$selectedSubject • $selectedTopic] In a photoelectric experiment, stopping potential depends primarily on:",
-                listOf("Intensity of incident light", "Frequency of incident light & work function", "Area of the metal plate", "Exposure duration"),
-                1
-            ),
-            Triple(
-                "[$selectedSubject • $selectedTopic] The half-life of a radioactive nuclide is T. What fraction decays in 3T?",
-                listOf("1/8", "7/8", "3/4", "1/3"),
-                1
-            )
+            // Physics
+            PyqQuestionItem("Physics", "Modern Physics", "If the de Broglie wavelength of a particle is halved, its kinetic energy becomes:", listOf("2 times", "4 times", "Half", "16 times"), 1, "λ = h / √(2mK) ⇒ K ∝ 1/λ². Halving λ quadruples K."),
+            PyqQuestionItem("Physics", "Modern Physics", "In a photoelectric experiment, stopping potential V₀ plotted against frequency ν has a slope equal to:", listOf("h", "h / e", "e / h", "h · e"), 1, "eV₀ = hν - φ ⇒ V₀ = (h/e)ν - φ/e, so slope = h/e."),
+            PyqQuestionItem("Physics", "Modern Physics", "The half-life of a radioactive nuclide is T. What fraction of the original sample decays in time 3T?", listOf("1/8", "7/8", "3/4", "1/3"), 1, "Remaining N/N₀ = (1/2)³ = 1/8, so decayed fraction = 1 - 1/8 = 7/8."),
+            PyqQuestionItem("Physics", "Electrostatics", "Two point charges +q and +4q are separated by distance d. Where on the line joining them is the net electric field zero?", listOf("d/3 from +q", "d/2 from +q", "2d/3 from +q", "d/4 from +q"), 0, "1/x² = 4/(d-x)² ⇒ (d-x)/x = 2 ⇒ x = d/3 from +q."),
+            PyqQuestionItem("Physics", "Current Electricity", "When two identical cells of emf E and internal resistance r are connected in parallel across external resistor R, the current is:", listOf("E / (R + r/2)", "2E / (R + 2r)", "E / (R + 2r)", "2E / (R + r/2)"), 0, "Parallel identical cells have equivalent emf E and equivalent internal resistance r/2."),
+            PyqQuestionItem("Physics", "Ray & Wave Optics", "When a biconvex lens of glass (μ = 1.5) is immersed in water (μ = 4/3), its focal length in water becomes:", listOf("2 times its focal length in air", "4 times its focal length in air", "Half its focal length in air", "Unchanged"), 1, "1/f ∝ (μ_g/μ_m - 1). In air: 1.5 - 1 = 0.5; in water: 9/8 - 1 = 1/8. Ratio = 4."),
+            PyqQuestionItem("Physics", "Thermodynamics", "In an adiabatic process for an ideal monoatomic gas (γ = 5/3), if volume is compressed to 1/8 of initial volume, pressure becomes:", listOf("8 P₀", "16 P₀", "32 P₀", "64 P₀"), 2, "P V^γ = const ⇒ P = P₀ (8)^(5/3) = P₀ · 2⁵ = 32 P₀."),
+            // Chemistry
+            PyqQuestionItem("Chemistry", "Chemical Bonding", "According to VSEPR theory, the hybridization and shape of XeF₄ are respectively:", listOf("sp³d², Square Planar", "sp³d², Octahedral", "sp³d, See-saw", "sp³, Tetrahedral"), 0, "XeF₄ has 4 bond pairs and 2 lone pairs (steric number 6, sp³d²) → Square Planar."),
+            PyqQuestionItem("Chemistry", "Chemical Bonding", "Which of the following species is paramagnetic and has a bond order of 2.5?", listOf("N₂", "O₂⁺", "CO", "NO⁻"), 1, "O₂⁺ has 15 electrons (1 unpaired electron in π*2p) → bond order = (10 - 5)/2 = 2.5."),
+            PyqQuestionItem("Chemistry", "Electrochemistry", "How many Faradays of electricity are required to reduce 1 mole of MnO₄⁻ to Mn²⁺ in acidic medium?", listOf("3 F", "5 F", "7 F", "2 F"), 1, "Mn oxidation state changes from +7 to +2, requiring 5 moles of electrons = 5 F."),
+            PyqQuestionItem("Chemistry", "Organic Reaction Mechanisms", "Which of the following alkyl halides undergoes SN1 reaction fastest?", listOf("CH₃Cl", "CH₃CH₂Cl", "(CH₃)₂CHCl", "(CH₃)₃CCl"), 3, "SN1 reactivity depends on carbocation stability: 3° carbocation (CH₃)₃C⁺ is most stable."),
+            PyqQuestionItem("Chemistry", "Coordination Compounds", "The IUPAC oxidation state and coordination number of Co in [Co(en)₂Cl₂]⁺ are:", listOf("+3 and 6", "+2 and 4", "+3 and 4", "+2 and 6"), 0, "en is a neutral bidentate ligand (2×2 = 4) + 2 Cl⁻ = coordination number 6; charge x - 2 = +1 ⇒ x = +3."),
+            // Mathematics
+            PyqQuestionItem("Mathematics", "Definite Integration", "The value of ∫₀^(π/2) [√sin x / (√sin x + √cos x)] dx is:", listOf("π / 2", "π / 4", "π", "0"), 1, "By king's property I = ∫₀^(π/2) f(π/2 - x) dx ⇒ 2I = ∫₀^(π/2) 1 dx = π/2 ⇒ I = π/4."),
+            PyqQuestionItem("Mathematics", "Matrices & Determinants", "If A is a 3×3 matrix with |A| = 5, then the value of |adj(A)| is:", listOf("5", "25", "125", "15"), 1, "For an n×n matrix, |adj(A)| = |A|^(n-1) = 5^(3-1) = 25."),
+            PyqQuestionItem("Mathematics", "Differential Equations", "The integrating factor (I.F.) of dy/dx + (y / x) = x² is:", listOf("e^x", "x", "1 / x", "ln x"), 1, "I.F. = e^(∫ (1/x) dx) = e^(ln x) = x."),
+            PyqQuestionItem("Mathematics", "Probability", "If A and B are independent events with P(A) = 0.4 and P(B) = 0.5, then P(A ∪ B) equals:", listOf("0.9", "0.7", "0.2", "0.5"), 1, "P(A ∪ B) = P(A) + P(B) - P(A)P(B) = 0.4 + 0.5 - 0.20 = 0.70."),
+            // Biology
+            PyqQuestionItem("Biology", "Genetics & Evolution", "In a dihybrid cross between two heterozygotes (AaBb × AaBb), the phenotypic ratio in F₂ generation is:", listOf("3 : 1", "9 : 3 : 3 : 1", "1 : 2 : 1", "1 : 1 : 1 : 1"), 1, "Mendel's law of independent assortment yields a 9:3:3:1 phenotypic ratio."),
+            PyqQuestionItem("Biology", "Cell Structure & Function", "During which stage of Meiosis-I does crossing over (recombination) take place?", listOf("Leptotene", "Zygotene", "Pachytene", "Diplotene"), 2, "Crossing over between non-sister chromatids mediated by recombinase occurs in Pachytene."),
+            PyqQuestionItem("Biology", "Human Physiology", "Which part of the human brain regulates body temperature, urge for eating, and drinking?", listOf("Cerebellum", "Hypothalamus", "Medulla oblongata", "Pons"), 1, "The hypothalamus contains thermoregulatory and hunger/thirst centers."),
+            PyqQuestionItem("Biology", "Biotechnology", "Which enzyme is used to join sticky ends of DNA fragments during recombinant DNA technology?", listOf("Restriction endonuclease", "DNA ligase", "DNA polymerase", "Helicase"), 1, "DNA ligase catalyzes the formation of phosphodiester bonds to ligate DNA fragments.")
         )
     }
+
+    var customQuestions by remember {
+        val raw = prefs.getString("custom_pyq_questions", "") ?: ""
+        val parsed = raw.lines().filter { it.isNotBlank() }.mapNotNull { line ->
+            val p = line.split("|").map { it.trim() }
+            if (p.size >= 7) {
+                PyqQuestionItem(p[0], p[1], p[2], listOf(p[3], p[4], p[5], p[6]), p.getOrNull(7)?.toIntOrNull() ?: 0, p.getOrNull(8) ?: "")
+            } else null
+        }
+        mutableStateOf(parsed)
+    }
+
+    val activeQuizQuestions = remember(selectedSubject, selectedTopic, questionCount, customQuestions) {
+        val all = customQuestions + builtInBank
+        val topicMatches = all.filter { it.subject == selectedSubject && it.topic == selectedTopic }
+        val subjectMatches = all.filter { it.subject == selectedSubject }
+        val pool = if (topicMatches.size >= 3) topicMatches else if (subjectMatches.isNotEmpty()) subjectMatches else all
+        val targetSize = questionCount.toInt().coerceAtMost(pool.size).coerceAtLeast(1)
+        pool.take(targetSize)
+    }
+
+    var currentQuestionIdx by remember { mutableIntStateOf(0) }
+    var selectedOptionIdx by remember { mutableIntStateOf(-1) }
+    var isAnswerChecked by remember { mutableStateOf(false) }
+    var correctCount by remember { mutableIntStateOf(0) }
 
     Scaffold(
         topBar = {
@@ -530,6 +618,11 @@ fun PyqPracticeScreen(
                         )
                     }
                 },
+                actions = {
+                    IconButton(onClick = { showAddQuestionDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "Add PYQ", tint = NeonCyan)
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
         },
@@ -547,9 +640,9 @@ fun PyqPracticeScreen(
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(22.dp)
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
-                    // 1 Setup — 2 Quiz — 3 Results Stepper (Exact Panel 9)
+                    // 1 Setup — 2 Quiz — 3 Results Stepper
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -578,7 +671,6 @@ fun PyqPracticeScreen(
 
                     when (currentStep) {
                         1 -> {
-                            // Select Subject
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Select Subject", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                 Box(modifier = Modifier.fillMaxWidth()) {
@@ -614,7 +706,6 @@ fun PyqPracticeScreen(
                                 }
                             }
 
-                            // Select Topic
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Select Topic", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                 Box(modifier = Modifier.fillMaxWidth()) {
@@ -650,7 +741,6 @@ fun PyqPracticeScreen(
                                 }
                             }
 
-                            // Number of Questions Slider (Exact Panel 9)
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Text("Number of Questions", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                 Row(
@@ -661,8 +751,7 @@ fun PyqPracticeScreen(
                                     Slider(
                                         value = questionCount,
                                         onValueChange = { questionCount = it },
-                                        valueRange = 5f..50f,
-                                        steps = 8,
+                                        valueRange = 3f..20f,
                                         colors = SliderDefaults.colors(
                                             thumbColor = NeonMagenta,
                                             activeTrackColor = NeonMagenta,
@@ -679,13 +768,12 @@ fun PyqPracticeScreen(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(10.dp))
-
                             NeonPrimaryGradientButton(
-                                text = "Start Quiz",
+                                text = "Start Quiz (${activeQuizQuestions.size} Qs)",
                                 onClick = {
                                     currentQuestionIdx = 0
                                     selectedOptionIdx = -1
+                                    isAnswerChecked = false
                                     correctCount = 0
                                     currentStep = 2
                                 },
@@ -696,7 +784,7 @@ fun PyqPracticeScreen(
                         }
 
                         2 -> {
-                            val (qText, options, answerIdx) = sampleQuestions[currentQuestionIdx % sampleQuestions.size]
+                            val item = activeQuizQuestions[currentQuestionIdx % activeQuizQuestions.size]
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -713,45 +801,48 @@ fun PyqPracticeScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Text(
-                                            text = "Question ${currentQuestionIdx + 1} of ${sampleQuestions.size}",
+                                            text = "Q${currentQuestionIdx + 1} of ${activeQuizQuestions.size} • ${item.subject}",
                                             color = NeonCyan,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 13.sp
                                         )
                                         Text(
-                                            text = "+4 / -1 JEE Pattern",
+                                            text = item.topic,
                                             color = NeonMagenta,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 12.sp
                                         )
                                     }
                                     Text(
-                                        text = qText,
+                                        text = item.question,
                                         color = Color.White,
-                                        fontSize = 16.sp,
+                                        fontSize = 15.5.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         lineHeight = 22.sp
                                     )
-                                    options.forEachIndexed { idx, opt ->
+                                    item.options.forEachIndexed { idx, opt ->
                                         val isSelected = selectedOptionIdx == idx
+                                        val isCorrectOpt = idx == item.correctIndex
+                                        val borderColor = when {
+                                            !isAnswerChecked && isSelected -> NeonCyan
+                                            isAnswerChecked && isCorrectOpt -> Color(0xFF00E676)
+                                            isAnswerChecked && isSelected && !isCorrectOpt -> NeonMagenta
+                                            else -> Color(0xFF2E3248)
+                                        }
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .clip(RoundedCornerShape(14.dp))
-                                                .background(if (isSelected) NeonCyan.copy(alpha = 0.16f) else NeonBlack.copy(alpha = 0.6f))
-                                                .border(
-                                                    width = 1.2.dp,
-                                                    color = if (isSelected) NeonCyan else Color(0xFF2E3248),
-                                                    shape = RoundedCornerShape(14.dp)
-                                                )
-                                                .clickable { selectedOptionIdx = idx }
+                                                .background(if (isSelected) borderColor.copy(alpha = 0.16f) else NeonBlack.copy(alpha = 0.6f))
+                                                .border(1.2.dp, borderColor, RoundedCornerShape(14.dp))
+                                                .clickable(enabled = !isAnswerChecked) { selectedOptionIdx = idx }
                                                 .padding(14.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                                         ) {
                                             Text(
                                                 text = "${('A' + idx)}.",
-                                                color = if (isSelected) NeonCyan else TextSecondary,
+                                                color = borderColor,
                                                 fontWeight = FontWeight.ExtraBold
                                             )
                                             Text(
@@ -763,16 +854,44 @@ fun PyqPracticeScreen(
                                         }
                                     }
 
+                                    if (isAnswerChecked && item.explanation.isNotBlank()) {
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(containerColor = NeonBlack.copy(alpha = 0.7f)),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Text(
+                                                text = "Solution: ${item.explanation}",
+                                                color = NeonCyan,
+                                                fontSize = 12.5.sp,
+                                                modifier = Modifier.padding(12.dp)
+                                            )
+                                        }
+                                    }
+
                                     NeonPrimaryGradientButton(
-                                        text = if (currentQuestionIdx + 1 < sampleQuestions.size) "Next Question" else "Finish & View Results",
+                                        text = when {
+                                            !isAnswerChecked -> "Check Answer"
+                                            currentQuestionIdx + 1 < activeQuizQuestions.size -> "Next Question"
+                                            else -> "Finish & Save Accuracy"
+                                        },
                                         enabled = selectedOptionIdx >= 0,
                                         onClick = {
-                                            if (selectedOptionIdx == answerIdx) correctCount++
-                                            if (currentQuestionIdx + 1 < sampleQuestions.size) {
-                                                currentQuestionIdx++
-                                                selectedOptionIdx = -1
+                                            if (!isAnswerChecked) {
+                                                isAnswerChecked = true
+                                                if (selectedOptionIdx == item.correctIndex) {
+                                                    correctCount++
+                                                }
                                             } else {
-                                                currentStep = 3
+                                                if (currentQuestionIdx + 1 < activeQuizQuestions.size) {
+                                                    currentQuestionIdx++
+                                                    selectedOptionIdx = -1
+                                                    isAnswerChecked = false
+                                                } else {
+                                                    val accuracy = ((correctCount.toFloat() / activeQuizQuestions.size.toFloat()) * 100f).toInt()
+                                                    prefs.edit().putInt("subject_progress_$selectedSubject", accuracy).apply()
+                                                    currentStep = 3
+                                                }
                                             }
                                         },
                                         modifier = Modifier.fillMaxWidth()
@@ -782,7 +901,7 @@ fun PyqPracticeScreen(
                         }
 
                         3 -> {
-                            val accuracy = ((correctCount.toFloat() / sampleQuestions.size.toFloat()) * 100f).toInt()
+                            val accuracy = ((correctCount.toFloat() / activeQuizQuestions.size.toFloat()) * 100f).toInt()
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -810,10 +929,16 @@ fun PyqPracticeScreen(
                                         fontSize = 14.sp
                                     )
                                     Text(
-                                        text = "Score: $correctCount / ${sampleQuestions.size} ($accuracy%)",
+                                        text = "Score: $correctCount / ${activeQuizQuestions.size} ($accuracy%)",
                                         color = Color.White,
                                         fontWeight = FontWeight.ExtraBold,
                                         fontSize = 24.sp
+                                    )
+                                    Text(
+                                        text = "Your $selectedSubject progress bar in Focus & Analytics has been updated to $accuracy%!",
+                                        color = TextSecondary,
+                                        fontSize = 12.5.sp,
+                                        textAlign = TextAlign.Center
                                     )
                                     NeonGradientProgressBar(
                                         progress = accuracy / 100f,
@@ -831,7 +956,6 @@ fun PyqPracticeScreen(
                     }
                 }
 
-                // Bottom motivational tagline (Exact Panel 9)
                 Text(
                     text = buildAnnotatedString {
                         withStyle(SpanStyle(color = NeonCyan, fontWeight = FontWeight.Medium)) {
@@ -847,6 +971,71 @@ fun PyqPracticeScreen(
                 )
             }
         }
+    }
+
+    if (showAddQuestionDialog) {
+        var qText by remember { mutableStateOf("") }
+        var optA by remember { mutableStateOf("") }
+        var optB by remember { mutableStateOf("") }
+        var optC by remember { mutableStateOf("") }
+        var optD by remember { mutableStateOf("") }
+        var correctIdxText by remember { mutableStateOf("1") }
+
+        AlertDialog(
+            onDismissRequest = { showAddQuestionDialog = false },
+            containerColor = NeonSurface,
+            title = { Text("Add Custom $selectedSubject PYQ", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(value = qText, onValueChange = { qText = it }, label = { Text("Question") })
+                    OutlinedTextField(value = optA, onValueChange = { optA = it }, label = { Text("Option 1") }, singleLine = true)
+                    OutlinedTextField(value = optB, onValueChange = { optB = it }, label = { Text("Option 2") }, singleLine = true)
+                    OutlinedTextField(value = optC, onValueChange = { optC = it }, label = { Text("Option 3") }, singleLine = true)
+                    OutlinedTextField(value = optD, onValueChange = { optD = it }, label = { Text("Option 4") }, singleLine = true)
+                    OutlinedTextField(
+                        value = correctIdxText,
+                        onValueChange = { correctIdxText = it },
+                        label = { Text("Correct Option (1-4)") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (qText.isNotBlank() && optA.isNotBlank() && optB.isNotBlank()) {
+                            val cIdx = ((correctIdxText.toIntOrNull() ?: 1) - 1).coerceIn(0, 3)
+                            val newQ = PyqQuestionItem(
+                                subject = selectedSubject,
+                                topic = selectedTopic,
+                                question = qText.trim(),
+                                options = listOf(optA.trim(), optB.trim(), optC.ifBlank { "None" }, optD.ifBlank { "All" }),
+                                correctIndex = cIdx,
+                                explanation = "Custom question added by you."
+                            )
+                            val updated = customQuestions + newQ
+                            customQuestions = updated
+                            val raw = updated.joinToString("\n") {
+                                "${it.subject}|${it.topic}|${it.question}|${it.options[0]}|${it.options[1]}|${it.options[2]}|${it.options[3]}|${it.correctIndex}|${it.explanation}"
+                            }
+                            prefs.edit().putString("custom_pyq_questions", raw).apply()
+                            showAddQuestionDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonCyan, contentColor = NeonBlack)
+                ) {
+                    Text("Save PYQ", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddQuestionDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        )
     }
 }
 

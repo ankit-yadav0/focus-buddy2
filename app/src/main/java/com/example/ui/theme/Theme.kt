@@ -12,7 +12,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import com.example.ui.helper.SmartNightModeManager
 
-// Neon Black Theme (#08080F background, #1A1A24 cards, #00E5FF cyan, #FF00E6 magenta, #7B61FF violet)
 private val InstrumentDarkColors = darkColorScheme(
     primary = NeonCyan,
     onPrimary = Color(0xFF040810),
@@ -40,7 +39,6 @@ private val InstrumentDarkColors = darkColorScheme(
     onErrorContainer = Alert
 )
 
-// Deeper late-night AMOLED variant used when Smart Night Mode is active (10 PM - 6 AM).
 private val InstrumentNightColors = darkColorScheme(
     primary = NeonCyan,
     onPrimary = Color(0xFF040810),

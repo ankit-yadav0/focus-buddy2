@@ -28,6 +28,7 @@ import com.example.service.FocusAccessibilityService
 import com.example.ui.components.NeonCircularLockEmblem
 import com.example.ui.components.NeonLaserBackground
 import com.example.ui.components.NeonOutlinedPillButton
+import com.example.ui.components.RealAppIconBadge
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.NeonBlack
 import com.example.ui.theme.NeonCyan
@@ -108,7 +109,6 @@ class AppLockUnlockActivity : ComponentActivity() {
                     LaunchedEffect(lockedPackageState, promptSeqState) {
                         val stored = app.repository.getSetting("app_lock_pin_hash")
                         if (stored.isNullOrBlank()) {
-                            android.util.Log.w("AppLockUnlockActivity", "No PIN configured in repository; unlocking to prevent lockout.")
                             FocusAccessibilityService.instance?.grantAppUnlock(lockedPackageState)
                             finish()
                         }
@@ -116,6 +116,7 @@ class AppLockUnlockActivity : ComponentActivity() {
 
                     PinUnlockScreen(
                         appName = appLabelState,
+                        lockedPackage = lockedPackageState,
                         promptKey = promptSeqState,
                         onCancel = { goHomeAndFinish() },
                         lockoutMessage = lockoutMessageState,
@@ -130,7 +131,6 @@ class AppLockUnlockActivity : ComponentActivity() {
                                 }
                                 val stored = app.repository.getSetting("app_lock_pin_hash")
                                 if (stored.isNullOrBlank()) {
-                                    android.util.Log.w("AppLockUnlockActivity", "No PIN configured; auto-unlocking.")
                                     FocusAccessibilityService.instance?.grantAppUnlock(lockedPackageState)
                                     finish()
                                     return@launch
@@ -165,7 +165,8 @@ fun PinUnlockScreen(
     lockoutMessage: String? = null,
     promptKey: Int = 0,
     onCancel: () -> Unit,
-    onVerifyPin: (pin: String, onResult: (Boolean) -> Unit) -> Unit
+    onVerifyPin: (pin: String, onResult: (Boolean) -> Unit) -> Unit,
+    lockedPackage: String = ""
 ) {
     var pin by remember(appName, promptKey) { mutableStateOf("") }
     var showError by remember(appName, promptKey) { mutableStateOf(false) }
@@ -198,7 +199,16 @@ fun PinUnlockScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            NeonCircularLockEmblem(size = 112.dp)
+            if (lockedPackage.isNotBlank()) {
+                RealAppIconBadge(
+                    packageName = lockedPackage,
+                    appName = appName,
+                    size = 64.dp,
+                    cornerRadius = 18.dp
+                )
+            } else {
+                NeonCircularLockEmblem(size = 104.dp)
+            }
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = "App Locked",

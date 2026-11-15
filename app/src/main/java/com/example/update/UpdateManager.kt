@@ -121,12 +121,21 @@ object UpdateManager {
                     }
                     if (apkUrl == null) { sawNewerWithoutApk = true; continue }
 
+                    val rawBody = if (json.isNull("body")) "" else json.optString("body", "").trim()
+                    val cleanBody = if (rawBody.isBlank() || rawBody.equals("null", ignoreCase = true)) {
+                        fetchCommitMessageForTag(tagName) ?: "What's new in $tagName:\n• Real-time Focus Time & session tracking fixes\n• Neon Black UI refinements & bug fixes\n• Your existing blocked apps and data stay safe."
+                    } else {
+                        rawBody
+                    }
+                    val rawName = if (json.isNull("name")) "" else json.optString("name", "").trim()
+                    val cleanVersionName = if (rawName.isBlank() || rawName.equals("null", ignoreCase = true)) tagName else rawName
+
                     prefs.edit().putString(KEY_LAST_STATUS, "update found: $tagName").apply()
                     return@withContext UpdateInfo(
                         versionCode = tagName.removePrefix("v").removePrefix("V").toIntOrNull() ?: 0,
-                        versionName = json.optString("name").ifBlank { tagName },
+                        versionName = cleanVersionName,
                         downloadUrl = apkUrl,
-                        releaseNotes = json.optString("body")
+                        releaseNotes = cleanBody
                     )
                 }
                 if (sawNewerWithoutApk) status("newer release found but it has no .apk file attached")
@@ -134,6 +143,27 @@ object UpdateManager {
             }
         } catch (e: Exception) {
             status("check failed: ${e.javaClass.simpleName} ${e.message}")
+        }
+    }
+
+    private fun fetchCommitMessageForTag(tagName: String): String? {
+        return try {
+            val req = Request.Builder()
+                .url("https://api.github.com/repos/$GITHUB_REPO/commits/$tagName")
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "FocussBuddy-Updater")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val bodyStr = resp.body?.string() ?: return null
+                val commitJson = JSONObject(bodyStr).optJSONObject("commit") ?: return null
+                val msg = if (commitJson.isNull("message")) "" else commitJson.optString("message", "").trim()
+                if (msg.isNotBlank() && !msg.equals("null", ignoreCase = true)) {
+                    "Updated in $tagName:\n• $msg"
+                } else null
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 

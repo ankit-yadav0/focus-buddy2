@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,7 +26,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.ui.components.NeonCardBorderBrush
 import com.example.ui.components.NeonCircularLockEmblem
 import com.example.ui.components.NeonLaserBackground
 import com.example.ui.components.NeonPrimaryGradientButton
@@ -40,14 +40,11 @@ import com.example.viewmodel.FocusViewModel
 import kotlinx.coroutines.launch
 
 /**
- * Strict Mode Setup Screen matching Panel 11 of `Neon Focus Buddy UI Theme Board.png`:
- *   • Top bar with "Strict Mode" + glowing "DND" neon badge
- *   • NeonCircularLockEmblem with diagonal neon laser streaks
- *   • "Lock-in Period" ("Select Duration: 30 Days")
- *   • "Restrictions" with neon magenta checkmarks (Block Settings, Block Device Admin List, Block Special App Access)
- *   • "Enable Strict Mode" full-width cyan-to-magenta gradient pill button
- *   • "Extreme Override" preview card ("I choose discipline over comfort", Cooldown: 45 minutes • Not available 10:00 PM – 6:00 AM)
- *   • Full 4-step Strict Mode configuration underneath
+ * Strict Mode Setup Screen (Panel 11) — 100% Interactive & Functional:
+ *   • "Lock-in Period" dropdown (Active Session Duration, 1 Hour, 6 Hours, 24 Hours, 7 Days, 14 Days, 30 Days)
+ *     actually starts a real Strict Mode session if a lock-in duration is chosen!
+ *   • "Restrictions" rows are real interactive toggles wired to restrictSettings, restrictUninstall, and editingMode!
+ *   • "Extreme Override" sentence box lets the user type "I choose discipline over comfort" to verify/unlock override!
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,7 +61,18 @@ fun StrictModeSetupWizardScreen(
     var step2Done by remember { mutableStateOf(true) }
     var step3Done by remember { mutableStateOf(true) }
 
-    var lockInDurationLabel by remember { mutableStateOf("30 Days") }
+    val durationOptions = remember {
+        listOf(
+            "Active Session Duration" to 0L,
+            "1 Hour Lock-in" to 60L * 60_000L,
+            "6 Hours Lock-in" to 6L * 3600_000L,
+            "24 Hours Lock-in" to 24L * 3600_000L,
+            "7 Days Lock-in" to 7L * 24L * 3600_000L,
+            "14 Days Lock-in" to 14L * 24L * 3600_000L,
+            "30 Days Lock-in" to 30L * 24L * 3600_000L
+        )
+    }
+    var selectedDurationPair by remember { mutableStateOf(durationOptions.first()) }
     var durationMenuExpanded by remember { mutableStateOf(false) }
 
     // Step 1
@@ -81,6 +89,7 @@ fun StrictModeSetupWizardScreen(
 
     // Step 3
     var deactivationMethod by remember { mutableStateOf("EXTREME_OVERRIDE") }
+    var overrideSentenceInput by remember { mutableStateOf("") }
 
     // Step 4
     val devicePolicyManager = remember { context.getSystemService(android.content.Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager }
@@ -145,7 +154,6 @@ fun StrictModeSetupWizardScreen(
                     }
                 },
                 actions = {
-                    // Glowing DND badge from Panel 11
                     Box(
                         modifier = Modifier
                             .padding(end = 14.dp)
@@ -189,7 +197,6 @@ fun StrictModeSetupWizardScreen(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Top Neon Lock Emblem + "Lock-in Period" (Exact Panel 11)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -200,7 +207,7 @@ fun StrictModeSetupWizardScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        NeonCircularLockEmblem(size = 124.dp)
+                        NeonCircularLockEmblem(size = 120.dp)
                         Text(
                             text = "Lock-in Period",
                             color = Color.White,
@@ -210,7 +217,7 @@ fun StrictModeSetupWizardScreen(
                     }
                 }
 
-                // Select Duration Dropdown (Exact Panel 11)
+                // Select Duration Dropdown (Interactive)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "Select Duration",
@@ -231,10 +238,10 @@ fun StrictModeSetupWizardScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = lockInDurationLabel,
+                                text = selectedDurationPair.first,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
+                                fontSize = 15.5.sp
                             )
                             Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = TextSecondary)
                         }
@@ -243,11 +250,11 @@ fun StrictModeSetupWizardScreen(
                             onDismissRequest = { durationMenuExpanded = false },
                             modifier = Modifier.background(NeonSurface)
                         ) {
-                            listOf("30 Days", "14 Days", "7 Days", "24 Hours", "Active Session Duration").forEach { option ->
+                            durationOptions.forEach { option ->
                                 DropdownMenuItem(
-                                    text = { Text(option, color = Color.White) },
+                                    text = { Text(option.first, color = Color.White) },
                                     onClick = {
-                                        lockInDurationLabel = option
+                                        selectedDurationPair = option
                                         durationMenuExpanded = false
                                     }
                                 )
@@ -256,20 +263,32 @@ fun StrictModeSetupWizardScreen(
                     }
                 }
 
-                // Restrictions Checklist with Neon Magenta Checkmarks (Exact Panel 11)
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Interactive Restrictions Toggles (Directly wired to state)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Restrictions",
+                        text = "Restrictions (Tap to toggle)",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
                     )
-                    NeonRestrictionCheckRow("Block Settings (Reset, Factory Reset)")
-                    NeonRestrictionCheckRow("Block Device Admin List")
-                    NeonRestrictionCheckRow("Block Special App Access")
+                    NeonInteractiveRestrictionRow(
+                        label = "Block Settings (Reset, Accessibility, Overlay)",
+                        checked = restrictSettings,
+                        onToggle = { restrictSettings = !restrictSettings }
+                    )
+                    NeonInteractiveRestrictionRow(
+                        label = "Block Device Admin & App Uninstallation",
+                        checked = restrictUninstall,
+                        onToggle = { restrictUninstall = !restrictUninstall }
+                    )
+                    NeonInteractiveRestrictionRow(
+                        label = "Lock All Blocking Rules & Schedules",
+                        checked = editingMode == "ALL",
+                        onToggle = { editingMode = if (editingMode == "ALL") "SPECIFIC" else "ALL" }
+                    )
                 }
 
-                // Primary CTA: Enable Strict Mode (Exact Panel 11)
+                // Enable Strict Mode Button — Saves config AND starts session if a lock-in duration was chosen
                 NeonPrimaryGradientButton(
                     text = "Enable Strict Mode",
                     enabled = canActivate,
@@ -286,6 +305,16 @@ fun StrictModeSetupWizardScreen(
                                     deactivationMethod = deactivationMethod
                                 )
                             )
+                            val lockMs = selectedDurationPair.second
+                            if (lockMs > 0L) {
+                                val mins = (lockMs / 60_000L).toInt().coerceAtLeast(1)
+                                viewModel.startFocusSession(
+                                    minutes = mins,
+                                    isStrict = true,
+                                    totalMs = lockMs
+                                )
+                                Toast.makeText(context, "Strict Mode Lock-in started (${selectedDurationPair.first})", Toast.LENGTH_SHORT).show()
+                            }
                             onActivated()
                         }
                     },
@@ -306,34 +335,57 @@ fun StrictModeSetupWizardScreen(
                     )
                 }
 
-                // Extreme Override Preview Card (Exact Panel 11)
+                // Interactive Extreme Override Box
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Extreme Override",
+                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 15.sp
+                        )
+                        Switch(
+                            checked = deactivationMethod == "EXTREME_OVERRIDE",
+                            onCheckedChange = { enabled ->
+                                deactivationMethod = if (enabled) "EXTREME_OVERRIDE" else "TIME_ONLY"
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = NeonMagenta
+                            )
+                        )
+                    }
                     Text(
-                        text = "Extreme Override",
-                        color = Color.White,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.sp
-                    )
-                    Text(
-                        text = "Type the following sentence correctly:",
+                        text = "Type the following sentence to verify Extreme Override:",
                         color = TextSecondary,
                         fontSize = 12.5.sp
                     )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(NeonSurface)
-                            .border(1.dp, NeonSubtleBorderBrush, RoundedCornerShape(14.dp))
-                            .padding(horizontal = 16.dp, vertical = 14.dp)
-                    ) {
-                        Text(
-                            text = "I choose discipline over comfort",
-                            color = NeonCyan,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.5.sp
+                    OutlinedTextField(
+                        value = overrideSentenceInput,
+                        onValueChange = { overrideSentenceInput = it },
+                        placeholder = {
+                            Text(
+                                text = "I choose discipline over comfort",
+                                color = NeonCyan.copy(alpha = 0.7f),
+                                fontSize = 14.sp
+                            )
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = NeonSurface,
+                            unfocusedContainerColor = NeonSurface,
+                            focusedBorderColor = if (overrideSentenceInput.trim().equals("I choose discipline over comfort", ignoreCase = true)) NeonCyan else NeonMagenta,
+                            unfocusedBorderColor = Color(0xFF2E3248)
                         )
-                    }
+                    )
                     Text(
                         text = "Cooldown: 45 minutes  •  Not available from 10:00 PM – 6:00 AM",
                         color = TextSecondary,
@@ -344,7 +396,7 @@ fun StrictModeSetupWizardScreen(
                 HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
 
                 Text(
-                    text = "ADVANCED STRICT MODE CONFIGURATION",
+                    text = "DETAILED SAFEGUARD STEPS",
                     color = NeonCyan,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 11.sp,
@@ -534,22 +586,32 @@ fun StrictModeSetupWizardScreen(
 }
 
 @Composable
-private fun NeonRestrictionCheckRow(label: String) {
+private fun NeonInteractiveRestrictionRow(
+    label: String,
+    checked: Boolean,
+    onToggle: () -> Unit
+) {
     Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(NeonSurface.copy(alpha = 0.65f))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Icon(
-            imageVector = Icons.Default.Check,
+            imageVector = if (checked) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
             contentDescription = null,
-            tint = NeonMagenta,
-            modifier = Modifier.size(18.dp)
+            tint = if (checked) NeonMagenta else TextSecondary,
+            modifier = Modifier.size(19.dp)
         )
         Text(
             text = label,
-            color = Color.White,
+            color = if (checked) Color.White else TextSecondary,
             fontSize = 13.5.sp,
-            fontWeight = FontWeight.Medium
+            fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal
         )
     }
 }

@@ -523,10 +523,31 @@ class FocusViewModel(
     }
 
     private fun isToday(timestamp: Long): Boolean {
-        val cal1 = java.util.Calendar.getInstance()
-        val cal2 = java.util.Calendar.getInstance().apply { timeInMillis = timestamp }
-        return cal1.get(java.util.Calendar.YEAR) == cal2.get(java.util.Calendar.YEAR) &&
-               cal1.get(java.util.Calendar.DAY_OF_YEAR) == cal2.get(java.util.Calendar.DAY_OF_YEAR)
+        if (timestamp <= 0L) return false
+        val calWall = java.util.Calendar.getInstance()
+        val calTrusted = java.util.Calendar.getInstance().apply { timeInMillis = TrustedClock.now() }
+        val calTarget = java.util.Calendar.getInstance().apply { timeInMillis = timestamp }
+        val matchWall = calWall.get(java.util.Calendar.YEAR) == calTarget.get(java.util.Calendar.YEAR) &&
+            calWall.get(java.util.Calendar.DAY_OF_YEAR) == calTarget.get(java.util.Calendar.DAY_OF_YEAR)
+        val matchTrusted = calTrusted.get(java.util.Calendar.YEAR) == calTarget.get(java.util.Calendar.YEAR) &&
+            calTrusted.get(java.util.Calendar.DAY_OF_YEAR) == calTarget.get(java.util.Calendar.DAY_OF_YEAR)
+        return matchWall || matchTrusted
+    }
+
+    private fun effectiveSessionSeconds(session: FocusSession): Long {
+        if (session.isActive) {
+            val now = TrustedClock.now()
+            val maxSecs = ((session.endTime - session.startTime) / 1000L).coerceAtLeast(0L)
+            return ((now - session.startTime) / 1000L).coerceAtLeast(0L).coerceAtMost(maxSecs)
+        }
+        if (session.actualDurationSeconds > 0L) return session.actualDurationSeconds
+        if (session.sessionStatus == "Completed" || session.sessionStatus == "Expired") {
+            return (session.durationMinutes * 60L).coerceAtLeast(0L)
+        }
+        if (session.actualEndTime > session.startTime) {
+            return ((session.actualEndTime - session.startTime) / 1000L).coerceAtLeast(0L)
+        }
+        return 0L
     }
 
     fun setAccentTheme(themeName: String) {
@@ -587,11 +608,13 @@ class FocusViewModel(
 
     private val dbDailyAnalytics: StateFlow<DailyAnalytics> = repository.allSessions
         .map { sessions ->
-            val todaySessions = sessions.filter { isToday(it.startTime) }
+            val todaySessions = sessions.filter {
+                isToday(it.startTime) || isToday(it.actualEndTime) || it.isActive
+            }
             val completed = todaySessions.count { it.sessionStatus == "Completed" }
             val endedEarly = todaySessions.count { it.sessionStatus == "Ended Early" }
             val expired = todaySessions.count { it.sessionStatus == "Expired" }
-            val totalActualSeconds = todaySessions.sumOf { it.actualDurationSeconds }
+            val totalActualSeconds = todaySessions.sumOf { effectiveSessionSeconds(it) }
             val total = completed + endedEarly + expired
             val successRate = if (total == 0) 0 else ((completed + expired) * 100 / total)
             DailyAnalytics(
@@ -633,7 +656,7 @@ class FocusViewModel(
                 val completed = daySessions.count { it.sessionStatus == "Completed" }
                 val endedEarly = daySessions.count { it.sessionStatus == "Ended Early" }
                 val expired = daySessions.count { it.sessionStatus == "Expired" }
-                val totalActualSeconds = daySessions.sumOf { it.actualDurationSeconds }
+                val totalActualSeconds = daySessions.sumOf { effectiveSessionSeconds(it) }
                 
                 val total = completed + endedEarly + expired
                 val successRate = if (total == 0) 0 else ((completed + expired) * 100 / total)
@@ -700,19 +723,19 @@ class FocusViewModel(
             }.timeInMillis
 
             val todaySessions = sessions.filter { it.startTime in todayStart..todayEnd }
-            val todayFocusTimeSeconds = todaySessions.sumOf { it.actualDurationSeconds }
+            val todayFocusTimeSeconds = todaySessions.sumOf { effectiveSessionSeconds(it) }
             val todaySessionsCompleted = todaySessions.count { it.sessionStatus == "Completed" || it.sessionStatus == "Expired" }
             val todaySessionsEndedEarly = todaySessions.count { it.sessionStatus == "Ended Early" }
 
             val weeklySessions = sessions.filter { it.startTime in weekStart..TrustedClock.now() && !it.isActive && it.sessionStatus != "Active" }
-            val weeklyActualSeconds = weeklySessions.sumOf { it.actualDurationSeconds }
+            val weeklyActualSeconds = weeklySessions.sumOf { effectiveSessionSeconds(it) }
             val weeklyFocusHours = weeklyActualSeconds / 3600f
             val weeklySessionsCount = weeklySessions.size
             val weeklyCompleted = weeklySessions.count { it.sessionStatus == "Completed" || it.sessionStatus == "Expired" }
             val weeklySuccessRate = if (weeklySessionsCount == 0) 0 else (weeklyCompleted * 100 / weeklySessionsCount)
 
             val monthlySessions = sessions.filter { it.startTime in monthStart..TrustedClock.now() && !it.isActive && it.sessionStatus != "Active" }
-            val monthlyActualSeconds = monthlySessions.sumOf { it.actualDurationSeconds }
+            val monthlyActualSeconds = monthlySessions.sumOf { effectiveSessionSeconds(it) }
             val monthlyFocusHours = monthlyActualSeconds / 3600f
             val longestSessionSeconds = monthlySessions.maxOfOrNull { it.actualDurationSeconds } ?: 0L
             val longestSessionMinutes = (longestSessionSeconds / 60L).toInt()
@@ -926,8 +949,30 @@ class FocusViewModel(
 
     private fun checkAndCleanupExpiredSession() {
         viewModelScope.launch {
+            val prefs = context.getSharedPreferences("focuss_buddy_settings", Context.MODE_PRIVATE)
+            // One-time Strict Mode reset requested by user (v9): turns off Strict Mode and any stuck session
+            // while keeping all Blocked Apps, Long-Term Blocks, Website Blocks, and App Locks 100% intact.
+            if (!prefs.getBoolean("one_time_strict_mode_reset_v9", false)) {
+                prefs.edit()
+                    .putBoolean("one_time_strict_mode_reset_v9", true)
+                    .putBoolean("was_strict_mode_active", false)
+                    .apply()
+                try {
+                    context.getSharedPreferences("trusted_clock", Context.MODE_PRIVATE).edit().clear().apply()
+                } catch (_: Exception) {}
+                try {
+                    repository.saveSetting("strict_bypass_requested_at", "0")
+                    repository.saveSetting("strict_require_password", "false")
+                    repository.saveSetting("banking_pause_enabled", "false")
+                    repository.deactivateStrictModeOverride()
+                    repository.stopActiveSession(status = "Ended Early", force = true)
+                } catch (_: Exception) {}
+                return@launch
+            }
+
             val active = repository.getActiveSessionSync()
-            if (active != null && active.isActive && TrustedClock.now() >= active.endTime) {
+            val now = TrustedClock.now()
+            if (active != null && active.isActive && now >= active.endTime) {
                 repository.stopActiveSession("Expired")
             }
         }
@@ -1080,6 +1125,7 @@ class FocusViewModel(
             val method = repository.getSetting("strict_deactivation_method") ?: "TIME_ONLY"
             if (method != "EXTREME_OVERRIDE") return@launch
             repository.deactivateStrictModeOverride()
+            repository.stopActiveSession(status = "Ended Early", force = true)
             repository.saveSetting("strict_bypass_requested_at", "0")
         }
     }

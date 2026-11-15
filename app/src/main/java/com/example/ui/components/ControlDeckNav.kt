@@ -17,10 +17,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -45,21 +45,13 @@ data class ControlDeckTab(
     val icon: ImageVector
 )
 
-// Matches the Neon Focus Buddy UI Theme Board bottom navigation bar while keeping
-// the core route IDs intact for seamless navigation and deep-linking:
-// Home ("home"), Stats ("insights"), Planner ("study_planner"), Blocks/More ("blocks_progress").
 val controlDeckTabs = listOf(
     ControlDeckTab("home", "Home", Icons.Default.Home),
+    ControlDeckTab("blocks_progress", "Blocks", Icons.Default.GridView),
     ControlDeckTab("insights", "Stats", Icons.Default.BarChart),
-    ControlDeckTab("study_planner", "Planner", Icons.Default.CalendarMonth),
-    ControlDeckTab("blocks_progress", "More", Icons.Default.MoreHoriz)
+    ControlDeckTab("neon_settings", "Settings", Icons.Default.Settings)
 )
 
-/**
- * Neon Black Theme bottom navigation bar:
- * Deep #08080F / #12121C surface with a glowing cyan/magenta top hairline and
- * neon cyan (#00E5FF) active icon/label.
- */
 @Composable
 fun ControlDeckBottomNav(
     currentRoute: String?,
@@ -88,7 +80,7 @@ fun ControlDeckBottomNav(
                         NeonMagenta.copy(alpha = 0.45f)
                     )
                 ),
-                shape = androidx.compose.ui.graphics.RectangleShape
+                shape = RectangleShape
             )
             .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -140,40 +132,39 @@ private fun ControlDeckNavItem(
                         Brush.horizontalGradient(
                             colors = listOf(
                                 NeonCyan.copy(alpha = 0.22f),
-                                NeonViolet.copy(alpha = 0.22f),
-                                NeonMagenta.copy(alpha = 0.18f)
+                                NeonMagenta.copy(alpha = 0.22f)
                             )
                         )
                     } else {
-                        Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+                        Brush.horizontalGradient(
+                            colors = listOf(Color.Transparent, Color.Transparent)
+                        )
                     }
                 )
                 .border(
                     width = if (isActive) 1.dp else 0.dp,
                     brush = if (isActive) {
-                        Brush.horizontalGradient(
-                            listOf(NeonCyan.copy(alpha = 0.65f), NeonMagenta.copy(alpha = 0.55f))
-                        )
+                        Brush.horizontalGradient(listOf(NeonCyan, NeonMagenta))
                     } else {
                         Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
                     },
                     shape = RoundedCornerShape(50)
                 )
-                .padding(horizontal = 20.dp, vertical = 5.dp),
+                .padding(horizontal = 20.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = tab.icon,
                 contentDescription = tab.label,
-                tint = if (isActive) activeColor else inactiveColor,
-                modifier = Modifier.size(21.dp)
+                tint = if (isActive) activeColor else inactiveColor.copy(alpha = 0.85f),
+                modifier = Modifier.size(22.dp)
             )
         }
-        Spacer(modifier = Modifier.height(3.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = tab.label,
-            color = if (isActive) activeColor else inactiveColor,
-            fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Medium,
+            color = if (isActive) activeColor else inactiveColor.copy(alpha = 0.80f),
+            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
             fontSize = 11.5.sp
         )
     }
