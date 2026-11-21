@@ -83,6 +83,7 @@ fun StrictModeSetupWizardScreen(
     // Step 2
     var restrictUninstall by remember { mutableStateOf(false) }
     var restrictSettings by remember { mutableStateOf(true) }
+    var restrictPowerMenu by remember { mutableStateOf(true) }
     var requirePassword by remember { mutableStateOf(false) }
     var showPasswordDialog by remember { mutableStateOf(false) }
     var passwordIsSet by remember { mutableStateOf(false) }
@@ -103,6 +104,7 @@ fun StrictModeSetupWizardScreen(
         viewModel.getSetting("strict_restrict_schedules_specific")?.toBooleanStrictOrNull()?.let { restrictSchedulesSpecific = it }
         viewModel.getSetting("strict_restrict_uninstall")?.toBooleanStrictOrNull()?.let { restrictUninstall = it }
         viewModel.getSetting("strict_restrict_settings")?.toBooleanStrictOrNull()?.let { restrictSettings = it }
+        viewModel.getSetting("strict_restrict_power_menu")?.toBooleanStrictOrNull()?.let { restrictPowerMenu = it }
         viewModel.getSetting("strict_require_password")?.toBooleanStrictOrNull()?.let { requirePassword = it }
         viewModel.getSetting("strict_deactivation_method")?.let { deactivationMethod = it }
     }
@@ -272,6 +274,11 @@ fun StrictModeSetupWizardScreen(
                         fontSize = 15.sp
                     )
                     NeonInteractiveRestrictionRow(
+                        label = "Block Phone Power Off & Restart Menu",
+                        checked = restrictPowerMenu,
+                        onToggle = { restrictPowerMenu = !restrictPowerMenu }
+                    )
+                    NeonInteractiveRestrictionRow(
                         label = "Block Settings (Reset, Accessibility, Overlay)",
                         checked = restrictSettings,
                         onToggle = { restrictSettings = !restrictSettings }
@@ -301,6 +308,7 @@ fun StrictModeSetupWizardScreen(
                                     restrictSchedulesSpecific = restrictSchedulesSpecific,
                                     restrictUninstall = restrictUninstall,
                                     restrictSettings = restrictSettings,
+                                    restrictPowerMenu = restrictPowerMenu,
                                     requirePassword = requirePassword,
                                     deactivationMethod = deactivationMethod
                                 )
@@ -472,6 +480,12 @@ fun StrictModeSetupWizardScreen(
                             description = "You won't be able to uninstall apps, including Focuss Buddy.",
                             checked = restrictUninstall,
                             onCheckedChange = { restrictUninstall = it }
+                        )
+                        WizardSwitchRow(
+                            title = "Power Off & Restart Block",
+                            description = "Prevents powering off or restarting the phone from the power menu while Strict Mode is active.",
+                            checked = restrictPowerMenu,
+                            onCheckedChange = { restrictPowerMenu = it }
                         )
                         WizardSwitchRow(
                             title = "Phone Settings",

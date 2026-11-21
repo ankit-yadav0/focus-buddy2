@@ -412,6 +412,7 @@ class FocusViewModel(
         val restrictSchedulesSpecific: Boolean = true,
         val restrictUninstall: Boolean = false,
         val restrictSettings: Boolean = false,
+        val restrictPowerMenu: Boolean = true,
         val requirePassword: Boolean = false,
         val deactivationMethod: String = "TIME_ONLY"    // "TIME_ONLY" | "EXTREME_OVERRIDE"
     )
@@ -425,6 +426,7 @@ class FocusViewModel(
         repository.saveSetting("strict_restrict_schedules_specific", config.restrictSchedulesSpecific.toString())
         repository.saveSetting("strict_restrict_uninstall", config.restrictUninstall.toString())
         repository.saveSetting("strict_restrict_settings", config.restrictSettings.toString())
+        repository.saveSetting("strict_restrict_power_menu", config.restrictPowerMenu.toString())
         repository.saveSetting("strict_require_password", config.requirePassword.toString())
         repository.saveSetting("strict_deactivation_method", config.deactivationMethod)
     }

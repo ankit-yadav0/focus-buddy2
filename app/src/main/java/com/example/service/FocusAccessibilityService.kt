@@ -126,6 +126,7 @@ class FocusAccessibilityService : AccessibilityService() {
     private var blockedPackages = setOf<String>()
     private var restrictSettingsFullyEnabled = false
     private var restrictUninstallEnabled = false
+    private var restrictPowerMenuEnabled = true
     private var bankingPauseEnabled = false
     private var bankingPackages: Set<String> = emptySet()
     private var longTermBlocks = listOf<LongTermBlock>()
@@ -248,6 +249,13 @@ class FocusAccessibilityService : AccessibilityService() {
             serviceScope.launch {
                 repository.getSettingFlow("strict_restrict_uninstall").collectLatest { value ->
                     restrictUninstallEnabled = value?.toBoolean() ?: false
+                }
+            }
+
+            // Observe the Strict Mode wizard's "Power Off & Restart Block" toggle (default ON)
+            serviceScope.launch {
+                repository.getSettingFlow("strict_restrict_power_menu").collectLatest { value ->
+                    restrictPowerMenuEnabled = value?.toBooleanStrictOrNull() ?: true
                 }
             }
 
@@ -412,10 +420,16 @@ class FocusAccessibilityService : AccessibilityService() {
         return packageName == currentImePackage
     }
 
-    // ---- Strict Mode: Power menu guard ---------------------------------------------
+    // ---- Strict Mode: Power Off & Restart menu guard --------------------------------
     private var lastPowerMenuDismissAtMs = 0L
+    private var lastPowerMenuToastAtMs = 0L
     private var powerMenuRecheckJob: Job? = null
-    private val POWER_MENU_DEBOUNCE_MS = 400L
+    private val POWER_MENU_DEBOUNCE_MS = 280L
+
+    private fun isStrictPowerGuardActive(now: Long = TrustedClock.now()): Boolean {
+        if (!restrictPowerMenuEnabled) return false
+        return (isSessionActive && now < sessionEndTime && isSessionStrict) || isMorningStrictWindowActive(now)
+    }
 
     private fun isPowerMenuCandidatePackage(pkg: String): Boolean =
         PowerMenuMatcher.isPackageCandidate(pkg)
@@ -425,38 +439,118 @@ class FocusAccessibilityService : AccessibilityService() {
         return powerMenuTextOnScreen()
     }
 
-    private fun powerMenuTextOnScreen(): Boolean {
-        val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: return false
-        try {
-            if (!PowerMenuMatcher.isPackageCandidate(root.packageName?.toString().orEmpty())) return false
-            for (label in PowerMenuMatcher.LABELS) {
-                val hits = root.findAccessibilityNodeInfosByText(label) ?: continue
-                var matched = false
-                for (n in hits) {
-                    if (!matched && (PowerMenuMatcher.isPowerMenuLabel(n.text?.toString()) ||
-                            PowerMenuMatcher.isPowerMenuLabel(n.contentDescription?.toString()))
-                    ) {
-                        matched = true
+    private fun inspectRootForPowerMenu(root: AccessibilityNodeInfo?): Boolean {
+        if (root == null) return false
+        val pkg = root.packageName?.toString().orEmpty()
+        if (!PowerMenuMatcher.isPackageCandidate(pkg)) return false
+
+        // 1. Quick node search for known power/restart queries
+        var foundRestartCandidate = false
+        var foundCompanionCandidate = false
+        for (query in PowerMenuMatcher.SEARCH_QUERIES) {
+            val hits = try { root.findAccessibilityNodeInfosByText(query) } catch (e: Exception) { null } ?: continue
+            var matchedPrimary = false
+            for (n in hits) {
+                try {
+                    if (n.isVisibleToUser) {
+                        val txt = n.text?.toString()
+                        val desc = n.contentDescription?.toString()
+                        val viewId = n.viewIdResourceName
+                        if (PowerMenuMatcher.isPowerMenuViewId(viewId) ||
+                            PowerMenuMatcher.isPowerMenuLabel(txt) ||
+                            PowerMenuMatcher.isPowerMenuLabel(desc)
+                        ) {
+                            matchedPrimary = true
+                        }
+                        if (PowerMenuMatcher.isRestartLabel(txt) || PowerMenuMatcher.isRestartLabel(desc)) {
+                            foundRestartCandidate = true
+                            val cleanT = txt?.trim()?.lowercase().orEmpty()
+                            val cleanD = desc?.trim()?.lowercase().orEmpty()
+                            if ((cleanT.isNotEmpty() && cleanT != "restart" && cleanT != "reboot" && cleanT != "रीस्टार्ट") ||
+                                (cleanD.isNotEmpty() && cleanD != "restart" && cleanD != "reboot" && cleanD != "रीस्टार्ट")
+                            ) {
+                                matchedPrimary = true
+                            }
+                        }
+                        if (PowerMenuMatcher.isCompanionLabel(txt) || PowerMenuMatcher.isCompanionLabel(desc)) {
+                            foundCompanionCandidate = true
+                        }
                     }
+                } finally {
                     n.recycle()
                 }
-                if (matched) return true
             }
-            return false
-        } catch (e: Exception) {
-            return false
-        } finally {
-            root.recycle()
+            if (matchedPrimary || (foundRestartCandidate && foundCompanionCandidate)) return true
         }
+
+        // 2. Full visible tree scan of the candidate window (catches custom OEM icon buttons, sliders, and Restart confirmations)
+        val texts = mutableListOf<String>()
+        val viewIds = mutableListOf<String>()
+        collectPowerMenuSignals(root, texts, viewIds, 0)
+        return PowerMenuMatcher.matchesPowerMenuScreen(texts, viewIds)
+    }
+
+    private fun collectPowerMenuSignals(
+        node: AccessibilityNodeInfo?,
+        texts: MutableList<String>,
+        viewIds: MutableList<String>,
+        depth: Int
+    ) {
+        if (node == null || depth > 28 || texts.size > 40) return
+        if (node.isVisibleToUser) {
+            node.text?.toString()?.takeIf { it.isNotBlank() }?.let { texts.add(it) }
+            node.contentDescription?.toString()?.takeIf { it.isNotBlank() }?.let { texts.add(it) }
+            node.viewIdResourceName?.takeIf { it.isNotBlank() }?.let { viewIds.add(it) }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectPowerMenuSignals(child, texts, viewIds, depth + 1)
+            child.recycle()
+        }
+    }
+
+    /**
+     * Checks both `rootInActiveWindow` and all interactive system windows (`windows`),
+     * because on many Android 11–16 / OEM builds the hardware Power Off & Restart dialog
+     * is rendered in a separate system overlay window above the active app window.
+     */
+    private fun powerMenuTextOnScreen(): Boolean {
+        val activeRoot = try { rootInActiveWindow } catch (e: Exception) { null }
+        if (activeRoot != null) {
+            try {
+                if (inspectRootForPowerMenu(activeRoot)) return true
+            } catch (e: Exception) {
+            } finally {
+                activeRoot.recycle()
+            }
+        }
+
+        val windowList = try { windows } catch (e: Exception) { null } ?: return false
+        var detected = false
+        for (w in windowList) {
+            if (!detected) {
+                val wRoot = try { w.root } catch (e: Exception) { null }
+                if (wRoot != null) {
+                    try {
+                        if (inspectRootForPowerMenu(wRoot)) {
+                            detected = true
+                        }
+                    } catch (e: Exception) {
+                    } finally {
+                        wRoot.recycle()
+                    }
+                }
+            }
+        }
+        return detected
     }
 
     private fun schedulePowerMenuRecheck() {
         if (powerMenuRecheckJob?.isActive == true) return
         powerMenuRecheckJob = serviceScope.launch {
-            repeat(2) {
-                delay(180)
-                val strict = isSessionActive && TrustedClock.now() < sessionEndTime && isSessionStrict
-                if (!strict) return@launch
+            repeat(4) {
+                delay(140)
+                if (!isStrictPowerGuardActive()) return@launch
                 if (powerMenuTextOnScreen()) {
                     dismissPowerMenu()
                     return@launch
@@ -479,10 +573,33 @@ class FocusAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e("FocusService", "Power menu BACK failed", e)
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+            } catch (e: Exception) {
+            }
+        }
+        if (now - lastPowerMenuToastAtMs > 2500L) {
+            lastPowerMenuToastAtMs = now
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    android.widget.Toast.makeText(
+                        applicationContext,
+                        "Strict Mode Active: Power Off & Restart are blocked!",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                } catch (e: Exception) {
+                }
+            }
+        }
         serviceScope.launch {
-            delay(250)
+            delay(160)
             if (powerMenuTextOnScreen()) {
                 try { performGlobalAction(GLOBAL_ACTION_BACK) } catch (e: Exception) { }
+                delay(160)
+                if (powerMenuTextOnScreen()) {
+                    try { performGlobalAction(GLOBAL_ACTION_HOME) } catch (e: Exception) { }
+                }
             }
         }
         serviceScope.launch {
@@ -598,14 +715,15 @@ class FocusAccessibilityService : AccessibilityService() {
         }
         val isStrictModeActive = (isSessionActive && now < sessionEndTime && isSessionStrict) || morningStrictActive
 
-        // Strict Mode: block the Power-off / Restart menu (runs before every throttle).
+        // Strict Mode: block the Power-off / Restart menu (runs before every throttle on both STATE and CONTENT changes).
         if (isStrictModeActive &&
-            eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            restrictPowerMenuEnabled &&
             isPowerMenuCandidatePackage(packageName)
         ) {
             if (isPowerMenuEvent(event)) {
                 dismissPowerMenu()
-            } else {
+                return
+            } else if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                 schedulePowerMenuRecheck()
             }
         }
